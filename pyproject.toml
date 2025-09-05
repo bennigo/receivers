@@ -109,6 +109,7 @@ ignore = [
     "N803",  # argument name should be lowercase (GPS functions use camelCase)
     "N806",  # variable in function should be lowercase (legacy GPS code)
     "B904",  # Within except clause, raise exceptions with raise ... from err
+    "F401",  # imported but unused (needed for conditional imports)
 ]
 
 [tool.ruff.lint.per-file-ignores]

@@ -7,14 +7,14 @@ from typing import Any, Dict, Union
 
 class BaseReceiver(ABC):
     """Abstract base class for GPS/GNSS receivers.
-    
+
     This class defines the common interface that all receiver implementations
     must follow to ensure consistency across different receiver types.
     """
 
     def __init__(self, station_id: str, station_info: Dict[str, Any]):
         """Initialize receiver with station information.
-        
+
         Args:
             station_id: Station identifier (e.g., 'REYK', 'HOFN')
             station_info: Station configuration dictionary
@@ -26,7 +26,7 @@ class BaseReceiver(ABC):
     @abstractmethod
     def get_connection_status(self) -> Dict[str, Any]:
         """Check connection status to receiver.
-        
+
         Returns:
             Dictionary with connection status information
         """
@@ -44,16 +44,16 @@ class BaseReceiver(ABC):
         **kwargs
     ) -> Dict[str, Any]:
         """Download data from receiver for specified time period.
-        
+
         Args:
             start: Start time for data download
-            end: End time for data download  
+            end: End time for data download
             session: Data session type (e.g., '15s_24hr', '1Hz_1hr')
             sync: Whether to sync missing files
             clean_tmp: Whether to clean temporary download directory
             archive: Whether to archive downloaded files
             **kwargs: Additional receiver-specific parameters
-            
+
         Returns:
             Dictionary with download results and file information
         """
@@ -62,7 +62,7 @@ class BaseReceiver(ABC):
     @abstractmethod
     def get_health_status(self) -> Dict[str, Any]:
         """Get comprehensive health status of receiver.
-        
+
         Returns:
             Dictionary with health metrics and status information
         """
@@ -71,7 +71,7 @@ class BaseReceiver(ABC):
     @abstractmethod
     def get_station_info(self) -> Dict[str, Any]:
         """Get station information and configuration.
-        
+
         Returns:
             Dictionary with station information
         """
@@ -79,7 +79,7 @@ class BaseReceiver(ABC):
 
     def get_receiver_type(self) -> str:
         """Get receiver type identifier.
-        
+
         Returns:
             String identifier for receiver type
         """
@@ -87,7 +87,7 @@ class BaseReceiver(ABC):
 
     def get_station_id(self) -> str:
         """Get station identifier.
-        
+
         Returns:
             Station ID string
         """

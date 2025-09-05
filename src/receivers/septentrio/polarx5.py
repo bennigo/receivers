@@ -27,14 +27,14 @@ from ..base.receiver import BaseReceiver
 
 class PolaRX5(BaseReceiver):
     """Septentrio PolaRX5 receiver implementation.
-    
+
     This class handles data download and health monitoring for Septentrio
     PolaRX5 GNSS receivers used in the Icelandic Met Office GPS network.
     """
 
     def __init__(self, station_id: str, station_info: Dict[str, Any]):
         """Initialize PolaRX5 receiver.
-        
+
         Args:
             station_id: Station identifier (e.g., 'REYK', 'HOFN')
             station_info: Station configuration dictionary with router/receiver info
@@ -90,7 +90,7 @@ class PolaRX5(BaseReceiver):
 
     def get_connection_status(self) -> Dict[str, Any]:
         """Check connection status to receiver.
-        
+
         Returns:
             Dictionary with router and receiver connection status
         """
@@ -140,10 +140,10 @@ class PolaRX5(BaseReceiver):
         loglevel: int = logging.WARNING,
     ) -> Dict[str, Any]:
         """Download data from PolaRX5 receiver.
-        
+
         This is the main download function that handles file synchronization
         from the receiver to the local archive.
-        
+
         Args:
             start: Start time for download period
             end: End time for download period
@@ -157,7 +157,7 @@ class PolaRX5(BaseReceiver):
             tmp_dir: Temporary download directory
             predir: Remote directory prefix
             loglevel: Logging level
-            
+
         Returns:
             Dictionary with download results and file information
         """
@@ -399,7 +399,7 @@ class PolaRX5(BaseReceiver):
 
     def get_health_status(self) -> Dict[str, Any]:
         """Get health status of PolaRX5 receiver.
-        
+
         Returns:
             Dictionary with health status information
         """
@@ -423,7 +423,7 @@ class PolaRX5(BaseReceiver):
 
     def get_station_info(self) -> Dict[str, Any]:
         """Get station information and configuration.
-        
+
         Returns:
             Dictionary with station configuration
         """
@@ -439,10 +439,10 @@ class PolaRX5(BaseReceiver):
     @staticmethod
     def is_gz_file(filepath: Union[str, Path]) -> bool:
         """Check if a file is gzipped.
-        
+
         Args:
             filepath: Path to file to check
-            
+
         Returns:
             True if file is gzipped, False otherwise
         """

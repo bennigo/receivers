@@ -31,14 +31,14 @@ console = Console()
 
 def create_receiver(station_id: str, receiver_type: str = "polarx5") -> Any:
     """Create a receiver instance based on type.
-    
+
     Args:
         station_id: Station identifier
         receiver_type: Type of receiver
-        
+
     Returns:
         Receiver instance
-        
+
     Raises:
         ValueError: If receiver type is not supported or configuration missing
     """
@@ -200,7 +200,7 @@ def main() -> int:
         epilog="""
 Examples:
   receivers health REYK                    # Check health of REYK station
-  receivers download REYK --sync           # Download missing data  
+  receivers download REYK --sync           # Download missing data
   receivers status HOFN --json             # Get status as JSON
   receivers download VMEY --start 2024-01-15 --end 2024-01-20 --dry-run
         """
