@@ -1,0 +1,792 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+# ------------------------------- #
+# getSeptentrio.py 0.5
+# Code made by bgo@vedur.is modified from fjalar@vedur.is
+# Iceland Met Office
+# 2018
+# ---------------# COMMENTS #--------------#
+#
+# This code is in BETA stage.
+# It needs refactoring and optimizing.
+#
+# -----------------------------------------#
+
+# logging used globally s argument
+import logging
+
+
+def get_logger(name=__name__, level=logging.WARNING):
+    """
+    logger to use within the modules
+    """
+
+    # Create log handler
+    logHandler = logging.StreamHandler()
+    # logHandler.setLevel(level)
+
+    # Set handler format
+    logFormat = logging.Formatter("[%(levelname)s] %(funcName)s: %(message)s")
+    logHandler.setFormatter(logFormat)
+
+    # Create logger
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+
+    if logger.hasHandlers():
+        logger.handlers.clear()
+    # Add handler to logger
+    logger.addHandler(logHandler)
+
+    # Stop propagating the log messages to root logger
+    logger.propagate = False
+
+    return logger
+
+
+def sync_data(
+    station_id,
+    start=None,
+    end=None,
+    session="15s_24hr",
+    ffrequency="1D",
+    afrequency="15s",
+    clean_tmp=True,
+    sync=False,
+    compression=".gz",
+    archive=True,
+    tmp_dir="/home/bgo/tmp/download/",
+    predir="/DSK2/SSN/",
+    loglevel=logging.WARNING,
+):
+    """
+    this is the main loop in the program.. and could be moved to the main loop: refactoring
+
+    2) takes in the number of days to check backwards
+    2) loops backwards, calls check_for_file and collects the files that are missing in a list
+    3) loops through the list and downloads the files into a temp directory
+    """
+
+    from datetime import datetime as dt
+    from datetime import timedelta as td
+
+    import gtimes.timefunc as gt
+    from gtimes.timefunc import currDatetime
+    from pathlib import Path
+
+    import re
+    import os
+    import time
+    import logging
+
+    # import numpy as np
+
+    # logging settings
+    module_logger = get_logger(name=__name__, level=loglevel)
+
+    # get date today
+    tmp_dir = Path(tmp_dir).joinpath(station_id)
+    download_file_dict = {}
+    # session="log2_15s_24hr"
+    sessionn = "0"
+    sessionl = "a"
+    suffix = "sbf.gz"
+
+    downloaded_files_dict = {}
+    file_archived = False
+
+    # time the process
+    start_time = time.time()
+
+    # TODO: function that takes in start,end ffrequency
+    # returns
+    # handling time
+    print("START: {}".format(start))
+    print("ffrequency: {}".format(ffrequency.lower()))
+    hoursession = re.compile("1h", re.IGNORECASE)
+    if ffrequency.lower() == "1h":  # for downloading hourly data
+        print("END: {}".format(end))
+        if not end:
+            end = dt.now() - td(hours=1)
+        end = end.replace(minute=0, second=0, microsecond=0)
+    else:  # daily data
+        if not end:
+            end = currDatetime(-1)
+        end = end.date()
+
+    if hoursession.search(session):  # for downloading hourly data
+        if not start:
+            start = end - td(hours=24)
+        start = start.replace(minute=0, second=0, microsecond=0)
+    else:  # and for daily
+        if not start:
+            start = end - td(days=10)
+        start = start.date()
+    # ====================================
+    file_datetime_list = gt.datepathlist(
+        "#datelist",
+        ffrequency,
+        starttime=start,
+        endtime=end,
+        datelist=[],
+        closed="both",
+    )
+    module_logger.info("file_datetime_list: {}".format(file_datetime_list))
+
+    today = currDatetime()
+    today_fancy = today.strftime("%a %d. %b %Y")
+    today_start_time = today.strftime("%H:%M:%S")
+
+    # --------------------------------#
+    # 2) create the temp directory if not already existing
+    # --------------------------------#
+
+    if os.path.isdir(tmp_dir):
+        pass
+    else:
+        module_logger.warning(
+            "status > temp directory {0} for downloading is missing".format(tmp_dir)
+        )
+        module_logger.warning("         creating it ....")
+        os.mkdir(tmp_dir)
+
+    # --------------------------------#
+    # 3) print report header
+    # --------------------------------#
+    module_logger.info("program run on {}".format(today_fancy))
+    module_logger.info("time started: {}".format(today_start_time))
+    module_logger.info("current day number (doy): {}".format(gt.DayofYear()))
+    module_logger.info("GPS week, day of week: {}, {}".format(*gt.gpsWeekDay()))
+    module_logger.info(
+        "checking for {0} sessions: from {1} to {2}".format(session, start, end)
+    )
+
+    stringformat = "/data/%Y/#b/{0}/{1}/raw/{0}%Y%m%d%H00a.sbf{2}".format(
+        station_id, session, compression
+    )
+    archive_file_list = gt.datepathlist(
+        stringformat, ffrequency, datelist=file_datetime_list, closed="both"
+    )
+    module_logger.warning("file list: {}".format(archive_file_list))
+
+    stringformat1 = "{}#Rin2_{}".format(station_id, compression)
+    igs_file_name_list = gt.datepathlist(
+        stringformat1, ffrequency, datelist=file_datetime_list, closed="both"
+    )
+    file_date_dict = dict(
+        zip(file_datetime_list, zip(archive_file_list, igs_file_name_list))
+    )
+
+    # checking if file is in archive
+    module_logger.info("constructing a list for files missing from archive")
+    # missing_file_dict = { key:value for (key,value) in file_date_dict.items() if not os.path.isfile(value[0]) }
+    missing_file_dict = {key: value for (key, value) in file_date_dict.items()}
+
+    if len(missing_file_dict.keys()) == 0:
+        module_logger.info("")
+        module_logger.info("status > archive is up to date.")
+        sync = False
+    else:
+        module_logger.info("")
+        module_logger.info("status > missing files: ")
+        for key, value in missing_file_dict.items():
+            module_logger.debug("{0}: {1}".format(key, value))
+        module_logger.info("")
+
+    if sync:
+        module_logger.info(Session(session)[1])
+        stringformat2 = "{}{}/%y%j/".format(predir, Session(session)[1])
+        module_logger.info(stringformat2)
+        remote_path_list = gt.datepathlist(
+            stringformat2, ffrequency, datelist=missing_file_dict.keys(), closed="both"
+        )
+        module_logger.info(remote_path_list)
+
+        # packing files and paths in a dict for downloading
+        download_file_dict = dict(
+            zip(list(zip(*missing_file_dict.values()))[1], remote_path_list)
+        )
+        # connecting to server
+        ftp = ftp_open_connection(*getStationIP(station_id), timeout=10)
+        module_logger.info(" >> now downloading and archiving missing files ...")
+        print(download_file_dict)
+        downloaded_files_list = ftp_download(
+            download_file_dict,
+            tmp_dir,
+            clean_tmp=clean_tmp,
+            ftp=ftp,
+            ftp_close=True,
+            loglevel=logging.WARNING,
+        )
+
+        downloaded_files_dict = dict(zip(missing_file_dict, downloaded_files_list))
+        module_logger.info(downloaded_files_dict)
+
+        # archiving
+        if downloaded_files_dict and archive:
+            for ddate, tmp_file in downloaded_files_dict.items():
+                # module_logger.info("file to archive {}".format(os.path.basename(tmp_file)))
+                tmp_file_size = os.path.getsize(tmp_file)
+                if os.path.isfile(missing_file_dict[ddate][1]):
+                    archive_file_size = os.path.getsize(missing_file_dict[ddate][0])
+                    if tmp_file_size == archive_file_size:
+                        module_logger.info(
+                            "files dated {0}:\n {1} and {2}\nhave the same size {3} bytes.\naborting".format(
+                                ddate,
+                                tmp_file,
+                                missing_file_dict[ddate][0],
+                                tmp_file_size,
+                            )
+                        )
+                else:
+                    archive_path, archive_file_name = os.path.split(
+                        missing_file_dict[ddate][0]
+                    )
+                    if not os.path.isdir(archive_path):
+                        module_logger.info(
+                            "directory {0} does not exist creating it ...".format(
+                                archive_path
+                            )
+                        )
+                        os.makedirs(archive_path)
+
+                    module_logger.info(
+                        "move file dated {0} from {1} to {2}".format(
+                            ddate, tmp_file, missing_file_dict[ddate][0]
+                        )
+                    )
+                    if archive:
+                        os.rename(tmp_file, missing_file_dict[ddate][0])
+                        module_logger.info(
+                            "moving {} to {}".format(
+                                tmp_file, missing_file_dict[ddate][0]
+                            )
+                        )
+                        module_logger.info("archive flag is {}".format(archive))
+
+                    archive_file_size = os.path.getsize(missing_file_dict[ddate][0])
+                    if tmp_file_size == archive_file_size:
+                        module_logger.info("file succsessfully moved")
+
+        if file_archived:
+            module_logger.info("status > file downloaded and archived!")
+        else:
+            module_logger.info(
+                "status > error in downloading and archiving. file might be missing on the receiver."
+            )
+
+    # --------------------------------#
+    # 5) output end time
+    # --------------------------------#
+
+    today_end_time = today.strftime("%h:%m:%s")
+    module_logger.info("")
+    module_logger.info(
+        "process duration: {0:.2f} seconds".format(time.time() - start_time)
+    )
+    return downloaded_files_dict
+
+
+def Session(session):
+    """ """
+
+    Session = {
+        "15s_24hr": ("a", "log1_15s_24hr"),
+        "1Hz_1hr": ("b", "log2_1hz_1hr"),
+        "status_1hr": ("b", "log5_status_1hr"),
+    }
+
+    return Session[session]
+
+
+def make_file_name(
+    station_id,
+    day,
+    session="15s_24hr",
+    receiver_type="polarx5",
+    ftype="imostd",
+    compression=".gz",
+):
+    """ """
+
+    import re
+
+    file_name = ""
+    suff_dict = {
+        "polarx5": "sbf",
+    }
+
+    daysession = re.compile("24hr", re.IGNORECASE)
+    hoursession = re.compile("1hr", re.IGNORECASE)
+
+    if ftype == "imostd":
+        print("session name: {}".format(session))
+        if daysession.search(session):
+            filedate = day.strftime("%Y%m%d0000a")
+
+        if hoursession.search(session):
+            filedate = day.strftime("%Y%m%d%H00b")
+
+        file_name = "{0}{1}.{2}{3}".format(
+            station_id, filedate, suff_dict[receiver_type], compression
+        )
+
+    if not file_name:
+        print("the format {0} is unknown".format(ftype))
+
+    return file_name
+
+
+def getStationIP(station_id, port="ftpport", loglevel=logging.INFO):
+    """
+    return ip and port from
+    """
+    import cparser
+    import re
+
+    # logging settings
+    module_logger = get_logger(name=__name__, level=loglevel)
+
+    parser = cparser.Parser()
+    station_info = parser.getStationInfo(station_id.upper())
+    print(f"TEST: {station_info}")
+    if station_info:
+        ip_number = station_info["router"]["ip"]
+        ip_port = int(station_info["receiver"][port])
+        module_logger.info(
+            "station {0} has ip:ftp_port {1}:{2}".format(station_id, ip_number, ip_port)
+        )
+    else:
+        module_logger.warning("")
+        module_logger.warning(
+            '__main__ error: unknown station id {0}. use "info" to query station info.'.format(
+                station_id
+            )
+        )
+        exit()
+
+    regexp = re.compile("10.4.[12]")
+    if regexp.search(ip_number):
+        pasv = False
+        module_logger.info("set pasv=false for ip: {}".format(ip_number))
+    else:
+        pasv = True
+
+    return ip_number, ip_port, pasv
+
+
+def ftp_open_connection(ip_number, ip_port, pasv=True, timeout=10):
+    """
+    open ftp connection
+    """
+
+    from ftplib import FTP
+
+    # try to connect to the server
+    # temp stuff sometimes we need passive ftp will go to config
+
+    try:
+        print("connection to station...")
+        ftp = FTP()
+        ftp.connect(ip_number, ip_port, timeout=timeout)
+        ftp.login("anonymous")
+        ftp.set_pasv(pasv)
+        print("connection successful!")
+    except:
+        print("connection failed")
+        ftp = None
+
+    return ftp
+
+
+def ftp_download(
+    files_dir_to_download_dict,
+    local_dir,
+    clean_tmp=True,
+    ftp=None,
+    ip_number=None,
+    ip_port=None,
+    pasv=True,
+    ftp_close=True,
+    loglevel=logging.WARNING,
+):
+    """
+    download a list of files from an ftp server
+    """
+
+    import os
+    import re
+
+    # from ftplib import FTP
+
+    # logging settings
+    module_logger = get_logger(name=__name__, level=loglevel)
+
+    if not ftp:
+        ftp = ftp_open_connection(ip_number, ip_port, pasv=pasv)
+
+    if not ftp:
+        module_logger.warning(
+            "can't connect to {}:{}, nothing downloaded".format(ip_number, ip_port)
+        )
+        return []
+
+    downloaded_files = []
+    remote_file_size = {}
+    module_logger.debug(files_dir_to_download_dict)
+    # execute file download if connection was succsesfull
+    for file_name, remote_dir in sorted(
+        files_dir_to_download_dict.items(), reverse=True
+    ):
+        module_logger.info("=====================================")
+        module_logger.info("file name: {}".format(file_name))
+        module_logger.info("remote directory: {}".format(remote_dir))
+        module_logger.info("download directory: {}".format(local_dir))
+        module_logger.info("-------------------------------------")
+        module_logger.info(">")
+
+        local_file = "{0}{1}".format(local_dir, file_name)
+        if clean_tmp is True and os.path.isfile(local_file):
+            os.remove(local_file)
+
+        remote_file = "{0}{1}".format(remote_dir, file_name)
+
+        offset = 0
+        if os.path.isfile(local_file):
+            # check how much has alread been downloaded
+            offset = os.path.getsize(local_file)
+
+        # download the file
+        module_logger.info("downloading " + file_name)
+
+        # remote_file
+        try:
+            # print("test remote_file: {}".format(remote_file))
+            remote_file_size = ftp.size(remote_file)
+            print("TEST")
+            module_logger.debug("remote_file_size: {}".format(remote_file_size))
+            module_logger.info("test2")
+            diff = remote_file_size - offset
+            module_logger.warning("remote and local file difference {}".format(diff))
+        except:
+            module_logger.warning("FAILED")
+            remote_file_dict = ftp_list_dir([remote_dir], ftp, ftp_close=False)
+            module_logger.info("remote_file_dict: {}".format(remote_file_dict))
+            basename = file_name[0:11]
+            module_logger.info("test basename: {}".format(basename))
+            base_regexp = re.compile(basename)
+
+            module_logger.info(
+                "file {} not on recever listing remote files".format(remote_file)
+            )
+            module_logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+            for rdir, rfile_list in remote_file_dict.items():
+                for rfile in rfile_list:
+                    module_logger.info(rfile)
+            module_logger.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+            module_logger.info(">")
+
+            for rdir, rfile_list in remote_file_dict.items():
+                for rfile in rfile_list:
+                    file_name = rfile.split()[-1]
+
+                    local_file = "{0}{1}".format(local_dir, file_name)
+                    if os.path.isfile(local_file):
+                        # check how much has already been downloaded
+                        offset = os.path.getsize(local_file)
+
+                    module_logger.info("test file name: {}".format(file_name))
+                    if base_regexp.search(file_name):
+                        remote_file = "{0}{1}".format(rdir, file_name)
+                        module_logger.info(
+                            "found file {0} on receiver will download to \n {1}".format(
+                                remote_file, local_file
+                            )
+                            + " file will not be archived automatically."
+                        )
+                        remote_file_size = ftp.size(remote_file)
+                        diff = _download_with_progressbar(
+                            ftp,
+                            remote_file,
+                            local_file,
+                            remote_file_size,
+                            offset=offset,
+                        )
+                    else:
+                        module_logger.info(
+                            "did not find any file matching {0} on the receiver, \n".format(
+                                basename
+                            )
+                            + "check if the receiver or station info is configured correctly"
+                        )
+
+            continue
+
+        if diff == 0:
+            module_logger.info("file {} already downloaded".format(file_name))
+        else:
+            diff = _download_with_progressbar(
+                ftp, remote_file, local_file, remote_file_size, offset=offset
+            )
+
+        module_logger.info(
+            "difference between remote and downloaded file: {0:d}".format(diff)
+        )
+        if diff == 0:
+            downloaded_files.append(local_file)
+
+    if ftp_close:
+        ftp.close()
+
+    return downloaded_files
+
+
+def ftp_list_dir(
+    dir_list, ftp, ip_number=None, ip_port=None, pasv=True, ftp_close=True
+):
+    """ """
+
+    if not ftp:
+        ftp = ftp_open_connection(ip_number, ip_port, pasv=pasv)
+
+    if not ftp:
+        print("can't connect to {}:{}, nothing downloaded".format(ip_number, ip_port))
+        return []
+
+    remote_file_dict = {}
+    for remote_dir in dir_list:
+        remote_dir_list = []
+        ftp.dir(remote_dir, remote_dir_list.append)
+        remote_file_dict[remote_dir] = remote_dir_list
+
+    if ftp_close:
+        ftp.close()
+
+    return remote_file_dict
+
+
+def is_gz_file(filepath):
+    """
+    check if a file is a gzip file
+    """
+
+    import binascii
+
+    with open(filepath, "rb") as test_f:
+        return binascii.hexlify(test_f.read(2)) == b"1f8b"
+
+
+def _download_with_progressbar(
+    ftp, remote_file, local_file, remote_file_size, offset=0
+):
+    """
+    download a file using a process bar.
+    returns a the difference in bytes between the remote file and the downloaded file
+    """
+
+    from pathlib import PurePath
+    import os
+
+    file_name = PurePath(remote_file)
+
+    from progressbar import ProgressBar, Percentage, Bar, ETA, FileTransferSpeed
+
+    widgets = [
+        "downloading {}:".format(file_name.name),
+        Percentage(),
+        " ",
+        Bar(),
+        " ",
+        ETA(),
+        " ",
+        FileTransferSpeed(),
+    ]
+
+    pbar = ProgressBar(
+        min_value=offset, initial_value=offset, widgets=widgets, maxval=remote_file_size
+    ).start()
+    # pbar = progressbar(min_value=offset, max_value=remote_file_size, maxval=remote_file_size,
+    #                    widget=widgets).start()
+
+    with open(local_file, "ab") as f:
+
+        def callback(chunk, progress=offset):
+            f.write(chunk)
+            progress = pbar.currval + len(chunk)
+            pbar.update(progress)
+
+        ftp.retrbinary("retr {0}".format(remote_file), callback, rest=offset)
+    pbar.finish()
+    local_file_size = os.path.getsize(local_file)
+
+    return local_file_size - remote_file_size
+
+
+def program_info_screen():
+    """print software info."""
+    # only splash screen info here
+
+    print("")
+    print("copyright (c) 2016 icelandic met office")
+    print("getleica 0.1 (jul 2016)")
+    print("")
+
+
+def exit_gracefully(signum, frame):
+    """exit gracefully on ctrl-c"""
+
+    import sys
+    import signal
+
+    current_func = sys._getframe().f_code.co_name + "() >> "
+
+    # restore the original signal handler as otherwise evil things will happen
+    # in raw_input when ctrl+c is pressed, and our signal handler is not re-entrant
+    signal.signal(signal.SIGINT, original_sigint)
+
+    try:
+        if raw_input("\nreally quit? (y/n)> ").lower().startswith("y"):
+            sys.exit(1)
+
+    except keyboardinterrupt:
+        print("ok ok, quitting")
+        sys.exit(1)
+
+    # restore the exit gracefully handler here
+    signal.signal(signal.sigint, exit_gracefully)
+
+    # method borrowed from:
+    # http://stackoverflow.com/questions/18114560/python-catch-ctrl-c-command-prompt-really-want-to-quit-y-n-resume-executi
+
+
+def main():
+    """main"""
+
+    import argparse
+
+    from datetime import datetime as dt
+    from gtimes.timefunc import currDatetime
+
+    # start = end = none
+    dstr = "%Y%m%d-%H%M"  # default input string
+
+    # display some nice program info
+    program_info_screen()
+
+    # instantiate argparser
+    parser = argparse.ArgumentParser()
+
+    # setup the argument parser
+    parser.add_argument("stations", nargs="+", help="list of stations to download")
+    parser.add_argument(
+        "-D",
+        "--days",
+        type=int,
+        default=10,
+        help="number of days back to check for data.",
+    )
+    parser.add_argument(
+        "-s",
+        "--start",
+        type=str,
+        default=None,
+        help="end date, format %%Y%%m%%d-%%M%%M.",
+    )
+    parser.add_argument(
+        "-e",
+        "--end",
+        type=str,
+        default=None,
+        help="end date, format %%Y%%m%%d-%%M%%M.",
+    )
+    parser.add_argument(
+        "-se",
+        "--session",
+        type=str,
+        default="15s_24hr",
+        help="data sampling sessions. default is 15s_24hr, 1hz_1hr, 20hz_1hr.",
+    )
+    parser.add_argument(
+        "-comp",
+        "--compression",
+        type=str,
+        default=".gz",
+        help="compression type",
+    )
+    parser.add_argument(
+        "-ffr",
+        "--ffrequency",
+        type=str,
+        default="",
+        help="data file frequency, defaults to empty string and will try to determain it from session string",
+    )
+    parser.add_argument(
+        "-afr",
+        "--afrequency",
+        type=str,
+        default="",
+        help="aqusition frequency, defaults to empty string and will try to determain it from session string",
+    )
+    parser.add_argument(
+        "-sy",
+        "--sync",
+        action="store_true",
+        help="sync new or partal files from source.",
+    )
+    parser.add_argument(
+        "-cl",
+        "--clean_tmp",
+        action="store_true",
+        help="clean download directory and start over on partly finished downlands",
+    )
+    parser.add_argument(
+        "-ar",
+        "--archive",
+        action="store_true",
+        help="archive the downloaded data",
+    )
+
+    # fetch the arguments
+    args = parser.parse_args()
+
+    # defining sub-periods
+    if args.start:  # start the plot at
+        args.start = dt.strptime(args.start, dstr)
+    if args.end:  # end the plot at
+        args.end = dt.strptime(args.end, dstr)
+
+    if not args.start and args.days:
+        args.start = currDatetime(days=-args.days, refday=dt.now())
+
+    # handling aqcustions frequency
+    if args.afrequency:
+        pass
+    else:
+        args.afrequency = args.session.split("_")[0]
+
+    # handling file frequency
+    if args.ffrequency:
+        pass
+    else:
+        args.ffrequency = args.session.split("_")[1]
+
+    stations = args.stations
+    kwargs = vars(args)
+
+    del kwargs["days"]
+    del kwargs["stations"]
+
+    # print("args: {}".format(kwargs))
+    for sta in stations:
+        sync_data(sta, **kwargs)
+
+
+if __name__ == "__main__":
+    # this is used to catch ctrl-c exits
+
+    import signal
+
+    original_sigint = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, exit_gracefully)
+
+    main()

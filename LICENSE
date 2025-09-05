@@ -1,0 +1,68 @@
+MIT License
+
+Copyright (c) 2024 Benedikt Gunnar Ófeigsson, Veðurstofan Íslands (Icelandic Met Office)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## Third-Party Components
+
+This software incorporates code and concepts from the following sources:
+
+### GPS Receiver Communication
+Based on original implementations by:
+- Fjalar Sigurdsson (fjalar@vedur.is), Veðurstofan Íslands
+- FTP communication protocols for Septentrio PolaRX5 receivers
+- GPS data download and archiving workflows
+
+### Dependencies  
+- GTimes library for GPS time processing
+- Rich library for enhanced console output
+- ProgressBar2 for download progress tracking
+
+### Scientific Standards
+Receiver communication follows:
+- GNSS receiver manufacturer specifications
+- FTP/SFTP protocols for data transfer
+- RINEX format standards for GPS data
+- IGS station monitoring guidelines
+
+## Attribution
+
+If you use Receivers in operational or scientific applications, please consider citing:
+
+```
+Ófeigsson, B. G., & Sigurdsson, F. (2024). Receivers: GPS/GNSS receiver 
+management and data download toolkit. Veðurstofan Íslands (Icelandic Met Office).
+https://github.com/vedur-is/receivers
+```
+
+## Disclaimer
+
+This software is provided for operational and scientific purposes. While every
+effort has been made to ensure reliability, users should validate functionality
+for their specific receiver configurations and network environments. 
+
+The authors and Veðurstofan Íslands assume no responsibility for any consequences 
+arising from the use of this software, including but not limited to data loss or 
+receiver malfunction.
+
+For critical operational applications, users should maintain appropriate backup
+procedures and monitoring systems.
