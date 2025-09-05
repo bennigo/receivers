@@ -18,8 +18,8 @@ pip install -e .[dev]
 ### Basic Usage
 
 ```bash
-# Check receiver health
-receivers health REYK
+# Check receiver health (using ELDC as working example)
+receivers health ELDC
 
 # Download data (dry run)
 receivers download REYK --start 2024-01-15 --end 2024-01-20
@@ -85,9 +85,15 @@ print(f"Downloaded {result['files_downloaded']} files")
 - Type hints and error handling
 
 🔄 **In Progress**:
-- Integration with gps_parser for station configuration
-- Comprehensive health monitoring
+- Integration with gps_parser for station configuration (requires full receiver config data)
+- Comprehensive health monitoring 
 - Unit tests
+
+⚠️ **Current Configuration Status**:
+- gps_parser package available but only contains basic station info (name, ID)
+- Missing router/receiver connection details (IP, ports, etc.)  
+- Using fallback configuration for testing (ELDC: 10.6.1.90:2160)
+- Full integration requires completing station configuration files
 
 📋 **Planned**:
 - Additional receiver types (Leica, NetRS, etc.)
@@ -136,10 +142,10 @@ Receivers require station configuration information including:
 ```python
 station_info = {
     "router": {
-        "ip": "10.4.1.100"
+        "ip": "10.6.1.90"  # Example: ELDC station
     },
     "receiver": {
-        "ftpport": "21"
+        "ftpport": "2160"  # Port forward for FTP access
     }
 }
 ```
@@ -158,8 +164,15 @@ Configuration is typically managed through the `gps_parser` package.
 ### Network Configuration
 
 - Internal IMO network: Uses non-passive FTP (10.4.1.x, 10.4.2.x)
-- External networks: Uses passive FTP by default
+- External networks: Uses passive FTP by default  
+- Port forwards available: 2160, 8060 for remote station access
 - Configurable timeouts and retry logic
+
+### Tested Stations
+
+- **ELDC** (Eldvörp): 10.6.1.90:2160 - ✅ HEALTHY (solar/wind powered)
+- **THOB** (Þorbjörn): Grid powered
+- Additional stations require proper configuration setup
 
 ### File Organization
 
