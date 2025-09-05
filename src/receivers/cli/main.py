@@ -56,17 +56,46 @@ def create_receiver(station_id: str, receiver_type: str = "polarx5") -> Any:
     else:
         parser = gps_parser.ConfigParser()
         parsed_info = parser.getStationInfo(station_id.upper())
-        if not parsed_info or 'router' not in parsed_info:
-            # Fall back to minimal config if full config not available
+        if not parsed_info or 'station' not in parsed_info:
+            # Fall back to minimal config if no station info
             console.print(
-                "[yellow]Warning: Full station config not available, using minimal config[/yellow]"
+                "[yellow]Warning: No station configuration found, using minimal config[/yellow]"
             )
             station_info = {
                 "router": {"ip": "10.6.1.90"},  # Updated IP
                 "receiver": {"ftpport": "2160"},
             }
         else:
-            station_info = parsed_info
+            # Convert gps_parser format to receivers format
+            station_data = parsed_info['station']
+            if 'router_ip' in station_data and 'receiver_ftpport' in station_data:
+                station_info = {
+                    "router": {
+                        "ip": station_data['router_ip'],
+                        "type": station_data.get('router_type', ''),
+                    },
+                    "receiver": {
+                        "ftpport": station_data['receiver_ftpport'],
+                        "httpport": station_data.get('receiver_httpport', '8060'),
+                        "type": station_data.get('receiver_type', 'PolaRX5'),
+                    },
+                    "station": {
+                        "name": station_data.get('station_name', ''),
+                        "connection_type": station_data.get('connection_type', ''),
+                    }
+                }
+                console.print(
+                    f"[green]Loaded configuration for {station_id} from gps_parser[/green]"
+                )
+            else:
+                # Fall back if incomplete config  
+                console.print(
+                    "[yellow]Warning: Incomplete station config, using minimal config[/yellow]"
+                )
+                station_info = {
+                    "router": {"ip": "10.6.1.90"},
+                    "receiver": {"ftpport": "2160"},
+                }
 
     if receiver_type.lower() == "polarx5":
         if not HAS_POLARX5:
