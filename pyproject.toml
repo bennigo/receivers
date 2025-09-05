@@ -38,8 +38,6 @@ classifiers = [
 ]
 requires-python = ">=3.8"
 dependencies = [
-    "gtimes>=0.4.0",
-    "gps_parser",  # Will be local package dependency
     "python-dateutil>=2.9.0",
     "pathlib2>=2.3.7; python_version<'3.4'",
     "rich>=13.0.0",
@@ -68,8 +66,12 @@ docs = [
     "mkdocs-material>=9.0.0",
     "mkdocstrings[python]>=0.24.0",
 ]
+local = [
+    "gtimes>=0.4.0",  # Local package - install separately
+    # "gps_parser",   # Local package - install separately  
+]
 all = [
-    "receivers[dev,test,docs]",
+    "receivers[dev,test,docs,local]",
 ]
 
 [project.urls]
