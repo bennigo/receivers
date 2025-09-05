@@ -15,7 +15,7 @@ class TestPolaRX5:
         """Set up test fixtures."""
         self.station_info = {
             "router": {"ip": "10.4.1.100"},
-            "receiver": {"ftpport": "21"}
+            "receiver": {"ftpport": "21"},
         }
         self.receiver = PolaRX5("REYK", self.station_info)
 
@@ -42,7 +42,7 @@ class TestPolaRX5:
         assert info["ip"] == "10.4.1.100"
         assert info["port"] == 21
 
-    @patch('receivers.septentrio.polarx5.FTP')
+    @patch("receivers.septentrio.polarx5.FTP")
     def test_connection_status_success(self, mock_ftp):
         """Test successful connection status check."""
         mock_ftp_instance = Mock()
@@ -56,7 +56,7 @@ class TestPolaRX5:
         assert status["port"] == 21
         assert status["error"] is None
 
-    @patch('receivers.septentrio.polarx5.FTP')
+    @patch("receivers.septentrio.polarx5.FTP")
     def test_connection_status_failure(self, mock_ftp):
         """Test failed connection status check."""
         mock_ftp.side_effect = Exception("Connection failed")
@@ -69,7 +69,7 @@ class TestPolaRX5:
 
     def test_get_health_status(self):
         """Test health status reporting."""
-        with patch.object(self.receiver, 'get_connection_status') as mock_conn:
+        with patch.object(self.receiver, "get_connection_status") as mock_conn:
             mock_conn.return_value = {"receiver": True, "router": True}
 
             health = self.receiver.get_health_status()

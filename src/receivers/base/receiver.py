@@ -41,7 +41,7 @@ class BaseReceiver(ABC):
         sync: bool = True,
         clean_tmp: bool = True,
         archive: bool = True,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """Download data from receiver for specified time period.
 

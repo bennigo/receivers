@@ -24,6 +24,7 @@ __all__ = [
 
 try:
     from .septentrio.polarx5 import PolaRX5
+
     __all__.append("PolaRX5")
 except ImportError:
     # Dependencies not available, skip receiver implementations

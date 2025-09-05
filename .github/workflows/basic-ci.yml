@@ -107,7 +107,7 @@ jobs:
     - name: Run tests with pytest
       run: |
         pip install pytest pytest-mock
-        PYTHONPATH=src pytest tests/ -v --tb=short
+        pytest tests/ -v --tb=short
 
   build:
     name: Build Package  

@@ -61,9 +61,7 @@ class PolaRX5(BaseReceiver):
 
         if not logger.handlers:
             handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                "[%(levelname)s] %(name)s: %(message)s"
-            )
+            formatter = logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
             handler.setFormatter(formatter)
             logger.addHandler(handler)
             logger.setLevel(level)
@@ -81,7 +79,9 @@ class PolaRX5(BaseReceiver):
             regexp = re.compile(r"10\.4\.[12]")
             self.pasv = not regexp.search(self.ip_number)
 
-            self.logger.info(f"Station {self.station_id} - IP: {self.ip_number}:{self.ip_port}, PASV: {self.pasv}")
+            self.logger.info(
+                f"Station {self.station_id} - IP: {self.ip_number}:{self.ip_port}, PASV: {self.pasv}"
+            )
 
         except KeyError as e:
             raise ConfigurationError(f"Missing configuration key: {e}")
@@ -108,7 +108,7 @@ class PolaRX5(BaseReceiver):
                 "ip": self.ip_number,
                 "port": self.ip_port,
                 "timestamp": datetime.utcnow().isoformat(),
-                "error": None
+                "error": None,
             }
 
         except Exception as e:
@@ -118,7 +118,7 @@ class PolaRX5(BaseReceiver):
                 "ip": self.ip_number,
                 "port": self.ip_port,
                 "timestamp": datetime.utcnow().isoformat(),
-                "error": str(e)
+                "error": str(e),
             }
 
         self.connection_status = status
@@ -176,8 +176,12 @@ class PolaRX5(BaseReceiver):
 
         # Generate file lists
         file_datetime_list = gt.datepathlist(
-            "#datelist", ffrequency, starttime=start, endtime=end,
-            datelist=[], closed="both"
+            "#datelist",
+            ffrequency,
+            starttime=start,
+            endtime=end,
+            datelist=[],
+            closed="both",
         )
 
         # Create archive and remote file paths
@@ -191,11 +195,14 @@ class PolaRX5(BaseReceiver):
             igs_format, ffrequency, datelist=file_datetime_list, closed="both"
         )
 
-        file_date_dict = dict(zip(file_datetime_list, zip(archive_file_list, igs_file_list)))
+        file_date_dict = dict(
+            zip(file_datetime_list, zip(archive_file_list, igs_file_list))
+        )
 
         # Find missing files
         missing_file_dict = {
-            key: value for (key, value) in file_date_dict.items()
+            key: value
+            for (key, value) in file_date_dict.items()
             if not os.path.isfile(value[0])
         }
 
@@ -206,7 +213,7 @@ class PolaRX5(BaseReceiver):
                 "files_checked": len(file_date_dict),
                 "files_missing": 0,
                 "files_downloaded": 0,
-                "duration": time.time() - start_time
+                "duration": time.time() - start_time,
             }
 
         self.logger.info(f"Missing files: {len(missing_file_dict)}")
@@ -214,8 +221,13 @@ class PolaRX5(BaseReceiver):
         downloaded_files_dict = {}
         if sync:
             downloaded_files_dict = self._sync_missing_files(
-                missing_file_dict, tmp_dir_path, session, predir,
-                ffrequency, clean_tmp, archive
+                missing_file_dict,
+                tmp_dir_path,
+                session,
+                predir,
+                ffrequency,
+                clean_tmp,
+                archive,
             )
 
         return {
@@ -224,7 +236,7 @@ class PolaRX5(BaseReceiver):
             "files_missing": len(missing_file_dict),
             "files_downloaded": len(downloaded_files_dict),
             "downloaded_files": list(downloaded_files_dict.values()),
-            "duration": time.time() - start_time
+            "duration": time.time() - start_time,
         }
 
     def _process_time_parameters(self, start, end, session, ffrequency):
@@ -263,8 +275,14 @@ class PolaRX5(BaseReceiver):
         return start, end
 
     def _sync_missing_files(
-        self, missing_file_dict, tmp_dir, session, predir,
-        ffrequency, clean_tmp, archive
+        self,
+        missing_file_dict,
+        tmp_dir,
+        session,
+        predir,
+        ffrequency,
+        clean_tmp,
+        archive,
     ):
         """Sync missing files from receiver to local archive."""
         # Get session info
@@ -274,8 +292,10 @@ class PolaRX5(BaseReceiver):
         session_info = self.session_map[session][1]
         remote_format = f"{predir}{session_info}/%y%j/"
         remote_path_list = gt.datepathlist(
-            remote_format, ffrequency, datelist=list(missing_file_dict.keys()),
-            closed="both"
+            remote_format,
+            ffrequency,
+            datelist=list(missing_file_dict.keys()),
+            closed="both",
         )
 
         # Create download dictionary
@@ -286,7 +306,9 @@ class PolaRX5(BaseReceiver):
         # Connect and download
         ftp = self._ftp_open_connection()
         if not ftp:
-            raise ConnectionError(f"Could not connect to {self.ip_number}:{self.ip_port}")
+            raise ConnectionError(
+                f"Could not connect to {self.ip_number}:{self.ip_port}"
+            )
 
         try:
             downloaded_files = self._ftp_download(
@@ -351,8 +373,9 @@ class PolaRX5(BaseReceiver):
 
         return downloaded_files
 
-    def _download_with_progressbar(self, ftp, remote_file, local_file,
-                                  remote_file_size, offset=0):
+    def _download_with_progressbar(
+        self, ftp, remote_file, local_file, remote_file_size, offset=0
+    ):
         """Download file with progress bar display."""
         if progressbar is None:
             # Fallback without progress bar
@@ -362,9 +385,12 @@ class PolaRX5(BaseReceiver):
             # Use progress bar
             widgets = [
                 f"Downloading {Path(remote_file).name}: ",
-                progressbar.Percentage(), " ",
-                progressbar.Bar(), " ",
-                progressbar.ETA(), " ",
+                progressbar.Percentage(),
+                " ",
+                progressbar.Bar(),
+                " ",
+                progressbar.ETA(),
+                " ",
                 progressbar.FileTransferSpeed(),
             ]
 
@@ -373,6 +399,7 @@ class PolaRX5(BaseReceiver):
             ).start()
 
             with open(local_file, "ab") as f:
+
                 def callback(chunk):
                     f.write(chunk)
                     pbar.update(pbar.value + len(chunk))
@@ -409,8 +436,8 @@ class PolaRX5(BaseReceiver):
             "timestamp": datetime.utcnow().isoformat(),
             "connection": self.get_connection_status(),
             "data_flow": "N/A",  # TODO: Implement data flow check
-            "storage": "N/A",    # TODO: Implement storage check
-            "overall_status": "unknown"
+            "storage": "N/A",  # TODO: Implement storage check
+            "overall_status": "unknown",
         }
 
         # Determine overall status

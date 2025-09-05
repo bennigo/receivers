@@ -14,6 +14,7 @@ from rich.table import Table
 # Import receiver classes (conditionally)
 try:
     from ..septentrio.polarx5 import PolaRX5
+
     HAS_POLARX5 = True
 except ImportError:
     HAS_POLARX5 = False
@@ -21,6 +22,7 @@ except ImportError:
 # Import configuration parser (will be updated when gps_parser is available)
 try:
     import gps_parser
+
     HAS_GPS_PARSER = True
 except ImportError:
     HAS_GPS_PARSER = False
@@ -46,9 +48,11 @@ def create_receiver(station_id: str, receiver_type: str = "polarx5") -> Any:
         # For now, create a minimal config for testing
         station_info = {
             "router": {"ip": "10.4.1.100"},  # Example IP
-            "receiver": {"ftpport": "21"}
+            "receiver": {"ftpport": "21"},
         }
-        console.print("[yellow]Warning: gps_parser not available, using minimal config[/yellow]")
+        console.print(
+            "[yellow]Warning: gps_parser not available, using minimal config[/yellow]"
+        )
     else:
         parser = gps_parser.Parser()
         station_info = parser.getStationInfo(station_id.upper())
@@ -71,7 +75,7 @@ def format_health_status(health: Dict[str, Any]) -> None:
     status_panel = Panel(
         f"[bold {status_color}]{health['overall_status'].upper()}[/bold {status_color}]",
         title=f"Station {health['station_id']} ({health['receiver_type']})",
-        expand=False
+        expand=False,
     )
     console.print(status_panel)
 
@@ -125,7 +129,7 @@ def cmd_download(args) -> int:
             "sync": not args.dry_run,
             "clean_tmp": args.clean_tmp,
             "archive": args.archive,
-            "loglevel": logging.DEBUG if args.verbose else logging.INFO
+            "loglevel": logging.DEBUG if args.verbose else logging.INFO,
         }
 
         if args.tmp_dir:
@@ -142,7 +146,9 @@ def cmd_download(args) -> int:
             console.print(json.dumps(result, indent=2, default=str))
         else:
             status_color = "green" if result["status"] == "completed" else "yellow"
-            console.print(f"\n[{status_color}]Status: {result['status']}[/{status_color}]")
+            console.print(
+                f"\n[{status_color}]Status: {result['status']}[/{status_color}]"
+            )
             console.print(f"Files checked: {result['files_checked']}")
             console.print(f"Files missing: {result['files_missing']}")
             console.print(f"Files downloaded: {result['files_downloaded']}")
@@ -179,7 +185,9 @@ def cmd_status(args) -> int:
             table.add_row("Passive Mode", "Yes" if info["pasv_mode"] else "No")
 
             # Connection status
-            conn_status = "✅ Connected" if connection["receiver"] else "❌ Disconnected"
+            conn_status = (
+                "✅ Connected" if connection["receiver"] else "❌ Disconnected"
+            )
             table.add_row("Connection", conn_status)
 
             console.print(table)
@@ -203,33 +211,21 @@ Examples:
   receivers download REYK --sync           # Download missing data
   receivers status HOFN --json             # Get status as JSON
   receivers download VMEY --start 2024-01-15 --end 2024-01-20 --dry-run
-        """
+        """,
     )
 
-    parser.add_argument(
-        "--version",
-        action="version",
-        version="%(prog)s 0.1.0"
-    )
+    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
 
     # Global options
     parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable verbose output"
+        "-v", "--verbose", action="store_true", help="Enable verbose output"
     )
 
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results as JSON"
-    )
+    parser.add_argument("--json", action="store_true", help="Output results as JSON")
 
     # Subcommands
     subparsers = parser.add_subparsers(
-        dest="command",
-        help="Available commands",
-        metavar="COMMAND"
+        dest="command", help="Available commands", metavar="COMMAND"
     )
 
     # Health check command
@@ -237,17 +233,17 @@ Examples:
         "health",
         help="Check receiver health status",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Check the health status of a GPS/GNSS receiver"
+        description="Check the health status of a GPS/GNSS receiver",
     )
     health_parser.add_argument(
-        "station_id",
-        help="Station identifier (e.g., REYK, HOFN, VMEY)"
+        "station_id", help="Station identifier (e.g., REYK, HOFN, VMEY)"
     )
     health_parser.add_argument(
-        "-t", "--receiver-type",
+        "-t",
+        "--receiver-type",
         default="polarx5",
         choices=["polarx5"],
-        help="Receiver type (default: polarx5)"
+        help="Receiver type (default: polarx5)",
     )
     health_parser.set_defaults(func=cmd_health)
 
@@ -256,58 +252,55 @@ Examples:
         "download",
         help="Download data from receiver",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Download GPS/GNSS data from receiver to local archive"
+        description="Download GPS/GNSS data from receiver to local archive",
     )
     download_parser.add_argument(
-        "station_id",
-        help="Station identifier (e.g., REYK, HOFN, VMEY)"
+        "station_id", help="Station identifier (e.g., REYK, HOFN, VMEY)"
     )
     download_parser.add_argument(
-        "-t", "--receiver-type",
+        "-t",
+        "--receiver-type",
         default="polarx5",
         choices=["polarx5"],
-        help="Receiver type (default: polarx5)"
+        help="Receiver type (default: polarx5)",
     )
     download_parser.add_argument(
-        "-s", "--start",
-        help="Start date (ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
+        "-s",
+        "--start",
+        help="Start date (ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)",
     )
     download_parser.add_argument(
-        "-e", "--end",
-        help="End date (ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
+        "-e", "--end", help="End date (ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
     )
     download_parser.add_argument(
         "--session",
         default="15s_24hr",
         choices=["15s_24hr", "1Hz_1hr", "status_1hr"],
-        help="Data session type (default: 15s_24hr)"
+        help="Data session type (default: 15s_24hr)",
     )
     download_parser.add_argument(
         "--sync",
         action="store_true",
-        help="Actually download files (default is dry-run)"
+        help="Actually download files (default is dry-run)",
     )
     download_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would be downloaded without downloading"
+        help="Show what would be downloaded without downloading",
     )
     download_parser.add_argument(
         "--clean-tmp",
         action="store_true",
         default=True,
-        help="Clean temporary directory before download"
+        help="Clean temporary directory before download",
     )
     download_parser.add_argument(
         "--no-archive",
         action="store_false",
         dest="archive",
-        help="Don't archive downloaded files"
+        help="Don't archive downloaded files",
     )
-    download_parser.add_argument(
-        "--tmp-dir",
-        help="Temporary download directory"
-    )
+    download_parser.add_argument("--tmp-dir", help="Temporary download directory")
     download_parser.set_defaults(func=cmd_download)
 
     # Status command
@@ -315,17 +308,17 @@ Examples:
         "status",
         help="Show receiver status information",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Display detailed status information for a receiver"
+        description="Display detailed status information for a receiver",
     )
     status_parser.add_argument(
-        "station_id",
-        help="Station identifier (e.g., REYK, HOFN, VMEY)"
+        "station_id", help="Station identifier (e.g., REYK, HOFN, VMEY)"
     )
     status_parser.add_argument(
-        "-t", "--receiver-type",
+        "-t",
+        "--receiver-type",
         default="polarx5",
         choices=["polarx5"],
-        help="Receiver type (default: polarx5)"
+        help="Receiver type (default: polarx5)",
     )
     status_parser.set_defaults(func=cmd_status)
 
