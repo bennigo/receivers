@@ -1,0 +1,580 @@
+Feb  2 20:52:01 crond[202]: crond: USER root pid 25376 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 20:53:01 crond[202]: crond: USER root pid 25408 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 20:54:01 crond[202]: crond: USER root pid 25435 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 20:55:01 crond[202]: crond: USER root pid 25467 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 20:55:02 timecheck: modemoff if  diff 1478 >= dur 1440 [sec]
+Feb  2 20:55:02 modem: OFF  ##
+Feb  2 20:55:02 modem-off: Turning modem off
+Feb  2 20:55:02 pppd[24372]: Modem hangup
+Feb  2 20:55:02 pppd[24372]: Connect time 24.7 minutes.
+Feb  2 20:55:02 pppd[24372]: Sent 154826 bytes, received 8139 bytes.
+Feb  2 20:55:02 pppd[24372]: Script /etc/ppp/ip-down started (pid 25493)
+Feb  2 20:55:02 pppd[24372]: Connection terminated.
+Feb  2 20:55:02 ip-down: Running scripts in /etc/ppp/gprs-down.d
+Feb  2 20:55:02 pppd[24372]: Script /etc/ppp/ip-down finished (pid 25493), status = 0x0
+Feb  2 20:55:02 pppd[24372]: Exit.
+Feb  2 20:56:01 crond[202]: crond: USER root pid 25524 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 20:57:01 crond[202]: crond: USER root pid 25556 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 20:58:01 crond[202]: crond: USER root pid 25588 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 20:59:01 crond[202]: crond: USER root pid 25620 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:00:01 crond[202]: crond: USER root pid 25652 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:00:02 modem: ON  ##
+Feb  2 21:00:02 start-gprs: Starting GPRS
+Feb  2 21:00:02 modem-on: Turning on modem power
+Feb  2 21:00:02 modem-on: Turning on modem
+Feb  2 21:00:03 modem-on: Modem is now on
+Feb  2 21:00:03 kernel: atmel_usart f8020000.serial: using dma1chan2 for rx DMA transfers
+Feb  2 21:00:03 kernel: atmel_usart f8020000.serial: using dma1chan3 for tx DMA transfers
+Feb  2 21:00:04 modem-connect: Not registered on network, searching
+Feb  2 21:00:05 modem-connect: Not registered on network, searching
+Feb  2 21:00:06 modem-connect: Not registered on network, searching
+Feb  2 21:00:07 modem-connect: Not registered on network, searching
+Feb  2 21:00:08 modem-connect: Not registered on network, searching
+Feb  2 21:00:09 modem-connect: Not registered on network, searching
+Feb  2 21:00:10 modem-connect: Not registered on network, searching
+Feb  2 21:00:11 modem-connect: Not registered on network, searching
+Feb  2 21:00:12 modem-connect: Not registered on network, searching
+Feb  2 21:00:13 modem-connect: Not registered on network, searching
+Feb  2 21:00:14 modem-connect: Not registered on network, searching
+Feb  2 21:00:15 modem-connect: Registered on home network
+Feb  2 21:00:16 modem-connect: Signal strength is 19 (ber=99)
+Feb  2 21:00:17 pppd[25682]: pppd 2.4.7 started by root, uid 0
+Feb  2 21:00:17 kernel: atmel_usart f8020000.serial: using dma1chan2 for rx DMA transfers
+Feb  2 21:00:17 kernel: atmel_usart f8020000.serial: using dma1chan3 for tx DMA transfers
+Feb  2 21:00:18 gprs-connect: Start of chat
+Feb  2 21:00:23 gprs-connect: chat returned 0
+Feb  2 21:00:23 pppd[25682]: Script /etc/ppp/gprs-connect finished (pid 25685), status = 0x0
+Feb  2 21:00:23 pppd[25682]: Serial connection established.
+Feb  2 21:00:23 pppd[25682]: using channel 41
+Feb  2 21:00:23 pppd[25682]: Using interface ppp0
+Feb  2 21:00:23 pppd[25682]: Connect: ppp0 <--> /dev/ttyS3
+Feb  2 21:00:24 pppd[25682]: sent [LCP ConfReq id=0x1 <asyncmap 0x0> <magic 0xfd6b412> <pcomp> <accomp>]
+Feb  2 21:00:24 pppd[25682]: rcvd [LCP ConfNak id=0x1 <asyncmap 0xa0000>]
+Feb  2 21:00:24 pppd[25682]: sent [LCP ConfReq id=0x2 <asyncmap 0xa0000> <magic 0xfd6b412> <pcomp> <accomp>]
+Feb  2 21:00:24 pppd[25682]: rcvd [LCP ConfAck id=0x2 <asyncmap 0xa0000> <magic 0xfd6b412> <pcomp> <accomp>]
+Feb  2 21:00:25 pppd[25682]: rcvd [LCP ConfReq id=0x3 <asyncmap 0xa0000> <pcomp> <accomp> <magic 0x803a854a> <auth chap MD5>]
+Feb  2 21:00:25 pppd[25682]: sent [LCP ConfNak id=0x3 <auth pap>]
+Feb  2 21:00:25 pppd[25682]: rcvd [LCP ConfReq id=0x5 <asyncmap 0xa0000> <pcomp> <accomp> <magic 0x803a854a> <auth pap>]
+Feb  2 21:00:25 pppd[25682]: sent [LCP ConfAck id=0x5 <asyncmap 0xa0000> <pcomp> <accomp> <magic 0x803a854a> <auth pap>]
+Feb  2 21:00:25 pppd[25682]: sent [PAP AuthReq id=0x1 user="dummy" password=<hidden>]
+Feb  2 21:00:25 pppd[25682]: rcvd [PAP AuthAck id=0x1 ""]
+Feb  2 21:00:25 pppd[25682]: PAP authentication succeeded
+Feb  2 21:00:25 pppd[25682]: sent [IPCP ConfReq id=0x1 <compress VJ 0f 01> <addr 0.0.0.0> <ms-dns1 0.0.0.0> <ms-dns2 0.0.0.0>]
+Feb  2 21:00:26 pppd[25682]: rcvd [IPCP ConfReq id=0x1 <addr 192.168.254.254>]
+Feb  2 21:00:26 pppd[25682]: sent [IPCP ConfAck id=0x1 <addr 192.168.254.254>]
+Feb  2 21:00:26 pppd[25682]: rcvd [IPCP ConfRej id=0x1 <compress VJ 0f 01>]
+Feb  2 21:00:26 pppd[25682]: sent [IPCP ConfReq id=0x2 <addr 0.0.0.0> <ms-dns1 0.0.0.0> <ms-dns2 0.0.0.0>]
+Feb  2 21:00:26 pppd[25682]: rcvd [IPCP ConfNak id=0x2 <addr 10.4.2.18> <ms-dns1 10.170.255.200> <ms-dns2 10.170.255.210>]
+Feb  2 21:00:26 pppd[25682]: sent [IPCP ConfReq id=0x3 <addr 10.4.2.18> <ms-dns1 10.170.255.200> <ms-dns2 10.170.255.210>]
+Feb  2 21:00:26 pppd[25682]: rcvd [IPCP ConfAck id=0x3 <addr 10.4.2.18> <ms-dns1 10.170.255.200> <ms-dns2 10.170.255.210>]
+Feb  2 21:00:26 pppd[25682]: local  IP address 10.4.2.18
+Feb  2 21:00:26 pppd[25682]: remote IP address 192.168.254.254
+Feb  2 21:00:26 pppd[25682]: primary   DNS address 10.170.255.200
+Feb  2 21:00:26 pppd[25682]: secondary DNS address 10.170.255.210
+Feb  2 21:00:26 pppd[25700]: Script /etc/ppp/ip-up started (pid 25702)
+Feb  2 21:00:26 ip-up: Running scripts in /etc/ppp/gprs-up.d
+Feb  2 21:00:26 pppd[25700]: Script /etc/ppp/ip-up finished (pid 25702), status = 0x1
+Feb  2 21:00:27 vwmeasure: VW1: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:00:28 vwmeasure: VW1 temperature: Uref = 1.9651V, NTC = 9625.5 ohm, temp = 0.3 degC
+Feb  2 21:00:28 vwmeasure: VW1 freq: f = 1797.652 Hz, y = 4915470.092 (corr=-0.401414)
+Feb  2 21:00:28 vwmeasure: VW2: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:00:29 vwmeasure: VW2 temperature: Uref = 1.9651V, NTC = 9615.7 ohm, temp = 0.3 degC
+Feb  2 21:00:29 vwmeasure: VW2 freq: f = 1751.896 Hz, y = 6708871.358 (corr=-0.019513)
+Feb  2 21:00:29 vwmeasure: VW3: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:00:30 vwmeasure: VW3 temperature: Uref = 1.9651V, NTC = 9735.9 ohm, temp = 0.1 degC
+Feb  2 21:00:30 vwmeasure: VW3 freq: f = 1687.062 Hz, y = 4876640.586 (corr=-0.149364)
+Feb  2 21:00:30 sendcard: Send Delete: 0 SaveLog: 1 RemoveOld: 0
+Feb  2 21:00:30 sendcard: Trying to mount SD Card.
+Feb  2 21:00:30 kernel: FAT-fs (mmcblk0p1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.
+Feb  2 21:00:30 sendcard: SD Card present, mounted.
+Feb  2 21:00:31 sendcard: Including logger messages: /var/log/messages
+Feb  2 21:00:32 sendcard: Creating tar.gz file:
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0        47 2020-02-02 21:00:31 curr1.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:00:31 curr2.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:00:31 curr3.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:00:31 curr4.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:00:31 curr5.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:00:31 curr6.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0       150 2020-02-02 21:00:31 power.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0        76 2020-02-02 21:00:31 snowsensor.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0    227514 2020-02-02 21:00:31 vw1.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0    226803 2020-02-02 21:00:31 vw2.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0    130205 2020-02-02 21:00:31 vw3.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:00:31 vw4.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:00:31 vw5.csv
+Feb  2 21:00:38 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:00:31 vw6.csv
+Feb  2 21:00:38 sendcard: Sending it to SD card as: /190522-10398_20200202-210032.tar.gz (92888 bytes)
+Feb  2 21:00:38 sendcard: Data successfully stored
+Feb  2 21:00:39 sendcard: SD Card unmounted.
+Feb  2 21:01:01 crond[202]: crond: USER root pid 25825 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:02:01 crond[202]: crond: USER root pid 25857 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:03:01 crond[202]: crond: USER root pid 25889 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:04:01 crond[202]: crond: USER root pid 25926 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:05:01 crond[202]: crond: USER root pid 25958 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:06:01 crond[202]: crond: USER root pid 25990 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:07:01 crond[202]: crond: USER root pid 26022 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:08:01 crond[202]: crond: USER root pid 26054 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:09:01 crond[202]: crond: USER root pid 26086 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:10:01 crond[202]: crond: USER root pid 26118 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:10:02 vwmeasure: VW1: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:10:03 vwmeasure: VW1 temperature: Uref = 1.9651V, NTC = 9625.5 ohm, temp = 0.3 degC
+Feb  2 21:10:03 vwmeasure: VW1 freq: f = 1797.650 Hz, y = 4920997.007 (corr=-0.402031)
+Feb  2 21:10:03 vwmeasure: VW2: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:10:04 vwmeasure: VW2 temperature: Uref = 1.9651V, NTC = 9615.7 ohm, temp = 0.3 degC
+Feb  2 21:10:04 vwmeasure: VW2 freq: f = 1751.896 Hz, y = 6435427.171 (corr=-0.019543)
+Feb  2 21:10:04 vwmeasure: VW3: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:10:05 vwmeasure: VW3 temperature: Uref = 1.9651V, NTC = 9735.9 ohm, temp = 0.1 degC
+Feb  2 21:10:05 vwmeasure: VW3 freq: f = 1687.063 Hz, y = 4811694.116 (corr=-0.149331)
+Feb  2 21:10:06 sendcard: Send Delete: 0 SaveLog: 1 RemoveOld: 0
+Feb  2 21:10:06 sendcard: Trying to mount SD Card.
+Feb  2 21:10:06 kernel: FAT-fs (mmcblk0p1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.
+Feb  2 21:10:06 sendcard: SD Card present, mounted.
+Feb  2 21:10:06 sendcard: Including logger messages: /var/log/messages
+Feb  2 21:10:07 sendcard: Creating tar.gz file:
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0        47 2020-02-02 21:10:06 curr1.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:10:06 curr2.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:10:06 curr3.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:10:06 curr4.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:10:06 curr5.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:10:06 curr6.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0       150 2020-02-02 21:10:06 power.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0        76 2020-02-02 21:10:06 snowsensor.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0    227544 2020-02-02 21:10:06 vw1.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0    226833 2020-02-02 21:10:06 vw2.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0    130235 2020-02-02 21:10:06 vw3.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:10:06 vw4.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:10:06 vw5.csv
+Feb  2 21:10:13 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:10:06 vw6.csv
+Feb  2 21:10:13 sendcard: Sending it to SD card as: /190522-10398_20200202-211007.tar.gz (92906 bytes)
+Feb  2 21:10:13 sendcard: Data successfully stored
+Feb  2 21:10:13 sendcard: SD Card unmounted.
+Feb  2 21:11:01 crond[202]: crond: USER root pid 26237 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:12:01 crond[202]: crond: USER root pid 26269 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:13:01 crond[202]: crond: USER root pid 26301 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:14:01 crond[202]: crond: USER root pid 26333 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:15:01 crond[202]: crond: USER root pid 26365 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:16:02 crond[202]: crond: USER root pid 26397 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:17:01 crond[202]: crond: USER root pid 26429 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:18:01 crond[202]: crond: USER root pid 26456 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:19:01 crond[202]: crond: USER root pid 26488 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:20:01 crond[202]: crond: USER root pid 26520 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:20:01 vwmeasure: VW1: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:20:02 vwmeasure: VW1 temperature: Uref = 1.9650V, NTC = 9626.4 ohm, temp = 0.3 degC
+Feb  2 21:20:02 vwmeasure: VW1 freq: f = 1797.654 Hz, y = 4922421.229 (corr=-0.400631)
+Feb  2 21:20:02 vwmeasure: VW2: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:20:03 vwmeasure: VW2 temperature: Uref = 1.9650V, NTC = 9616.7 ohm, temp = 0.3 degC
+Feb  2 21:20:03 vwmeasure: VW2 freq: f = 1751.897 Hz, y = 6464014.781 (corr=-0.019301)
+Feb  2 21:20:03 vwmeasure: VW3: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:20:04 vwmeasure: VW3 temperature: Uref = 1.9650V, NTC = 9736.8 ohm, temp = 0.1 degC
+Feb  2 21:20:04 vwmeasure: VW3 freq: f = 1687.063 Hz, y = 4744899.506 (corr=-0.149223)
+Feb  2 21:20:05 sendcard: Send Delete: 0 SaveLog: 1 RemoveOld: 0
+Feb  2 21:20:05 sendcard: Trying to mount SD Card.
+Feb  2 21:20:05 kernel: FAT-fs (mmcblk0p1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.
+Feb  2 21:20:05 sendcard: SD Card present, mounted.
+Feb  2 21:20:05 sendcard: Including logger messages: /var/log/messages
+Feb  2 21:20:06 sendcard: Creating tar.gz file:
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0        47 2020-02-02 21:20:05 curr1.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:20:05 curr2.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:20:05 curr3.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:20:05 curr4.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:20:05 curr5.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:20:05 curr6.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0       150 2020-02-02 21:20:05 power.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0        76 2020-02-02 21:20:05 snowsensor.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0    227574 2020-02-02 21:20:05 vw1.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0    226863 2020-02-02 21:20:05 vw2.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0    130265 2020-02-02 21:20:05 vw3.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:20:05 vw4.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:20:05 vw5.csv
+Feb  2 21:20:12 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:20:05 vw6.csv
+Feb  2 21:20:13 sendcard: Sending it to SD card as: /190522-10398_20200202-212006.tar.gz (92918 bytes)
+Feb  2 21:20:13 sendcard: Data successfully stored
+Feb  2 21:20:13 sendcard: SD Card unmounted.
+Feb  2 21:21:01 crond[202]: crond: USER root pid 26638 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:22:01 crond[202]: crond: USER root pid 26670 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:23:01 crond[202]: crond: USER root pid 26702 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:24:01 crond[202]: crond: USER root pid 26734 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:25:01 crond[202]: crond: USER root pid 26766 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:25:01 timecheck: modemoff if  diff 1475 >= dur 1440 [sec]
+Feb  2 21:25:01 modem: OFF  ##
+Feb  2 21:25:01 modem-off: Turning modem off
+Feb  2 21:25:01 pppd[25700]: Modem hangup
+Feb  2 21:25:01 pppd[25700]: Connect time 24.6 minutes.
+Feb  2 21:25:01 pppd[25700]: Sent 0 bytes, received 0 bytes.
+Feb  2 21:25:01 pppd[25700]: Script /etc/ppp/ip-down started (pid 26792)
+Feb  2 21:25:01 pppd[25700]: Connection terminated.
+Feb  2 21:25:01 ip-down: Running scripts in /etc/ppp/gprs-down.d
+Feb  2 21:25:01 pppd[25700]: Script /etc/ppp/ip-down finished (pid 26792), status = 0x0
+Feb  2 21:25:01 pppd[25700]: Exit.
+Feb  2 21:26:01 crond[202]: crond: USER root pid 26823 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:27:01 crond[202]: crond: USER root pid 26855 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:28:01 crond[202]: crond: USER root pid 26887 cmd /etc/rc.d/55_ntp settime
+Feb  2 21:28:01 crond[202]: crond: USER root pid 26888 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:28:01 ntp: Setting clock from NTP server 10.170.255.200...
+Feb  2 21:28:11 ntp: Alarm clock
+Feb  2 21:29:01 crond[202]: crond: USER root pid 26926 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:30:01 crond[202]: crond: USER root pid 26958 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:30:01 modem: ON  ##
+Feb  2 21:30:01 start-gprs: Starting GPRS
+Feb  2 21:30:01 modem-on: Turning on modem power
+Feb  2 21:30:01 modem-on: Turning on modem
+Feb  2 21:30:02 modem-on: Modem is now on
+Feb  2 21:30:02 kernel: atmel_usart f8020000.serial: using dma1chan2 for rx DMA transfers
+Feb  2 21:30:02 kernel: atmel_usart f8020000.serial: using dma1chan3 for tx DMA transfers
+Feb  2 21:30:03 modem-connect: Not registered on network, searching
+Feb  2 21:30:04 modem-connect: Not registered on network, searching
+Feb  2 21:30:05 modem-connect: Not registered on network, searching
+Feb  2 21:30:06 modem-connect: Not registered on network, searching
+Feb  2 21:30:07 modem-connect: Not registered on network, searching
+Feb  2 21:30:08 modem-connect: Not registered on network, searching
+Feb  2 21:30:09 modem-connect: Not registered on network, searching
+Feb  2 21:30:10 modem-connect: Not registered on network, searching
+Feb  2 21:30:11 modem-connect: Not registered on network, searching
+Feb  2 21:30:12 modem-connect: Not registered on network, searching
+Feb  2 21:30:13 modem-connect: Not registered on network, searching
+Feb  2 21:30:14 modem-connect: Registered on home network
+Feb  2 21:30:16 modem-connect: Signal strength is 19 (ber=99)
+Feb  2 21:30:16 pppd[26983]: pppd 2.4.7 started by root, uid 0
+Feb  2 21:30:16 kernel: atmel_usart f8020000.serial: using dma1chan2 for rx DMA transfers
+Feb  2 21:30:16 kernel: atmel_usart f8020000.serial: using dma1chan3 for tx DMA transfers
+Feb  2 21:30:17 gprs-connect: Start of chat
+Feb  2 21:30:19 gprs-connect: chat returned 0
+Feb  2 21:30:19 pppd[26983]: Script /etc/ppp/gprs-connect finished (pid 26986), status = 0x0
+Feb  2 21:30:19 pppd[26983]: Serial connection established.
+Feb  2 21:30:19 pppd[26983]: using channel 43
+Feb  2 21:30:19 pppd[26983]: Using interface ppp0
+Feb  2 21:30:19 pppd[26983]: Connect: ppp0 <--> /dev/ttyS3
+Feb  2 21:30:20 pppd[26983]: sent [LCP ConfReq id=0x1 <asyncmap 0x0> <magic 0xe4dfe135> <pcomp> <accomp>]
+Feb  2 21:30:20 pppd[26983]: rcvd [LCP ConfNak id=0x1 <asyncmap 0xa0000>]
+Feb  2 21:30:20 pppd[26983]: sent [LCP ConfReq id=0x2 <asyncmap 0xa0000> <magic 0xe4dfe135> <pcomp> <accomp>]
+Feb  2 21:30:20 pppd[26983]: rcvd [LCP ConfAck id=0x2 <asyncmap 0xa0000> <magic 0xe4dfe135> <pcomp> <accomp>]
+Feb  2 21:30:22 pppd[26983]: rcvd [LCP ConfReq id=0x3 <asyncmap 0xa0000> <pcomp> <accomp> <magic 0x4c6ed4a2> <auth chap MD5>]
+Feb  2 21:30:22 pppd[26983]: sent [LCP ConfNak id=0x3 <auth pap>]
+Feb  2 21:30:22 pppd[26983]: rcvd [LCP ConfReq id=0x5 <asyncmap 0xa0000> <pcomp> <accomp> <magic 0x4c6ed4a2> <auth pap>]
+Feb  2 21:30:22 pppd[26983]: sent [LCP ConfAck id=0x5 <asyncmap 0xa0000> <pcomp> <accomp> <magic 0x4c6ed4a2> <auth pap>]
+Feb  2 21:30:22 pppd[26983]: sent [PAP AuthReq id=0x1 user="dummy" password=<hidden>]
+Feb  2 21:30:22 pppd[26983]: rcvd [PAP AuthAck id=0x1 ""]
+Feb  2 21:30:22 pppd[26983]: PAP authentication succeeded
+Feb  2 21:30:22 pppd[26983]: sent [IPCP ConfReq id=0x1 <compress VJ 0f 01> <addr 0.0.0.0> <ms-dns1 0.0.0.0> <ms-dns2 0.0.0.0>]
+Feb  2 21:30:23 pppd[26983]: rcvd [IPCP ConfReq id=0x1 <addr 192.168.254.254>]
+Feb  2 21:30:23 pppd[26983]: sent [IPCP ConfAck id=0x1 <addr 192.168.254.254>]
+Feb  2 21:30:23 pppd[26983]: rcvd [IPCP ConfRej id=0x1 <compress VJ 0f 01>]
+Feb  2 21:30:23 pppd[26983]: sent [IPCP ConfReq id=0x2 <addr 0.0.0.0> <ms-dns1 0.0.0.0> <ms-dns2 0.0.0.0>]
+Feb  2 21:30:23 pppd[26983]: rcvd [IPCP ConfNak id=0x2 <addr 10.4.2.18> <ms-dns1 10.170.255.200> <ms-dns2 10.170.255.210>]
+Feb  2 21:30:23 pppd[26983]: sent [IPCP ConfReq id=0x3 <addr 10.4.2.18> <ms-dns1 10.170.255.200> <ms-dns2 10.170.255.210>]
+Feb  2 21:30:23 pppd[26983]: rcvd [IPCP ConfAck id=0x3 <addr 10.4.2.18> <ms-dns1 10.170.255.200> <ms-dns2 10.170.255.210>]
+Feb  2 21:30:23 pppd[26983]: local  IP address 10.4.2.18
+Feb  2 21:30:23 pppd[26983]: remote IP address 192.168.254.254
+Feb  2 21:30:23 pppd[26983]: primary   DNS address 10.170.255.200
+Feb  2 21:30:23 pppd[26983]: secondary DNS address 10.170.255.210
+Feb  2 21:30:23 pppd[27001]: Script /etc/ppp/ip-up started (pid 27003)
+Feb  2 21:30:23 ip-up: Running scripts in /etc/ppp/gprs-up.d
+Feb  2 21:30:23 pppd[27001]: Script /etc/ppp/ip-up finished (pid 27003), status = 0x1
+Feb  2 21:30:23 vwmeasure: VW1: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:30:24 vwmeasure: VW1 temperature: Uref = 1.9650V, NTC = 9622.5 ohm, temp = 0.3 degC
+Feb  2 21:30:24 vwmeasure: VW1 freq: f = 1797.661 Hz, y = 4916185.008 (corr=-0.398275)
+Feb  2 21:30:24 vwmeasure: VW2: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:30:25 vwmeasure: VW2 temperature: Uref = 1.9650V, NTC = 9616.7 ohm, temp = 0.3 degC
+Feb  2 21:30:25 vwmeasure: VW2 freq: f = 1751.898 Hz, y = 6436005.106 (corr=-0.018943)
+Feb  2 21:30:26 vwmeasure: VW3: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:30:26 vwmeasure: VW3 temperature: Uref = 1.9650V, NTC = 9736.8 ohm, temp = 0.1 degC
+Feb  2 21:30:27 vwmeasure: VW3 freq: f = 1687.062 Hz, y = 4881947.268 (corr=-0.149420)
+Feb  2 21:30:27 sendcard: Send Delete: 0 SaveLog: 1 RemoveOld: 0
+Feb  2 21:30:27 sendcard: Trying to mount SD Card.
+Feb  2 21:30:27 kernel: FAT-fs (mmcblk0p1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.
+Feb  2 21:30:27 sendcard: SD Card present, mounted.
+Feb  2 21:30:27 sendcard: Including logger messages: /var/log/messages
+Feb  2 21:30:28 sendcard: Creating tar.gz file:
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0        47 2020-02-02 21:30:27 curr1.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:30:27 curr2.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:30:27 curr3.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:30:27 curr4.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:30:27 curr5.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:30:27 curr6.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0       150 2020-02-02 21:30:27 power.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0        76 2020-02-02 21:30:27 snowsensor.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0    227604 2020-02-02 21:30:27 vw1.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0    226893 2020-02-02 21:30:27 vw2.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0    130295 2020-02-02 21:30:27 vw3.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:30:27 vw4.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:30:27 vw5.csv
+Feb  2 21:30:34 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:30:27 vw6.csv
+Feb  2 21:30:34 sendcard: Sending it to SD card as: /190522-10398_20200202-213028.tar.gz (92925 bytes)
+Feb  2 21:30:35 sendcard: Data successfully stored
+Feb  2 21:30:35 sendcard: SD Card unmounted.
+Feb  2 21:31:01 crond[202]: crond: USER root pid 27131 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:32:01 crond[202]: crond: USER root pid 27163 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:33:01 crond[202]: crond: USER root pid 27195 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:34:01 crond[202]: crond: USER root pid 27232 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:35:01 crond[202]: crond: USER root pid 27264 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:36:01 crond[202]: crond: USER root pid 27296 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:37:01 crond[202]: crond: USER root pid 27328 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:38:01 crond[202]: crond: USER root pid 27360 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:39:01 crond[202]: crond: USER root pid 27392 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:40:01 crond[202]: crond: USER root pid 27424 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:40:01 vwmeasure: VW1: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:40:02 vwmeasure: VW1 temperature: Uref = 1.9650V, NTC = 9620.6 ohm, temp = 0.3 degC
+Feb  2 21:40:02 vwmeasure: VW1 freq: f = 1797.665 Hz, y = 4921533.036 (corr=-0.397062)
+Feb  2 21:40:02 vwmeasure: VW2: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:40:03 vwmeasure: VW2 temperature: Uref = 1.9650V, NTC = 9614.7 ohm, temp = 0.3 degC
+Feb  2 21:40:03 vwmeasure: VW2 freq: f = 1751.899 Hz, y = 6598012.774 (corr=-0.018310)
+Feb  2 21:40:03 vwmeasure: VW3: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:40:04 vwmeasure: VW3 temperature: Uref = 1.9650V, NTC = 9736.8 ohm, temp = 0.1 degC
+Feb  2 21:40:04 vwmeasure: VW3 freq: f = 1687.063 Hz, y = 4756840.990 (corr=-0.149250)
+Feb  2 21:40:05 sendcard: Send Delete: 0 SaveLog: 1 RemoveOld: 0
+Feb  2 21:40:05 sendcard: Trying to mount SD Card.
+Feb  2 21:40:05 kernel: FAT-fs (mmcblk0p1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.
+Feb  2 21:40:05 sendcard: SD Card present, mounted.
+Feb  2 21:40:05 sendcard: Including logger messages: /var/log/messages
+Feb  2 21:40:06 sendcard: Creating tar.gz file:
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0        47 2020-02-02 21:40:05 curr1.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:40:05 curr2.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:40:05 curr3.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:40:05 curr4.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:40:05 curr5.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:40:05 curr6.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0       150 2020-02-02 21:40:05 power.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0        76 2020-02-02 21:40:05 snowsensor.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0    227634 2020-02-02 21:40:05 vw1.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0    226923 2020-02-02 21:40:05 vw2.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0    130325 2020-02-02 21:40:05 vw3.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:40:05 vw4.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:40:05 vw5.csv
+Feb  2 21:40:12 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:40:05 vw6.csv
+Feb  2 21:40:12 sendcard: Sending it to SD card as: /190522-10398_20200202-214006.tar.gz (92930 bytes)
+Feb  2 21:40:12 sendcard: Data successfully stored
+Feb  2 21:40:12 sendcard: SD Card unmounted.
+Feb  2 21:41:01 crond[202]: crond: USER root pid 27542 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:42:01 crond[202]: crond: USER root pid 27574 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:43:01 crond[202]: crond: USER root pid 27606 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:44:01 crond[202]: crond: USER root pid 27638 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:45:01 crond[202]: crond: USER root pid 27670 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:46:01 crond[202]: crond: USER root pid 27697 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:47:01 crond[202]: crond: USER root pid 27729 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:48:01 crond[202]: crond: USER root pid 27761 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:49:01 crond[202]: crond: USER root pid 27793 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:50:01 crond[202]: crond: USER root pid 27841 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:50:01 vwmeasure: VW1: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:50:02 vwmeasure: VW1 temperature: Uref = 1.9650V, NTC = 9616.7 ohm, temp = 0.3 degC
+Feb  2 21:50:02 vwmeasure: VW1 freq: f = 1797.672 Hz, y = 4908611.837 (corr=-0.394785)
+Feb  2 21:50:02 vwmeasure: VW2: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:50:03 vwmeasure: VW2 temperature: Uref = 1.9650V, NTC = 9612.7 ohm, temp = 0.4 degC
+Feb  2 21:50:03 vwmeasure: VW2 freq: f = 1751.901 Hz, y = 6565435.110 (corr=-0.017760)
+Feb  2 21:50:03 vwmeasure: VW3: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 21:50:04 vwmeasure: VW3 temperature: Uref = 1.9650V, NTC = 9734.9 ohm, temp = 0.1 degC
+Feb  2 21:50:04 vwmeasure: VW3 freq: f = 1687.063 Hz, y = 4764425.460 (corr=-0.149199)
+Feb  2 21:50:05 sendcard: Send Delete: 0 SaveLog: 1 RemoveOld: 0
+Feb  2 21:50:05 sendcard: Trying to mount SD Card.
+Feb  2 21:50:05 kernel: FAT-fs (mmcblk0p1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.
+Feb  2 21:50:05 sendcard: SD Card present, mounted.
+Feb  2 21:50:05 sendcard: Including logger messages: /var/log/messages
+Feb  2 21:50:06 sendcard: Creating tar.gz file:
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0        47 2020-02-02 21:50:05 curr1.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:50:05 curr2.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:50:05 curr3.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:50:05 curr4.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:50:05 curr5.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0        23 2020-02-02 21:50:05 curr6.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0       150 2020-02-02 21:50:05 power.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0        76 2020-02-02 21:50:05 snowsensor.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0    227664 2020-02-02 21:50:05 vw1.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0    226953 2020-02-02 21:50:05 vw2.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0    130355 2020-02-02 21:50:05 vw3.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:50:05 vw4.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:50:05 vw5.csv
+Feb  2 21:50:12 sendcard: -rw-r--r-- 0/0        62 2020-02-02 21:50:05 vw6.csv
+Feb  2 21:50:12 sendcard: Sending it to SD card as: /190522-10398_20200202-215006.tar.gz (92942 bytes)
+Feb  2 21:50:13 sendcard: Data successfully stored
+Feb  2 21:50:13 sendcard: SD Card unmounted.
+Feb  2 21:51:01 crond[202]: crond: USER root pid 27964 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:52:01 crond[202]: crond: USER root pid 27991 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:53:01 crond[202]: crond: USER root pid 28023 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:54:01 crond[202]: crond: USER root pid 28055 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:55:01 crond[202]: crond: USER root pid 28087 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:55:01 timecheck: modemoff if  diff 1478 >= dur 1440 [sec]
+Feb  2 21:55:01 modem: OFF  ##
+Feb  2 21:55:01 modem-off: Turning modem off
+Feb  2 21:55:01 pppd[27001]: Modem hangup
+Feb  2 21:55:01 pppd[27001]: Connect time 24.7 minutes.
+Feb  2 21:55:01 pppd[27001]: Sent 2900 bytes, received 1810 bytes.
+Feb  2 21:55:01 pppd[27001]: Script /etc/ppp/ip-down started (pid 28113)
+Feb  2 21:55:01 pppd[27001]: Connection terminated.
+Feb  2 21:55:01 ip-down: Running scripts in /etc/ppp/gprs-down.d
+Feb  2 21:55:02 pppd[27001]: Script /etc/ppp/ip-down finished (pid 28113), status = 0x0
+Feb  2 21:55:02 pppd[27001]: Exit.
+Feb  2 21:56:01 crond[202]: crond: USER root pid 28144 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:57:01 crond[202]: crond: USER root pid 28176 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:58:01 crond[202]: crond: USER root pid 28208 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 21:59:01 crond[202]: crond: USER root pid 28240 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:00:01 crond[202]: crond: USER root pid 28272 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:00:01 modem: ON  ##
+Feb  2 22:00:01 start-gprs: Starting GPRS
+Feb  2 22:00:01 modem-on: Turning on modem power
+Feb  2 22:00:01 modem-on: Turning on modem
+Feb  2 22:00:02 modem-on: Modem is now on
+Feb  2 22:00:02 kernel: atmel_usart f8020000.serial: using dma1chan2 for rx DMA transfers
+Feb  2 22:00:02 kernel: atmel_usart f8020000.serial: using dma1chan3 for tx DMA transfers
+Feb  2 22:00:03 modem-connect: Not registered on network, searching
+Feb  2 22:00:04 modem-connect: Not registered on network, searching
+Feb  2 22:00:05 modem-connect: Not registered on network, searching
+Feb  2 22:00:06 modem-connect: Not registered on network, searching
+Feb  2 22:00:07 modem-connect: Not registered on network, searching
+Feb  2 22:00:08 modem-connect: Not registered on network, searching
+Feb  2 22:00:09 modem-connect: Not registered on network, searching
+Feb  2 22:00:10 modem-connect: Not registered on network, searching
+Feb  2 22:00:11 modem-connect: Not registered on network, searching
+Feb  2 22:00:13 modem-connect: Not registered on network, searching
+Feb  2 22:00:14 modem-connect: Registered on home network
+Feb  2 22:00:15 modem-connect: Signal strength is 19 (ber=99)
+Feb  2 22:00:15 pppd[28297]: pppd 2.4.7 started by root, uid 0
+Feb  2 22:00:15 kernel: atmel_usart f8020000.serial: using dma1chan2 for rx DMA transfers
+Feb  2 22:00:15 kernel: atmel_usart f8020000.serial: using dma1chan3 for tx DMA transfers
+Feb  2 22:00:16 gprs-connect: Start of chat
+Feb  2 22:00:18 gprs-connect: chat returned 0
+Feb  2 22:00:18 pppd[28297]: Script /etc/ppp/gprs-connect finished (pid 28300), status = 0x0
+Feb  2 22:00:18 pppd[28297]: Serial connection established.
+Feb  2 22:00:18 pppd[28297]: using channel 45
+Feb  2 22:00:18 pppd[28297]: Using interface ppp0
+Feb  2 22:00:18 pppd[28297]: Connect: ppp0 <--> /dev/ttyS3
+Feb  2 22:00:19 pppd[28297]: sent [LCP ConfReq id=0x1 <asyncmap 0x0> <magic 0xf18d2863> <pcomp> <accomp>]
+Feb  2 22:00:19 pppd[28297]: rcvd [LCP ConfNak id=0x1 <asyncmap 0xa0000>]
+Feb  2 22:00:19 pppd[28297]: sent [LCP ConfReq id=0x2 <asyncmap 0xa0000> <magic 0xf18d2863> <pcomp> <accomp>]
+Feb  2 22:00:19 pppd[28297]: rcvd [LCP ConfAck id=0x2 <asyncmap 0xa0000> <magic 0xf18d2863> <pcomp> <accomp>]
+Feb  2 22:00:20 pppd[28297]: rcvd [LCP ConfReq id=0x3 <asyncmap 0xa0000> <pcomp> <accomp> <magic 0x40dbb906> <auth chap MD5>]
+Feb  2 22:00:20 pppd[28297]: sent [LCP ConfNak id=0x3 <auth pap>]
+Feb  2 22:00:20 pppd[28297]: rcvd [LCP ConfReq id=0x5 <asyncmap 0xa0000> <pcomp> <accomp> <magic 0x40dbb906> <auth pap>]
+Feb  2 22:00:20 pppd[28297]: sent [LCP ConfAck id=0x5 <asyncmap 0xa0000> <pcomp> <accomp> <magic 0x40dbb906> <auth pap>]
+Feb  2 22:00:20 pppd[28297]: sent [PAP AuthReq id=0x1 user="dummy" password=<hidden>]
+Feb  2 22:00:20 pppd[28297]: rcvd [PAP AuthAck id=0x1 ""]
+Feb  2 22:00:20 pppd[28297]: PAP authentication succeeded
+Feb  2 22:00:20 pppd[28297]: sent [IPCP ConfReq id=0x1 <compress VJ 0f 01> <addr 0.0.0.0> <ms-dns1 0.0.0.0> <ms-dns2 0.0.0.0>]
+Feb  2 22:00:21 pppd[28297]: rcvd [IPCP ConfReq id=0x1 <addr 192.168.254.254>]
+Feb  2 22:00:21 pppd[28297]: sent [IPCP ConfAck id=0x1 <addr 192.168.254.254>]
+Feb  2 22:00:21 pppd[28297]: rcvd [IPCP ConfRej id=0x1 <compress VJ 0f 01>]
+Feb  2 22:00:21 pppd[28297]: sent [IPCP ConfReq id=0x2 <addr 0.0.0.0> <ms-dns1 0.0.0.0> <ms-dns2 0.0.0.0>]
+Feb  2 22:00:21 pppd[28297]: rcvd [IPCP ConfNak id=0x2 <addr 10.4.2.18> <ms-dns1 10.170.255.200> <ms-dns2 10.170.255.210>]
+Feb  2 22:00:21 pppd[28297]: sent [IPCP ConfReq id=0x3 <addr 10.4.2.18> <ms-dns1 10.170.255.200> <ms-dns2 10.170.255.210>]
+Feb  2 22:00:21 pppd[28297]: rcvd [IPCP ConfAck id=0x3 <addr 10.4.2.18> <ms-dns1 10.170.255.200> <ms-dns2 10.170.255.210>]
+Feb  2 22:00:21 pppd[28297]: local  IP address 10.4.2.18
+Feb  2 22:00:21 pppd[28297]: remote IP address 192.168.254.254
+Feb  2 22:00:21 pppd[28297]: primary   DNS address 10.170.255.200
+Feb  2 22:00:21 pppd[28297]: secondary DNS address 10.170.255.210
+Feb  2 22:00:21 pppd[28320]: Script /etc/ppp/ip-up started (pid 28322)
+Feb  2 22:00:21 ip-up: Running scripts in /etc/ppp/gprs-up.d
+Feb  2 22:00:21 pppd[28320]: Script /etc/ppp/ip-up finished (pid 28322), status = 0x1
+Feb  2 22:00:22 vwmeasure: VW1: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 22:00:23 vwmeasure: VW1 temperature: Uref = 1.9650V, NTC = 9614.7 ohm, temp = 0.3 degC
+Feb  2 22:00:23 vwmeasure: VW1 freq: f = 1797.672 Hz, y = 4920876.924 (corr=-0.394735)
+Feb  2 22:00:23 vwmeasure: VW2: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 22:00:24 vwmeasure: VW2 temperature: Uref = 1.9650V, NTC = 9612.7 ohm, temp = 0.4 degC
+Feb  2 22:00:24 vwmeasure: VW2 freq: f = 1751.902 Hz, y = 6489850.713 (corr=-0.017376)
+Feb  2 22:00:24 vwmeasure: VW3: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 22:00:25 vwmeasure: VW3 temperature: Uref = 1.9650V, NTC = 9734.9 ohm, temp = 0.1 degC
+Feb  2 22:00:25 vwmeasure: VW3 freq: f = 1687.062 Hz, y = 4911016.036 (corr=-0.149383)
+Feb  2 22:00:25 sendcard: Send Delete: 0 SaveLog: 1 RemoveOld: 0
+Feb  2 22:00:25 sendcard: Trying to mount SD Card.
+Feb  2 22:00:25 kernel: FAT-fs (mmcblk0p1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.
+Feb  2 22:00:25 sendcard: SD Card present, mounted.
+Feb  2 22:00:25 sendcard: Including logger messages: /var/log/messages
+Feb  2 22:00:27 sendcard: Creating tar.gz file:
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0        47 2020-02-02 22:00:25 curr1.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:00:25 curr2.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:00:25 curr3.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:00:25 curr4.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:00:25 curr5.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:00:25 curr6.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0       150 2020-02-02 22:00:25 power.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0        76 2020-02-02 22:00:25 snowsensor.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0    227694 2020-02-02 22:00:25 vw1.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0    226983 2020-02-02 22:00:25 vw2.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0    130385 2020-02-02 22:00:25 vw3.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0        62 2020-02-02 22:00:25 vw4.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0        62 2020-02-02 22:00:25 vw5.csv
+Feb  2 22:00:34 sendcard: -rw-r--r-- 0/0        62 2020-02-02 22:00:25 vw6.csv
+Feb  2 22:00:34 sendcard: Sending it to SD card as: /190522-10398_20200202-220027.tar.gz (92949 bytes)
+Feb  2 22:00:34 sendcard: Data successfully stored
+Feb  2 22:00:34 sendcard: SD Card unmounted.
+Feb  2 22:01:01 crond[202]: crond: USER root pid 28444 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:02:01 crond[202]: crond: USER root pid 28486 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:03:01 crond[202]: crond: USER root pid 28538 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:04:01 crond[202]: crond: USER root pid 28585 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:05:01 crond[202]: crond: USER root pid 28637 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:06:01 crond[202]: crond: USER root pid 28684 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:07:01 crond[202]: crond: USER root pid 28736 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:08:01 crond[202]: crond: USER root pid 28788 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:09:01 crond[202]: crond: USER root pid 28840 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:10:01 crond[202]: crond: USER root pid 28887 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:10:01 vwmeasure: VW1: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 22:10:02 vwmeasure: VW1 temperature: Uref = 1.9649V, NTC = 9617.6 ohm, temp = 0.3 degC
+Feb  2 22:10:02 vwmeasure: VW1 freq: f = 1797.666 Hz, y = 4920339.487 (corr=-0.396720)
+Feb  2 22:10:02 vwmeasure: VW2: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 22:10:03 vwmeasure: VW2 temperature: Uref = 1.9649V, NTC = 9613.7 ohm, temp = 0.4 degC
+Feb  2 22:10:03 vwmeasure: VW2 freq: f = 1751.902 Hz, y = 6711022.092 (corr=-0.017585)
+Feb  2 22:10:03 vwmeasure: VW3: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 22:10:04 vwmeasure: VW3 temperature: Uref = 1.9649V, NTC = 9735.8 ohm, temp = 0.1 degC
+Feb  2 22:10:04 vwmeasure: VW3 freq: f = 1687.063 Hz, y = 4754088.012 (corr=-0.149060)
+Feb  2 22:10:05 sendcard: Send Delete: 0 SaveLog: 1 RemoveOld: 0
+Feb  2 22:10:05 sendcard: Trying to mount SD Card.
+Feb  2 22:10:05 kernel: FAT-fs (mmcblk0p1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.
+Feb  2 22:10:05 sendcard: SD Card present, mounted.
+Feb  2 22:10:05 sendcard: Including logger messages: /var/log/messages
+Feb  2 22:10:06 sendcard: Creating tar.gz file:
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0        47 2020-02-02 22:10:05 curr1.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:10:05 curr2.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:10:05 curr3.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:10:05 curr4.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:10:05 curr5.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:10:05 curr6.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0       150 2020-02-02 22:10:05 power.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0        76 2020-02-02 22:10:05 snowsensor.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0    227724 2020-02-02 22:10:05 vw1.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0    227013 2020-02-02 22:10:05 vw2.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0    130415 2020-02-02 22:10:05 vw3.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0        62 2020-02-02 22:10:05 vw4.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0        62 2020-02-02 22:10:05 vw5.csv
+Feb  2 22:10:13 sendcard: -rw-r--r-- 0/0        62 2020-02-02 22:10:05 vw6.csv
+Feb  2 22:10:13 sendcard: Sending it to SD card as: /190522-10398_20200202-221006.tar.gz (92960 bytes)
+Feb  2 22:10:13 sendcard: Data successfully stored
+Feb  2 22:10:13 sendcard: SD Card unmounted.
+Feb  2 22:11:01 crond[202]: crond: USER root pid 29005 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:12:01 crond[202]: crond: USER root pid 29047 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:13:01 crond[202]: crond: USER root pid 29099 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:14:01 crond[202]: crond: USER root pid 29146 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:15:01 crond[202]: crond: USER root pid 29178 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:16:01 crond[202]: crond: USER root pid 29210 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:17:01 crond[202]: crond: USER root pid 29247 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:18:01 crond[202]: crond: USER root pid 29299 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:19:01 crond[202]: crond: USER root pid 29351 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:20:01 crond[202]: crond: USER root pid 29403 cmd /etc/rc.d/70_logger modemon; /etc/rc.d/70_logger pingtest; currmeasure cron; meteomeasure cron; lasermeasure cron; rs232measure cron; rs485measure cron; vwmeasure cron; pvtmeasure cron; /etc/r
+Feb  2 22:20:01 vwmeasure: VW1: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 22:20:02 vwmeasure: VW1 temperature: Uref = 1.9649V, NTC = 9617.6 ohm, temp = 0.3 degC
+Feb  2 22:20:02 vwmeasure: VW1 freq: f = 1797.663 Hz, y = 4920726.985 (corr=-0.397785)
+Feb  2 22:20:02 vwmeasure: VW2: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 22:20:03 vwmeasure: VW2 temperature: Uref = 1.9649V, NTC = 9613.7 ohm, temp = 0.4 degC
+Feb  2 22:20:03 vwmeasure: VW2 freq: f = 1751.902 Hz, y = 6576843.637 (corr=-0.017423)
+Feb  2 22:20:04 vwmeasure: VW3: Playing sweep with VAUX=5V, volume=41, then capturing waveform
+Feb  2 22:20:04 vwmeasure: VW3 temperature: Uref = 1.9649V, NTC = 9735.8 ohm, temp = 0.1 degC
+Feb  2 22:20:04 vwmeasure: VW3 freq: f = 1687.063 Hz, y = 4764308.810 (corr=-0.149116)
+Feb  2 22:20:05 sendcard: Send Delete: 0 SaveLog: 1 RemoveOld: 0
+Feb  2 22:20:05 sendcard: Trying to mount SD Card.
+Feb  2 22:20:05 kernel: FAT-fs (mmcblk0p1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.
+Feb  2 22:20:05 sendcard: SD Card present, mounted.
+Feb  2 22:20:05 sendcard: Including logger messages: /var/log/messages
+Feb  2 22:20:06 sendcard: Creating tar.gz file:
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0        47 2020-02-02 22:20:05 curr1.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:20:05 curr2.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:20:05 curr3.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:20:05 curr4.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:20:05 curr5.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0        23 2020-02-02 22:20:05 curr6.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0       150 2020-02-02 22:20:05 power.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0        76 2020-02-02 22:20:05 snowsensor.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0    227754 2020-02-02 22:20:05 vw1.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0    227043 2020-02-02 22:20:05 vw2.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0    130445 2020-02-02 22:20:05 vw3.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0        62 2020-02-02 22:20:05 vw4.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0        62 2020-02-02 22:20:05 vw5.csv
+Feb  2 22:20:13 sendcard: -rw-r--r-- 0/0        62 2020-02-02 22:20:05 vw6.csv
+Feb  2 22:20:13 sendcard: Sending it to SD card as: /190522-10398_20200202-222006.tar.gz (92971 bytes)
+Feb  2 22:20:13 sendcard: Data successfully stored
+Feb  2 22:20:13 sendcard: SD Card unmounted.

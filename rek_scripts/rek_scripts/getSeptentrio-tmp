@@ -1,0 +1,659 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+# ------------------------------- #
+#
+# getSeptentrio.py 0.1
+# Code made by fjalar@vedur.is
+# Iceland Met Office
+# 2016
+#
+# ------------------------------- #
+
+#----------# IMPORT LIBRARIES #-----------#
+# Common modules
+import sys, signal, argparse, os, time
+import os.path as path
+from datetime import datetime as datetime
+import urllib, shutil, subprocess
+from ftplib import FTP
+
+# pipy package - ala Benni
+import gtimes.timefunc as gpstime
+
+#---------------# COMMENTS #--------------#  
+#
+# This code is in BETA stage.
+# It needs refactoring and optimizing.
+#
+#-----------------------------------------#  
+
+def sync_data(args):
+    """
+    This is the main loop in the program.. and could be moved to the main loop: REFACTORING
+    
+    1) Takes in the number of days to check backwards
+    2) Loops backwards, calls check_for_file and collects the files that are missing in a list
+    3) Loops through the list and downloads the files into a temp directory
+    """
+
+    #--------------------------------#
+    # 1) Prepare variables
+    #--------------------------------#
+
+    # Get date today
+    days = args.days
+    station_id = args.SID.upper()
+    today = datetime.now()
+    year = today.year
+    year_short = today.strftime("%y")
+    # doyo is the Number Of The Day Of The Year, on the 1-356 range.
+    doyo = today.timetuple().tm_yday
+    today_fancy = today.strftime("%A %d. %B %Y")
+    today_start_time = today.strftime("%H:%M:%S")
+
+    # Time the process
+    start_time = time.time()
+    # Switch for downloading or not
+    sync = args.sync
+
+    # We subtract (-1) to move the doyo to yesterday and yesterday is the starting point.
+    doyo_yesterday = doyo - 1
+    #doyo_yesterday = 366 - 1
+    doyos = [] 
+    tmp_dir = "/home/gpsops/tmp/download/{}".format(station_id)
+
+    # HARDCODED *** IP number for Septentrio stations ***
+    if station_id == 'TEST':
+        ip_number = "157.157.112.108"
+        ip_port = "2160"
+    elif station_id == 'HUSM':
+        ip_number = "10.4.1.240"
+        ip_port = "2160"
+    elif station_id == 'NVEL':
+        ip_number = "nvel.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'HVEH':
+        ip_number = "HVEH.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'VOGS':
+        ip_number = "10.4.2.8"
+        ip_port = "2160"
+    elif station_id == 'HLID':
+        ip_number = "10.4.1.238"
+        ip_port = "2160"
+    elif station_id == 'VMEY':
+        ip_number = "10.4.2.81"
+        ip_port = "2160"
+    elif station_id == 'ISAK':
+        ip_number = "ISAK.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'HVOL':
+        ip_number = "10.4.2.23"
+        ip_port = "2160"
+    elif station_id == 'SKA2':
+        ip_number = "157.157.166.194"
+        #ip_number = "SKA2.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'OLKE':
+        ip_number = "OLKE.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'HVER':
+        ip_number = "10.4.2.25"
+        ip_port = "2160"
+    elif station_id == 'SLEC':
+        ip_number = "10.4.1.183"
+        ip_port = "2160"
+    elif station_id == 'BUDH':
+        ip_number = "10.4.2.26"
+        ip_port = "2165"
+    elif station_id == 'ROTH':
+        ip_number = "10.4.1.79"
+        ip_port = "2160"
+    elif station_id == 'SVIN':
+        ip_number = "10.4.2.22"
+        ip_port = "2160"
+    elif station_id == 'SVIE':
+        ip_number = "10.4.1.52"
+        ip_port = "2161"
+    elif station_id == 'KVSK':
+        ip_number = "10.4.1.214"
+        ip_port = "2160"
+    elif station_id == 'ELDV':
+        ip_number = "157.157.218.1"
+        ip_port = "2160"
+    elif station_id == 'HAHV':
+        ip_number = "10.140.48.23"
+        ip_port = "21"
+    elif station_id == 'SAUD':
+        ip_number = "10.140.48.22"
+        ip_port = "21"
+    elif station_id == 'ENTC':
+        ip_number = "10.4.2.96"
+        ip_port = "2160"
+    elif station_id == 'INGC':
+        ip_number = "10.4.1.23"
+        ip_port = "2160"
+    elif station_id == 'KVIC':
+        ip_number = "10.4.1.24"
+        ip_port = "2160"
+    elif station_id == 'KOTC':
+        ip_number = "10.4.1.21"
+        ip_port = "2160"
+    elif station_id == 'FAGC':
+        ip_number = "FAGC.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'AUST':
+        ip_number = "10.4.1.219"
+        ip_port = "2160"
+    elif station_id == 'DYNC':
+        ip_number = "dync.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'KOKL':
+        #ip_number = "10.4.2.28"
+        ip_port = "2160"
+        #ip_number = "157.157.112.166"
+    elif station_id == 'THOB':
+        ip_number = "10.4.2.28"
+        ip_port = "2160"
+    elif station_id == 'GRIC':
+        ip_number = "10.4.2.29"
+        ip_port = "2160"
+    elif station_id == 'ELDC':
+        ip_number = "10.4.2.30"
+        ip_port = "2160"
+    elif station_id == 'GFUM':
+        ip_number = "157.157.112.253"
+        ip_port = "2160"
+    elif station_id == 'GRVC':
+        ip_number = "157.157.112.253"
+        ip_port = "2161"
+    elif station_id == 'ICEC':
+        ip_number = "157.157.166.194"
+        ip_port = "2160"
+    elif station_id == 'ICEB':
+        ip_number = "10.4.2.58"
+        ip_port = "2160"
+    elif station_id == 'ODDF':
+        ip_number = "10.4.2.182"
+        ip_port = "2160"
+    elif station_id == 'LISK':
+        ip_number = "157.157.124.175"
+        ip_port = "2160"
+    elif station_id == 'KRIV':
+        ip_number = "kriv.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'UNDH':
+        ip_number = "10.4.2.190"
+        ip_port = "2160"
+    elif station_id == 'FEFC':
+        ip_number = "10.4.2.187"
+        ip_port = "2160"
+    elif station_id == 'AFST':
+        ip_number = "10.4.2.189"
+        ip_port = "2160"
+    elif station_id == 'HVAS':
+        ip_number = "10.4.2.191"
+        ip_port = "2160"
+    elif station_id == 'NAMC':
+        ip_number = "10.4.2.185"
+        ip_port = "2160"
+    elif station_id == 'VOGC':
+        ip_number = "10.4.2.192"
+        ip_port = "2160"
+    elif station_id == 'MOHA':
+        ip_number = "157.157.166.198"
+        ip_port = "2160"
+    elif station_id == 'HELF':
+        ip_number = "10.4.2.180"
+        ip_port = "2160"
+    elif station_id == 'HERV':
+        ip_number = "10.4.2.193"
+        ip_port = "2160"
+    elif station_id == 'FAFC':
+        ip_number = "157.157.40.8"
+        ip_port = "2160"
+    elif station_id == 'HAFC':
+        ip_number = "10.4.2.197"
+        ip_port = "2160"
+    elif station_id == 'KLVC':
+        ip_number = "157.157.40.22"
+        ip_port = "2160"
+    elif station_id == 'GONH':
+        ip_number = "10.4.3.28"
+        ip_port = "2160"
+    elif station_id == 'TANC':
+        ip_number = "10.4.1.43"
+        ip_port = "2160"
+    elif station_id == 'KASC':
+        ip_number = "10.4.1.43"
+        ip_port = "2162"
+    elif station_id == 'JONC':
+        ip_number = "10.4.1.43"
+        ip_port = "2163"
+    elif station_id == 'OLAC':
+        ip_number = "10.4.1.43"
+        ip_port = "2161"
+    elif station_id == 'SEYD':
+        ip_number = "10.4.2.198"
+        #ip_number = "157.157.249.4"
+        ip_port = "2160"
+    elif station_id == 'SEY1':
+        ip_number = "10.4.2.172"
+        ip_port = "2160"
+    elif station_id == 'SEY2':
+        ip_number = "10.4.2.176"
+        ip_port = "2160"
+    elif station_id == 'SEY3':
+        ip_number = "10.4.2.174"
+        ip_port = "2160"
+    elif station_id == 'SEY4':
+        ip_number = "10.4.2.199"
+        ip_port = "2160"
+    elif station_id == 'SEY5':
+        ip_number = "10.4.2.210"
+        ip_port = "2160"
+    elif station_id == 'SEY6':
+        ip_number = "10.4.2.209"
+        ip_port = "2160"
+    elif station_id == 'SEY7':
+        ip_number = "10.4.2.196"
+        ip_port = "2160"
+    elif station_id == 'SEY8':
+        ip_number = "10.4.2.208"
+        ip_port = "2160"
+    elif station_id == 'SEY9':
+        ip_number = "10.4.2.194"
+        ip_port = "2160"
+    elif station_id == 'KALF':
+        ip_number = "kalf.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'THEY':
+        ip_number = "they.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'NYLA':
+        ip_number = "nyla.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'KVEC':
+        ip_number = "kvec.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'FIM2':
+        ip_number = "fim2.gps.vedur.is"
+        ip_port = "2160"
+    elif station_id == 'SOHO':
+        ip_number = "SOHO.gps.vedur.is"
+        ip_port = "2160"
+    else:
+        print 'STATUS > Unknown station ID: -{0:s}-'.format(station_id)
+        exit()
+
+
+    # Because we are only working with the current year 
+    # at every given time in this instrument, we will not 
+    # cross over years. So we will only go as far back
+    # as to the beginning of the year, no matter the input value. 
+    days = min(days,doyo_yesterday)
+
+    # Boolean switches for function execution success
+    file_downloaded = False
+    file_archived = False
+
+    
+    #--------------------------------#
+    # 2) Clean the temp directory
+    #--------------------------------#
+
+    # Because we are only working with the current year 
+    # at every given time in this instrument, we will not 
+    # cross over years. So we will only go as far back
+    # as to the beginning of the year, no matter the input value. 
+    days = min(days,doyo_yesterday)
+
+    # Boolean switches for function execution success
+    file_downloaded = False
+    file_archived = False
+
+    
+    #--------------------------------#
+    # 2) Clean the temp directory
+    #--------------------------------#
+
+    if os.path.isdir(tmp_dir):
+        for file in os.listdir(tmp_dir):
+            os.remove(tmp_dir+"/"+file)
+    else:
+        print "STATUS > Temp directory {0} for downloading is missing".format(tmp_dir)
+        print "         creating it ...."
+        os.mkdir(tmp_dir)
+
+        # 11.5 2017 changing from exiting to creating a new directory
+        #print "STATUS > Temp directory {} for downloading is missing".format(tmp_dir)
+        #print "         Please create it to properly run the program."
+        #exit()
+
+
+
+    #--------------------------------#
+    # 3) Print report header
+    #--------------------------------#
+
+    print "Program run on {}".format(today_fancy)
+    print "Time started: {}".format(today_start_time)
+    print "Current day number (doyo): {}".format(doyo) 
+    print "Days to check: {}".format(days)
+    print '*-------------------------------------------------------------------------*'
+
+
+    #--------------------------------#
+    # 3) Loop through days and list missing files
+    #--------------------------------#
+    for i in range(days):
+        #print nodoy-i+1
+        archive_path_dict = get_archive_path(doyo_yesterday-i,year,station_id)
+        if not check_for_file(doyo_yesterday-i, year,archive_path_dict['full_path'],station_id):
+            # missing files are listed
+            doyos.append(doyo_yesterday-i)
+
+
+    if len(doyos) == 0:
+        print '*-------------------------------------------------------------------------*'
+        print ""
+        print "STATUS > No new files to download. Archive is up to date."
+    else:
+        print '*-------------------------------------------------------------------------*'
+        print ""
+        print "STATUS > Days to download: {}".format(doyos)
+        print ""
+
+    #--------------------------------#
+    # 4) Download missing files
+    #--------------------------------#
+    
+    if sync:
+
+        print " >> Now downloading and archiving..."
+
+        for doyo in doyos:
+
+            # Define different file names to use
+            if len(format(doyo)) == 1:
+                file_name = "{}00{}0.{}_".format(station_id, doyo, year_short)
+                file_dir = "{}00{}".format(year_short,doyo)
+            elif len(format(doyo)) == 2:
+              file_name = "{}0{}0.{}_".format(station_id, doyo, year_short)
+              file_dir = "{}0{}".format(year_short,doyo)
+            elif len(format(doyo)) == 3:
+                file_name = "{}{}0.{}_".format(station_id, doyo, year_short)
+                file_dir = "{}{}".format(year_short,doyo)
+
+            formatted_file_name = get_file_name(doyo,year,station_id)
+
+            # Execute file download
+            file_downloaded = download_file(file_name, file_dir, tmp_dir, ip_number,ip_port)
+            
+            if file_downloaded:
+                    # Execute file archiving
+                    archive_path_dict = get_archive_path(doyo,year,station_id)
+                    file_archived = archive_file(file_name,formatted_file_name,archive_path_dict,tmp_dir,year)
+            
+            if file_archived:
+                print "STATUS > File downloaded and archived!"
+            else:
+                print "STATUS > Error in downloading and archiving. File might be missing on the receiver."
+
+    #--------------------------------#
+    # 5) Output end time
+    #--------------------------------#
+
+    today_end_time = today.strftime("%H:%M:%S")
+    print ""
+    print "PROCESS DURATION: {0:.2f} seconds".format(time.time()-start_time)
+
+
+def check_for_file(doyo,year,archive_path,station_id):
+    """
+    1) Takes in Day Number Of the Year - abbrevated doyo - and year
+    2) Checks if file for that day exists in the data archive
+    """
+
+    #-----------------------#
+    # 3 # Check for file in archive
+    #-----------------------#
+
+    file_name = get_file_name(doyo,year,station_id)
+    
+    print " >> Cheking for file {}".format(archive_path+file_name)
+    file_found = path.isfile(archive_path+file_name)
+    if not file_found: 
+        print " ---> File not found. Will be donwloaded."
+
+    return file_found
+
+def download_file(file_name,filedir_name,location_dir,ip_number,ip_port):
+
+    import re
+
+    #string = u'ROTH|SVIN|SVIE|GFUM|GRVC'
+    string = u'ROTH|SVIN|SVIE|VMEY'
+    regexp = re.compile(string)
+
+    print "#DEBUG"
+    print "file_name: {}".format(file_name)
+    print "filedir_name: {}".format(filedir_name)
+    print "#DEBUG"
+
+
+    # True/False switch for the operation's success
+    file_downloaded = False
+
+    # Set download location directory
+    os.chdir(location_dir)
+
+    ## Try to connect to the server
+    try:
+        print "Connection to station..."
+        ftp = FTP()
+        ftp.connect(ip_number,ip_port)
+        ftp.login('anonymous')
+        if regexp.search(file_name): 
+            ftp.set_pasv(False)
+            print("rexexp WORKS")
+        print "Connection successful!"
+    except: 
+         print "Connection failed"
+         sys.exit(0)
+
+    # Try going to directory and downloading the file
+    try:
+        # Go to the current-file directory
+        change_dir = ftp.cwd('/DSK1/SSN/LOG1_15s_24hr/'+filedir_name)
+        print change_dir
+
+        # List content of directory... 
+        ftp.dir()
+
+        # Download the file
+        fhandle = open(file_name, 'wb')
+        print 'Getting ' + file_name
+        ftp.retrbinary('RETR %s' % file_name, fhandle.write)
+        fhandle.close()
+
+        file_downloaded = True
+    except Exception as e:
+        #raise e 
+        #ftp.quit() 
+        pass
+    
+    ftp.quit()
+
+    return file_downloaded
+
+def archive_file(file_name,formatted_file_name,archive_path_dict,tmp_dir,year):
+    """
+    1) Reads the temp downloand directory for new file - into a list
+    2) Unzips the file
+    3) Copies the file to new filename in /data/
+    """
+
+    # True/False switch for the operation's success
+    file_archived = False
+
+    # 2 # Check if destination archive directory exists; if not, create it.
+    if not os.path.isdir(archive_path_dict['full_path']):
+        make_directory(archive_path_dict)
+    else:
+        pass
+
+    if not path.isfile(archive_path_dict['full_path']+formatted_file_name):
+        shutil.move(tmp_dir+"/"+file_name,archive_path_dict['full_path']+formatted_file_name)
+        print " >> File was moved to {}{}".format(archive_path_dict['full_path'], formatted_file_name)
+        file_archived = True
+
+    else:
+        print " >> File {}/{} already exists!".format(archive_path_dict['full_path'], formatted_file_name)
+
+    return file_archived
+
+def get_archive_path(doyo,year,station_id):
+    """
+    1) Takes in Day Number Of the Year - abbrevated doyo - and year
+    2) Creates path to the correct location in the archive
+    """
+
+    # Part of the path - the months - are in alphabeticals
+    month_dict = {'01':'jan','02':'feb','03':'mar','04':'apr','05':'may','06':'jun',
+                        '07':'jul','08':'aug','09':'sep','10':'oct','11':'nov','12':'dec'}
+
+    # Define empty path_dictionary
+    archive_path_dict = {'root':None,'year':None,'month':None,'station_id':None,'frequency':None,'data_type':None,'full_path':None}
+
+    ## Work with formats
+    inptime = "%s-%s" % (year, doyo)
+    file_date = gpstime.toDatetime(inptime,"%Y-%j")
+
+    root = "/data"
+    month = month_dict['%02d' % file_date.month]
+    frequency = '15s_24hr'
+    data_type = 'raw'
+
+    # Define the path
+    full_path = "/data/{}/{}/{}/15s_24hr/raw/".format(year,month,station_id)
+
+    print "FULL PATH:", full_path
+
+    # build the path dictionary
+    archive_path_dict = {'root':root,'year':year,'month':month,'station_id':station_id,'frequency':frequency,'data_type':data_type,'full_path':full_path}
+
+    return archive_path_dict
+
+def get_file_name(doyo, year,station_id):
+    """
+    1) Takes in Day Number Of the Year - abbrevated doyo - and year
+    2) Creates a file name with the yyyymmdd format
+    """
+
+    #-----------------------#
+    # 1 # Prep date values
+    #-----------------------#
+    ## Set the default for the return variable
+    file_found = False 
+
+    ## Work with formats
+    inptime = "%s-%s" % (year, doyo)
+    file_date = gpstime.toDatetime(inptime,"%Y-%j")
+    month = file_date.month
+    day = file_date.day
+
+    #-----------------------#
+    # 2 # Build proper file name from doyo
+    #-----------------------#
+    file_name = "{}{}{}{}0000a.sbf".format(station_id,year,'%02d' % month, '%02d' % day)
+    
+    return file_name
+
+def make_directory(archive_path_dict):
+
+    # Create the path in this order
+    path = [str(archive_path_dict['year']), archive_path_dict['month'], archive_path_dict['station_id'], archive_path_dict['frequency'], archive_path_dict['data_type']]
+
+    root = archive_path_dict['root']
+
+    for folder in path:
+        root = root + '/' + folder
+        if not os.path.isdir(root):
+            print ' >> Destination %s does not exist. Creating folder %s ' % (root, folder)
+            os.mkdir(root)  
+
+def program_info_screen():
+    ''' Print software info.'''
+    # Only splash screen info here
+
+    current_func = sys._getframe().f_code.co_name + '() >> '
+
+    print ''
+    print "Copyright (c) 2016 Icelandic Met Office"
+    print "getLeica 0.1 (Jul 2016)"
+    print ''
+
+def exit_gracefully(signum, frame):
+    ''' Exit gracefully on Ctrl-C '''
+
+    current_func = sys._getframe().f_code.co_name + '() >> '
+
+    # restore the original signal handler as otherwise evil things will happen
+    # in raw_input when CTRL+C is pressed, and our signal handler is not re-entrant
+    signal.signal(signal.SIGINT, original_sigint)
+
+    try:
+        if raw_input("\nReally quit? (y/n)> ").lower().startswith('y'):
+            sys.exit(1)
+
+    except KeyboardInterrupt:
+        print 'Ok ok, quitting'
+        sys.exit(1)
+
+    # restore the exit gracefully handler here
+    signal.signal(signal.SIGINT, exit_gracefully)
+
+    # Method borrowed from:
+    # http://stackoverflow.com/questions/18114560/python-catch-ctrl-c-command-prompt-really-want-to-quit-y-n-resume-executi
+
+def main():
+    ''' main '''
+
+    # Display some nice program info
+    program_info_screen()
+
+    # Instantiate argparser
+    parser = argparse.ArgumentParser()
+
+    # Setup the argument parser
+    parser.add_argument('SID',
+                        type=str,
+                        help='Station ID')
+    parser.add_argument('-d', '--days',
+                        type=int,
+                        default='1',
+                        help='''Number of days back to check for data.''')
+    parser.add_argument('-s', '--sync',
+                        action='store_true',
+                        help='Sync new or partal files from source.')
+ 
+    # Fetch the arguments
+    args = parser.parse_args()
+
+
+    ## 1 Sync the data to /temp
+ 
+
+    sync_data(args)
+
+
+    ## 2 Move data from /temp to /data   
+
+if __name__ == '__main__':
+    # This is used to catch Ctrl-C exits
+    original_sigint = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, exit_gracefully)
+
+    main()

@@ -1,0 +1,182 @@
+
+Copyright (c) 2016 Icelandic Met Office
+getLeica 0.1 (Jul 2016)
+
+Program run on Friday 01. December 2017
+Time started: 10:27:39
+Current day number (doyo): 335
+Days to check: 10
+*-------------------------------------------------------------------------*
+ >> Cheking for file /data/2017/nov/SKFC/15s_24hr/raw/SKFC201711300000a.m00
+ ---> File not found. Will be donwloaded.
+ >> Cheking for file /data/2017/nov/SKFC/15s_24hr/raw/SKFC201711290000a.m00
+ ---> File not found. Will be donwloaded.
+ >> Cheking for file /data/2017/nov/SKFC/15s_24hr/raw/SKFC201711280000a.m00
+ >> Cheking for file /data/2017/nov/SKFC/15s_24hr/raw/SKFC201711270000a.m00
+ >> Cheking for file /data/2017/nov/SKFC/15s_24hr/raw/SKFC201711260000a.m00
+ >> Cheking for file /data/2017/nov/SKFC/15s_24hr/raw/SKFC201711250000a.m00
+ ---> File not found. Will be donwloaded.
+ >> Cheking for file /data/2017/nov/SKFC/15s_24hr/raw/SKFC201711240000a.m00
+ ---> File not found. Will be donwloaded.
+ >> Cheking for file /data/2017/nov/SKFC/15s_24hr/raw/SKFC201711230000a.m00
+ ---> File not found. Will be donwloaded.
+ >> Cheking for file /data/2017/nov/SKFC/15s_24hr/raw/SKFC201711220000a.m00
+ ---> File not found. Will be donwloaded.
+ >> Cheking for file /data/2017/nov/SKFC/15s_24hr/raw/SKFC201711210000a.m00
+ ---> File not found. Will be donwloaded.
+*-------------------------------------------------------------------------*
+
+STATUS > Days to download: [334, 333, 329, 328, 327, 326, 325]
+
+ >> Downloading file ftp://157.157.124.215:2160/SD%20Card/Data/15s_24hr/SKFC334a.m00.zip
+    to /home/gpsops/tmp/download/SKFC/SKFC334a.m00.zip
+[Errno ftp error] [Errno 110] Connection timed out
+STATUS > Error in downloading and archiving. File might be missing on the receiver.
+ >> Downloading file ftp://157.157.124.215:2160/SD%20Card/Data/15s_24hr/SKFC333a.m00.zip
+    to /home/gpsops/tmp/download/SKFC/SKFC333a.m00.zip
+[Errno ftp error] [Errno 110] Connection timed out
+STATUS > Error in downloading and archiving. File might be missing on the receiver.
+ >> Downloading file ftp://157.157.124.215:2160/SD%20Card/Data/15s_24hr/SKFC329a.m00.zip
+    to /home/gpsops/tmp/download/SKFC/SKFC329a.m00.zip
+[Errno ftp error] [Errno 110] Connection timed out
+STATUS > Error in downloading and archiving. File might be missing on the receiver.
+ >> Downloading file ftp://157.157.124.215:2160/SD%20Card/Data/15s_24hr/SKFC328a.m00.zip
+    to /home/gpsops/tmp/download/SKFC/SKFC328a.m00.zip
+[Errno ftp error] [Errno 110] Connection timed out
+STATUS > Error in downloading and archiving. File might be missing on the receiver.
+ >> Downloading file ftp://157.157.124.215:2160/SD%20Card/Data/15s_24hr/SKFC327a.m00.zip
+    to /home/gpsops/tmp/download/SKFC/SKFC327a.m00.zip
+[Errno ftp error] [Errno 110] Connection timed out
+STATUS > Error in downloading and archiving. File might be missing on the receiver.
+ >> Downloading file ftp://157.157.124.215:2160/SD%20Card/Data/15s_24hr/SKFC326a.m00.zip
+    to /home/gpsops/tmp/download/SKFC/SKFC326a.m00.zip
+[Errno ftp error] [Errno 110] Connection timed out
+STATUS > Error in downloading and archiving. File might be missing on the receiver.
+ >> Downloading file ftp://157.157.124.215:2160/SD%20Card/Data/15s_24hr/SKFC325a.m00.zip
+    to /home/gpsops/tmp/download/SKFC/SKFC325a.m00.zip
+[Errno ftp error] [Errno 110] Connection timed out
+STATUS > Error in downloading and archiving. File might be missing on the receiver.
+
+PROCESS DURATION: 1158.43 seconds
+Unable to load library icui18n "Cannot load library icui18n: (icui18n: cannot open shared object file: No such file or directory)" 
+
+Copyright (c) 2016 Icelandic Met Office
+getLeica 0.1 (Jul 2016)
+
+Program run on Monday 29. June 2020
+Time started: 15:33:24
+Current day number (doyo): 181
+Days to check: 20
+*-------------------------------------------------------------------------*
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006280000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006270000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006260000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006250000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006240000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006230000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006220000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006210000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006200000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006190000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006180000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006170000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006160000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006150000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006140000a.sbf.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006130000a.sbf.gz
+ ---> File not found. Will be donwloaded.
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006120000a.sbf.gz
+ ---> File not found. Will be donwloaded.
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006110000a.sbf.gz
+ ---> File not found. Will be donwloaded.
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006100000a.sbf.gz
+ ---> File not found. Will be donwloaded.
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> Cheking for file /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006090000a.sbf.gz
+ ---> File not found. Will be donwloaded.
+*-------------------------------------------------------------------------*
+
+STATUS > Days to download: [165, 164, 163, 162, 161]
+
+ >> Now downloading and archiving...
+#DEBUG
+file_name: ICEB1650.20_.gz
+filedir_name: 20165
+#DEBUG
+Connection to station...
+Connection successful!
+250 OK. Current directory is /DSK1/SSN/LOG1_15s_24hr/20165
+-rw-rw-r--    1 0          83            3232264 Jun 13 23:59 ICEB1650.20_.gz
+Getting ICEB1650.20_.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> File was moved to /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006130000a.sbf.gz
+STATUS > File downloaded and archived!
+#DEBUG
+file_name: ICEB1640.20_.gz
+filedir_name: 20164
+#DEBUG
+Connection to station...
+Connection successful!
+250 OK. Current directory is /DSK1/SSN/LOG1_15s_24hr/20164
+-rw-rw-r--    1 0          83            3266808 Jun 12 23:59 ICEB1640.20_.gz
+Getting ICEB1640.20_.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> File was moved to /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006120000a.sbf.gz
+STATUS > File downloaded and archived!
+#DEBUG
+file_name: ICEB1630.20_.gz
+filedir_name: 20163
+#DEBUG
+Connection to station...
+Connection successful!
+250 OK. Current directory is /DSK1/SSN/LOG1_15s_24hr/20163
+-rw-rw-r--    1 0          83            3139799 Jun 11 23:59 ICEB1630.20_.gz
+Getting ICEB1630.20_.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> File was moved to /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006110000a.sbf.gz
+STATUS > File downloaded and archived!
+#DEBUG
+file_name: ICEB1620.20_.gz
+filedir_name: 20162
+#DEBUG
+Connection to station...
+Connection successful!
+250 OK. Current directory is /DSK1/SSN/LOG1_15s_24hr/20162
+-rw-rw-r--    1 0          83            2973188 Jun 10 23:59 ICEB1620.20_.gz
+Getting ICEB1620.20_.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> File was moved to /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006100000a.sbf.gz
+STATUS > File downloaded and archived!
+#DEBUG
+file_name: ICEB1610.20_.gz
+filedir_name: 20161
+#DEBUG
+Connection to station...
+Connection successful!
+250 OK. Current directory is /DSK1/SSN/LOG1_15s_24hr/20161
+-rw-rw-r--    1 0          83            2924997 Jun  9 23:59 ICEB1610.20_.gz
+Getting ICEB1610.20_.gz
+FULL PATH: /data/2020/jun/ICEB/15s_24hr/raw/
+ >> File was moved to /data/2020/jun/ICEB/15s_24hr/raw/ICEB202006090000a.sbf.gz
+STATUS > File downloaded and archived!
+
+PROCESS DURATION: 1263.63 seconds

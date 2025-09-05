@@ -1,0 +1,529 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+'''
+raw2rinex.py -- Raw data format conversion to Rinex format.
+
+Created by Fjalar Sigurdarson.
+Copyright (c) 2015-2016 Icelandi Met Office - http://en.vedur.is. All rights reserved.
+'''
+
+# raw2rinex specific imports
+import datalib
+
+# gps management specific imports
+import cparser
+
+# third party imports
+import argparse, os, sys, signal, glob, shutil
+import logging
+import logging.handlers
+from datetime import datetime
+from datetime import date
+import hashlib
+import urllib
+from dateutil.relativedelta import relativedelta
+import subprocess, time
+import traceback
+
+
+######################################################
+# Todo:
+#
+# - add support for other frequencies than 15s, namely 1s, 5Hz, 10Hz, 20Hz, 50Hz.
+# - add qc file creation and move qc files to relevant locations in raw/rinex/qc/nav structure
+# - add nav file creatioon and move nav files to relevant locations in ra/rinex/qc/nav structure
+# - add logger reporting
+# - add docstrings
+# - clean code up according to pylint
+# - create config file and move hard coded paths to the config.
+#
+######################################################
+
+
+class raw2Rinex(object):
+    ''' raw2Rinex Class '''
+
+    def __init__(self, station_info, args):
+
+        self.name = station_info['station']['name']
+        self.sid = station_info['station']['id']
+        self.ip_number = station_info['router']['ip']
+        self.ip_port = station_info['receiver']['httpport']
+        self.receiver_type = station_info['receiver']['type'].lower()
+        self.frequency= args.freq.lower()
+        self.months = args.months
+        self.root_destination = args.dest
+        self.work_dir = args.work_dir
+        self.config_dir = args.config_dir
+        self.archive = args.archive
+        self.integrity = args.integrity
+
+        # Create logger
+        self.logger = logging.getLogger(__name__)
+
+        # Create handler with StreamHandler or FileHandler
+        handler = logging.StreamHandler(stream=sys.stdout)
+        #handler = logging.FileHandler('syncdata.log')
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s',
+                                        datefmt='%m/%d/%y %H:%M')
+        handler.setFormatter(formatter)
+        handler.setLevel(logging.DEBUG)
+
+        # Connect handler to logger
+        self.logger.addHandler(handler)
+
+        # Test logger
+        #self.logger.debug('This is debug')
+        #self.logger.info('This is info')
+        #self.logger.warning('This is warning')
+
+    def info(self):
+
+        print 'Station name:\t%s' % self.name
+        print 'Station id:\t%s' % self.sid
+        print 'Receiver type:\t%s' % self.receiver_type
+        print 'Frequency:\t%s' % self.frequency
+        print 'Months:\t\t%s' % self.months
+        print 'Root destination:\t%s' % self.root_destination
+        print ''
+
+    def clean_directory(self, directory):
+        for file_item in os.listdir(directory):
+            print " > Deleting %s" % file_item
+            os.remove(directory + '/' + file_item)
+
+    def get_rinex_name(self, raw_name):
+
+        day_of_year = datalib.day_of_year(raw_name['name'][4:12])
+        yy = raw_name['name'][6:8]
+        name = self.sid + str(day_of_year) + '0.' + yy + 'D.Z'
+
+        return name
+
+    def convert_to_rinex(self, source, raw_file_name, destination, rinex_file_name):
+
+        ## 1 ## Define few variables to work with
+        work_dir = self.work_dir + '/' + self.sid
+        config_file = self.config_dir + '/config-' + self.sid.lower()
+
+        rinex_name_base = rinex_file_name[0:8]
+        raw_file = ''
+
+        ## 2 ## Extract 2-number year and build filenames for output
+        year = raw_file_name['name'][6:8]
+        rinex_obs_name = rinex_name_base + '.' + year + 'O'
+        rinex_qc_name = rinex_name_base + '.' + year + 'S'
+        rinex_summ_name = rinex_name_base + '.' + year + 'S.sum'
+        rinex_nav_name = rinex_name_base + '.' + year + 'N'
+
+        # Files dict is used when files are moved from the working directory and into the archive
+        # It contains source and destination path for rinex, qc and nav files
+        files_dict = {'from_rinex':'','to_rinex':'','from_qc':'','to_qc':'','from_nav':'','to_nav':''}
+
+        ## 3 ## Check if the working directory exists under temp/rinex/
+        if not os.path.isdir(work_dir):
+            os.mkdir(work_dir)
+
+        ## 4 ## Clean the working directory before
+        self.clean_directory(work_dir)
+
+        ## 5 ## Copy raw file to tmp directory and work everything from there.
+        shutil.copyfile(source+'/'+raw_file_name['name'], work_dir+'/'+raw_file_name['name'])
+
+        ## 6 ## now convert based on receiver type
+
+        ## 6a ## One pre-step for Trimble receivers
+        if self.receiver_type == 'netr9' or self.receiver_type == 'netrs':
+
+            # 6a.1 # Create raw file name to be used in next process step with teqc
+
+            # 6a.2 # Convert equipment bin to dat file
+            # NOTE: If absolute paths are not used, job running the script under different users
+            #       may fail!
+            if self.receiver_type == 'netr9':
+                raw_file = raw_file_name['name'][0:17]+'.tgd'
+                dat_ok = subprocess.call(["/home/gpsops/bin/runpkr00", "-g", "-d", raw_file_name['name']], 
+                                        stdout=subprocess.PIPE, cwd=work_dir)
+            else:
+                raw_file = raw_file_name['name'][0:17]+'.dat'
+                dat_ok = subprocess.call(["/home/gpsops/bin/runpkr00","-d", raw_file_name['name']], 
+                                        stdout=subprocess.PIPE, cwd=work_dir)
+
+
+            # 6a.3 # Wait while runpkr00 creates the file.
+            #       TODO: This step might get into an infinit loop. Fix so it won't.
+            #       REASON:
+            #       runpkr00 seems to send an exit code before it's output has been fully formed
+            #       therefore we need to wait until the .dat file - the output - really exists.
+            while not os.path.exists(work_dir + '/' + raw_file):
+                time.sleep(1)
+
+            # 6a.4 # Check if file was really created or not (the possible infinit loop her above
+            #        might cause us grief)     
+            if os.path.isfile(work_dir + '/' + raw_file):
+                print "NETRS/NETR9 Dat file created: %s" % raw_file
+            else:
+                print 'Error in %s dat file creation' % self.receiver_type
+
+        ## 6b ## Else if for other receivers...
+        elif self.receiver_type == 'topcon' or self.receiver_type == 'polarx2e':
+            raw_file = raw_file_name['name']
+
+        else:
+            print "Receiver type not known: %s" % self.receiver_type
+            print "Exiting..."
+            sys.exit(0)
+
+
+        ## 7 ## Define correct options for teqc observation file creation
+        if self.receiver_type == 'netr9':
+            arguments = ['/home/gpsops/bin/teqcc', '+C2', '-tr', 'd', '+nav', rinex_nav_name, '-config', 
+                            config_file, raw_file]
+
+        elif self.receiver_type == 'netrs':
+            arguments = ['/home/gpsops/bin/teqcc', '-tr', 'd', '+nav', rinex_nav_name, '-config', 
+                            config_file, raw_file]
+
+        else:
+            arguments = ['/home/gpsops/bin/teqcc', '+nav', rinex_nav_name, '-config', 
+                            config_file, raw_file]
+
+        print "Selected arguments: %s" % arguments
+
+
+        ## 8 ## Creating observation file ###
+
+        ## TODO: The sanity of the output files needs to be checked BEFORE
+        ##       the archive function is called.
+
+        # 8.1 # Open stout and sterr output files for the process
+        obs = open(work_dir + '/' + rinex_obs_name, 'a')
+        err = open(work_dir + '/' + rinex_obs_name + '.err', 'a')
+
+        # 8.2 # Execute the binary with proper switches for OBS file creation
+        obs_ok = subprocess.call(arguments, stdout=obs, stderr=err, cwd=work_dir)
+
+        # 8.3 #  Check if corrected obs file was created
+        if os.path.isfile(work_dir + '/' + rinex_obs_name):
+            print "OBS file created..."
+
+            # 8.4 # Open stdout and stderr output files
+            obs_qc = open(work_dir + '/' + rinex_summ_name, 'a')
+            err_qc = open(work_dir + '/' + rinex_summ_name + '.err', 'a')
+
+            # Timer test - time the Rinexing
+            start_time = time.time()
+
+            # 8.5 # Execute binary for QC and NAV file creation 
+            print "Quality check file will now be created"
+            qc_ok = subprocess.call(['/home/gpsops/bin/teqcc', '+qc', '-plot', '-nav', rinex_nav_name, 
+                                    rinex_obs_name], stdout=obs_qc, stderr=err_qc, cwd=work_dir)
+
+            # 8.6 # Check if the QC was created.
+            if os.path.isfile(work_dir + '/' + rinex_summ_name):
+                print "Quality check file was created..."
+
+                # 8.7 # Compress the resulting OBS file
+                compress_ok =  subprocess.call(['/home/gpsops/bin/thjap', rinex_obs_name], 
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=work_dir)
+
+                ### TODO: Split the process here and move the move and cleanup step out in separate process
+
+                # 9 # If compression was successful and the resulting compressed file exist, then finish up
+                if os.path.isfile(work_dir + '/' + rinex_name_base + '.' + year + 'D.Z'):
+
+                    print "Rinex time: %s" % str(time.time() - start_time)
+                    print "Rinexing complete!"
+
+                    # Now we have all the files available. Next, something has to be done with them
+
+                    # 9.1 # Archive and clean up if that argument was given
+                    if self.archive:
+                        print " Moving files... "                         
+
+
+                        files_dict = {'rinex_file_name': rinex_file_name, 
+                                       'from_rinex': work_dir + '/' + rinex_file_name,
+                                       'to_rinex': destination + '/rinex/' + rinex_file_name,
+                                       'qc_file_name': rinex_qc_name,
+                                       'from_qc': work_dir + '/' + rinex_qc_name,
+                                       'to_qc': destination + '/QC/' + rinex_qc_name,
+                                       'nav_file_name': rinex_nav_name,
+                                       'from_nav': work_dir + '/' + rinex_nav_name,
+                                       'to_nav': destination + '/brdc/' + rinex_nav_name}
+
+                        self.archive_files(files_dict)
+
+                    # 9.2 # Run an integrity check on the raw file with help from the QC file
+
+                    if self.integrity:
+                        print "Running integrity check on the raw file..."
+
+                        self.check_integrity(raw_file_name)
+
+                else:
+                    print "Error in compressing obs file"
+            else:
+                print "Error in quality check file creation"
+
+        else:
+            print "Error in obs file creation"
+
+
+    def archive_files(self, files_dict):
+
+        work_dir = self.work_dir + '/' + self.sid
+
+        # 1 # Move files to the archive
+        try:
+            print " > Moving Rinex file %s to %s" % (files_dict['to_rinex'], files_dict['to_rinex'])
+            shutil.move(files_dict['from_rinex'], files_dict['to_rinex'])
+            print " > Moving QC file %s to %s" % (files_dict['qc_file_name'], files_dict['to_qc'])
+            shutil.move(files_dict['from_qc'], files_dict['to_qc'])
+            print " > Moving NAV file %s to %s" % (files_dict['nav_file_name'], files_dict['to_nav'])
+            shutil.move(files_dict['from_nav'], files_dict['to_nav'])
+
+        except (shutil.Error, IOError):
+            #self.logger.error('File move failed: {1}'.format(traceback.format_exc()))
+            #sys.exit()
+            print "Error in rinex file transfer..."
+
+        # 2 # Clean up the working directory
+        print " > Cleaning working directory..."
+        self.clean_directory(work_dir)  
+
+    def check_integrity(raw_files, months):
+        pass
+        print "Integrity is superb!"
+     
+
+
+    def diff_sources(self, destination_files, source_files):
+
+        # Raw 2 Rinex comparison
+        # Raw files are here the source and Rinex the destination
+        new_files = []
+
+        while destination_files:
+
+            rinex_file = destination_files.pop()
+            remove_index = None
+
+            for index, source_file in enumerate(source_files):
+
+                possible_destination_file = self.get_rinex_name(source_file)
+
+
+                if possible_destination_file == rinex_file['name']:
+
+                    source_files.pop(index)
+                    break
+
+        return source_files
+
+    def convert(self, new_raw_files, month_backwards):
+
+
+        year = month_backwards['year']
+        month_name = month_backwards['month_name']
+        month_number = month_backwards['month_number']
+
+        if self.frequency == 'a':
+            frequency_destination = '15s_24hr'
+        if self.frequency == 'b':
+            frequency_destination = '1Hz_1hr'
+        if self.frequency == 'c':
+            frequency_destination = '5Hz_1hr'
+        if self.frequency == 'h':
+            frequency_destination = '20Hz_1hr'
+
+        if len(new_raw_files) > 0:
+
+            print 'Converting new raw files...'
+            for raw_file_name in new_raw_files:
+
+                rinex_file_name =  self.get_rinex_name(raw_file_name)
+
+                # Define source and destination
+                source = '%s/%s/%s/%s/%s/%s' % (self.root_destination, year, month_name, 
+                                                    self.sid, frequency_destination, 'raw')
+                destination = '%s/%s/%s/%s/%s' % (self.root_destination, year, month_name, 
+                                                    self.sid, frequency_destination)
+
+                # If destination foldes is missing, make one.
+                if not os.path.isdir(destination + '/rinex'):
+                    datalib.make_directory(self.root_destination, year, month_name, 
+                                            self.sid, frequency_destination,'rinex')
+                if not os.path.isdir(destination + '/QC'):
+                    datalib.make_directory(self.root_destination, year, month_name, 
+                                            self.sid, frequency_destination,'QC')
+                if not os.path.isdir(destination + '/brdc'):
+                    datalib.make_directory(self.root_destination, year, month_name, 
+                                            self.sid, frequency_destination,'brdc')
+
+                # Report some files
+                print 'Source: ', source+'/'+raw_file_name['name']
+                print 'Destination: ', destination+'/rinex/'+rinex_file_name
+                print '-----'
+
+                #
+                # Now lets rinex something...
+                self.convert_to_rinex(source, raw_file_name, destination, rinex_file_name)
+
+def progInfoScreen():
+    # Only splash screen info here
+    print "Copyright (c) 2011-2012 Icelandic Met Office"
+    print "raw2Rinex 0.1 (April 2015)"
+
+def validate_args(args):
+
+    if len(args.SID) != 4:
+        print ''
+        print 'raw2Rinex.py: error: Not a valid station ID. Station IDs are 4 letters. E.g.: GFUM'
+        sys.exit()
+
+    if args.freq.lower() not in ['a','b','c','h']:
+        print ''
+        print 'raw2Rinex.py: error: Frequency "%s" is not valid.' % args.freq
+        sys.exit()
+
+    if not os.path.isdir(args.dest):
+        print ''
+        print 'raw2Rinex.py: error: Destination directory "%s" does not exist.' % args.dest
+        sys.exit()
+
+def exit_gracefully(signum, frame):
+    # restore the original signal handler as otherwise evil things will happen
+    # in raw_input when CTRL+C is pressed, and our signal handler is not re-entrant
+    signal.signal(signal.SIGINT, original_sigint)
+
+    try:
+       if raw_input("\nReally quit? (y/n)> ").lower().startswith('y'):
+           sys.exit(1)
+
+    except KeyboardInterrupt:
+       print("Ok ok, quitting")
+       sys.exit(1)
+
+    # restore the exit gracefully handler here
+    signal.signal(signal.SIGINT, exit_gracefully)
+
+    # Method borrowed from:
+    # http://stackoverflow.com/questions/18114560/python-catch-ctrl-c-command-prompt-really-want-to-quit-y-n-resume-executi
+
+def main():
+
+    # Display some nice program info
+    progInfoScreen()
+
+    # Instantiate argument parser and config parser
+    argument_parser = argparse.ArgumentParser()
+    config_parser = cparser.Parser()
+
+    # Setup the argument parser
+    argument_parser.add_argument('SID', 
+                                    type=str, 
+                                    help='Station ID')
+    argument_parser.add_argument('-f',
+                                    '--freq', 
+                                    type=str, 
+                                    default='A',
+                                    help='''Data sampling frequency. Default is A. A=15sec, 
+                                    B=1Hz, C=5Hz, H=20HZ. One or more frequencies can be given.''')
+    argument_parser.add_argument('-m',
+                                    '--months',
+                                    type=int,
+                                    default=1,
+                                    help='Number of months to sync from the station.')
+    argument_parser.add_argument('--dest', 
+                                    type=str, 
+                                    default='/data', 
+                                    help='Destination folder, other than defined in raw2rinex.cfg.')
+    argument_parser.add_argument('-c', '--convert', 
+                                    action='store_true',
+                                    help='Convert raw data to rinex format.')
+    argument_parser.add_argument('-a', '--archive', 
+                                    action='store_true',
+                                    help='''Move converted data, quality report and navigation files 
+                                            to data archive. This works with the -c argument.''')
+    argument_parser.add_argument('-i', 
+                                    '--integrity',
+                                    action='store_true',
+                                    help='''Report the integrity of a converted file based on the QC
+                                            file. This works with the -c argument.''')
+    argument_parser.add_argument('-wd',
+                                    '--work_dir', 
+                                    type=str, 
+                                    default='/home/gpsops/tmp/rinex', 
+                                    help='''Location of the Rinex working directory. 
+                                            Default is: /home/gpsops/tmp/rinex''')
+    argument_parser.add_argument('-cd',
+                                    '--config_dir', 
+                                    type=str, 
+                                    default='/home/gpsops/confiles', 
+                                    help='''Location of the Rinex config files for each station
+                                            used for antenna correction.
+                                            Defalt is: /home/gpsops/confiles''')
+
+
+    # Fetch the arguments
+    args = argument_parser.parse_args()
+
+    # Validate arguments - exit with a message if they are not.
+    # TODO : See if argparser can handle all vaidation cases. Some are already covered.
+    validate_args(args)
+
+    # Instantiate a parser and get station config
+    #cparser = cparser.Parser()
+    station_info = config_parser.getStationInfo(args.SID.upper())
+
+    if station_info:
+
+        # instantiate a r2r object to work with
+        raw2rinex = raw2Rinex(station_info,args)
+        raw2rinex.info()
+
+        # Create an array of month values based on the -m argument
+        # and number of months given. The format is YYYYMM.
+        months_backwards = datalib.months_backwards(int(args.months))
+
+        # for each month, make a comparison, report and convert.
+        for month in months_backwards:
+
+            raw_files   = datalib.get_files(raw2rinex.frequency, raw2rinex.root_destination, 
+                                                raw2rinex.sid, month, 'raw')
+            rinex_files = datalib.get_files(raw2rinex.frequency, raw2rinex.root_destination, 
+                                                raw2rinex.sid, month, 'rinex')
+            print '---------------------------------------'
+
+            # FIXME: weed_out(raw_files): Files in the raw_files listing can belong to another
+            #        station, specially if older files are not cleaned from a receiver before
+            #        starting measurement in a new location. A method to weed these files out is
+            #        needed before the files  are converted.
+            #        It is good to have this here but this should first and foremost be handled in
+            #        syncdata.py.
+
+            new_files = raw2rinex.diff_sources(rinex_files, raw_files)
+
+            print 'New raw files to convert'
+            for files in new_files:
+                print files
+
+            if args.convert and args.integrity:
+                print 'Running convert on missing files and integrity check on all files is not supported.'
+                print 'Choose either convert or integrity check.'
+            else:
+                if args.convert:
+                    raw2rinex.convert(new_files,month)
+
+    else:
+        print ''
+        print 'raw2Rinex.py: error: Unknown station ID. Use "sinfo" to query station info.'
+
+if __name__ == '__main__':
+    # This is used to catch Ctrl-C exits
+    original_sigint = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, exit_gracefully)
+
+    main()

@@ -1,0 +1,102 @@
+#!/bin/sh
+# get HC compr. GPS data from ISGPS station HEDI. 
+# Actually call isnd download program from jar
+# HG dec 2009: Use dump instead of brot
+# BGO okt 2011: download raw files to rek2
+#####################
+SS=GRAN; ss=gran
+echo "*********** get$ss starting at `date` ***********"
+
+# Check if I am already running
+ps -ef > /tmp/tmpps.$$
+MENUM=`grep get${ss}.sh /tmp/tmpps.$$ | wc -l`
+if [ $MENUM -gt 1 ]
+then
+  echo "A copy of get${ss}.sh is already running, exiting..."
+  grep get${ss}.sh /tmp/tmpps.$$; rm /tmp/tmpps.$$; exit
+fi
+rm /tmp/tmpps.$$
+###########  Call jar to get data from ${ss} over isdn line  ##################
+ssh -t jar "sh /usr/sil/gps/get${ss}.sh"
+########### Get data from jar:/usr/sil/gps/Data/tmp${ss}/ ##################
+cd /data/tmp${ss}/
+# See if there are any files on jar to download:
+echo "Files on jar download directory:"
+ssh -t jar "ls -l /usr/sil/gps/Data/tmp${ss}/${SS}????.??D.Z" > /tmp/ttmp${ss}ls.tmp 2>/dev/null
+cat /tmp/ttmp${ss}ls.tmp
+LNUM=`cat /tmp/ttmp${ss}ls.tmp | grep -v "No such file or directory" | grep $SS | wc -l`
+if [ $LNUM -eq 0 ]
+then
+  #echo "No $SS files on jar:/usr/sil/gps/Data/tmp${ss}/ to download, exiting"
+  echo "No $SS files on jar:/usr/sil/gps/Data/tmp${ss}/ to download, checking raw data"
+  #exit
+#fi
+else
+# else copy files
+#scp jar:/usr/sil/gps/Data/tmp${ss}/$SS????.??D.Z . 
+
+# See if fetched file is identical to remote (size), and clean up.
+for f in `ls ${SS}????.??D.Z`
+do
+  FSISR=`ssh -t jar "ls -l /usr/sil/gps/Data/tmp${ss}/$f" | grep $SS | awk '{print $5}'` 2>/dev/null
+  FSISL=`ls -l $f | awk '{print $5}'`
+  if [ $FSISR -eq $FSISL ]
+  then
+    # filesize identical
+    echo "File transfer seems to have gone ok for file $f"
+    # Clean up at remote site:
+    # changed "move" to delete apr. 2010 HG
+    ssh -t jar "rm /usr/sil/gps/Data/tmp${ss}/$f "
+  else
+    echo "File transfer of $f seems to have screwed up. Will try later?"
+  fi
+  # Move file
+  YEAR=20`echo $f | cut -c 10-11`
+  #scp $f sil@frumgogn.vedur.is:/home/sil/gps_01/rinex/$YEAR/$SS/
+  mv $f /data/$SS/
+done
+
+fi
+
+######## downloading raw data -------------------------
+echo "1#  Going to /data/${SS}"
+cd /data/$SS
+
+echo "Create list with local files"
+ls ??????/a/* | cut -c10-27 > locfiles.lst   # local dirctory structure
+
+echo "Create list with remote files"
+ssh -t jar "cd /usr/sil/gps/Data/tmp${ss}; ls *.sbf.gz > remfiles.lst  2>/dev/null"  2>/dev/null   # remote dirctory structure 
+
+echo "Copy remote file list from jar to rek2"
+rsync -uva -remove-sent-files -e ssh jar:/usr/sil/gps/Data/tmp${ss}/remfiles.lst . > /dev/null 2>&1
+
+cat locfiles.lst remfiles.lst | sort | uniq -u > todownload.lst
+
+LNUM=`cat todownload.lst | wc -l`
+if [ $LNUM -eq 0 ]
+then
+  echo "No files to download, exiting"
+  exit
+else
+
+echo "Check if directory exists on rek2 and create if needed"
+for d in `cat todownload.lst`
+do
+  DOY=`echo $d | cut -c5-7` 
+  YEAR=20`echo $d | cut -c10-11`
+  MONTH=`/home/gpsops/bin/doy2cal ${YEAR} ${DOY} | gawk '{printf "%.2d",$4}'`
+  dirname=${YEAR}${MONTH}
+  if [ ! -d "$dirname"  ]
+  then
+    echo "making folder ${dirname} "
+    mkdir ${dirname}; mkdir ${dirname}/a;  mkdir ${dirname}/b
+  fi
+  echo "downloading from jar:/usr/sil/gps/Data/tmp${ss}/${d} to ${dirname}/a/"
+  #scp jar:/usr/sil/gps/Data/tmp${ss}/${d} ${dirname}/a/ 
+done
+
+rm -f locfiles.lst remfiles.lst todownload.lst
+echo "Done"
+fi
+# ok?

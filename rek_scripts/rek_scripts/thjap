@@ -1,0 +1,35 @@
+#!/bin/sh
+ 
+umask 002
+CPU=`uname`
+if [ $CPU = Linux ]
+then
+  HPNAM=rnx2crx
+else
+  echo "No match for cpu name. Exiting."
+  exit
+fi
+ 
+SKRAARLISTI=`ls $*`
+BINDIR=/usr/bin
+ 
+for SKRA in $SKRAARLISTI
+do
+  # check if filename or file is valid
+  SLEN=`echo $SKRA | wc -c`           # should be 13
+  OCHAR=`echo $SKRA | cut -c12`       # should be O  (obs file)
+  if [ $SLEN != 13 ] || [ $OCHAR != "O" ]
+  then
+    echo $SKRA "is an invalid rinex filename"
+  else
+    echo "doing" $SKRA
+    YY=`echo $SKRA | cut -c10-11`
+    Filebase=`basename $SKRA ${YY}O`
+    Ofile=${Filebase}${YY}O  
+    Dfile=${Filebase}${YY}D
+    ${BINDIR}/${HPNAM} ${Ofile}
+    /usr/bin/compress -f $Dfile
+    rm $Ofile
+  fi
+done
+

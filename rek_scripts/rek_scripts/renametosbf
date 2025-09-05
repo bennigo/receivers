@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# Iterate over all .gz files in the current directory
+for file in *_.gz; do
+    echo "file is " $file
+    
+    # Extract the day of the year and the year from the filename
+    dayOfYear=$(echo $file | cut -c5-7)
+    echo "day of year is " $dayOfYear
+    year=$(echo $file | cut -c10-11)
+    echo "year is " $year
+    
+    # Convert the day of the year to a date in the format MMDD
+    date=$(date -d "20$year-01-01 +$dayOfYear days -1 day" "+%m%d")
+    echo "date is " $date
+    
+    # Extract the month and day from the date
+    month=${date:0:2}
+    echo "month is " $month 
+    day=${date:2:2}
+    echo "day is " $day
+    
+    # Construct the new filename
+    newFilename="MOHA0$year${month}${day}0000a.sbf.gz"
+    echo "new file name is " $newFilename
+    
+    # Rename the file
+    mv -- "$file" "$newFilename"
+done

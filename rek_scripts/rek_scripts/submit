@@ -1,0 +1,3 @@
+#!/bin/tcsh -f
+#
+nice +10 $* >& /dev/null &

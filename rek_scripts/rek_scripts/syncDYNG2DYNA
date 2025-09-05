@@ -1,0 +1,306 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+# ------------------------------- #
+#
+# syncDYNG2DYNA.py 0.1
+# Code made by fjalar@vedur.is
+# Iceland Met Office
+# 2016
+#
+# ------------------------------- #
+
+#----------# IMPORT LIBRARIES #-----------#
+# Common modules
+import sys, signal, argparse, os, time
+import os.path as path
+from os import walk
+from datetime import datetime as datetime
+import urllib, shutil, subprocess
+
+# pipy package - ala Benni
+import gtimes.timefunc as gpstime
+
+def sync_data(args):
+    """
+    This is the main loop in the program.. and could be moved to the main loop: REFACTORING
+    
+    1) Takes in the number of days to check backwards
+    2) Loops backwards, calls check_for_file and collects the files that are missing in a list
+    3) Loops through the list and downloads the files into a temp directory
+    """
+
+    #--------------------------------#
+    # 1) Prepare variables
+    #--------------------------------#
+
+    # Time the process
+    start_time = time.time()
+    print "Starting..."
+
+    # Months in alphabet
+    months = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"]
+
+
+    # Get date today
+    today = datetime.now()
+    year = today.year
+    month = today.month
+   
+    today_fancy = today.strftime("%A %d. %B %Y")
+    today_start_time = today.strftime("%H:%M:%S")
+
+    print "Program run on {}".format(today_fancy)
+    print "Time started: {}".format(today_start_time)
+
+
+    for year in range(2012,today.year+1):
+        for month in months:
+            path = "/data/{}/{}/DYNG/15s_24hr/raw".format(year,month)
+            #print "Path: {}".format(path)
+            if os.path.isdir(path):
+                for (dirpath, dirnames, filenames) in walk(path):
+                    #Keep going if there are any files in the directory
+                    if len(filenames) > 0:
+                        
+                        #print filenames
+                        # Create archive path based on current dates for DYNA
+                        archive_path = new_archive_path(year,month)
+
+                        # Check if the path exists, else create it.
+                        #print "Cheking if path exists {}".format(archive_path['full_path'])
+                        if not os.path.isdir(archive_path['full_path']):
+                            print "Path does not exist... creating."
+                            make_directory(archive_path)
+                        else:
+                            #print "  >> Path exists."
+                            pass
+
+                        for file_name in filenames:
+
+                            # Create file name for DYNA
+                            new_file_name = file_name.replace("DYNG","DYNA")
+
+                            # Check if the file already exists, if not, copy it to the folder
+                            if os.path.isfile(archive_path['full_path']+new_file_name):
+                                pass
+                            else:
+                                shutil.copyfile(path+"/"+file_name,archive_path['full_path']+new_file_name)
+                                print " >> File was copied to {}{}".format(archive_path['full_path'],new_file_name)
+
+
+                    else:
+                        print "No file"
+
+    #--------------------------------#
+    # 5) Output end time
+    #--------------------------------#
+
+    today_end_time = today.strftime("%H:%M:%S")
+    print ""
+    print "PROCESS DURATION: {0:.2f} seconds".format(time.time()-start_time)
+
+def new_archive_path(year,month):
+    
+    # Set variables
+    root = '/data'
+    station_id = 'DYNA'
+    frequency = '15s_24hr'
+    data_type = 'raw'
+
+    # Define the path format
+    full_path = "/data/{}/{}/{}/{}/{}/".format(year,month,station_id,frequency,data_type)
+
+    # Build the path dictionary. Year and month are not set here.
+    archive_path = {'root':root,'year':year,'month':month,'station_id':station_id,'frequency':frequency,'data_type':data_type,'full_path':full_path}
+
+
+    return archive_path
+
+def check_for_file(doyo,year,archive_path,station_id):
+    """
+    1) Takes in Day Number Of the Year - abbrevated doyo - and year
+    2) Checks if file for that day exists in the data archive
+    """
+
+    #-----------------------#
+    # 3 # Check for file in archive
+    #-----------------------#
+
+    file_name = get_file_name(doyo,year,station_id)
+    
+    print " >> Cheking for file {}".format(archive_path+file_name)
+    file_found = path.isfile(archive_path+file_name)
+    if not file_found: 
+        print " ---> File not found. Will be donwloaded."
+
+    return file_found
+
+def archive_file(file_name_zip,file_name,formatted_file_name,archive_path_dict,tmp_dir,year):
+    """
+    1) Reads the temp downloand directory for new file - into a list
+    2) Unzips the file
+    3) Copies the file to new filename in /data/
+    """
+    
+    # True/False switch for the operation's success
+    file_archived = False
+
+    # 1 # Uncompress the file
+    uncompr="unzip {}/{}".format(tmp_dir,file_name_zip)
+    print " >> Running in commandline: {}".format(uncompr)
+    run_syscmd(uncompr,tmp_dir)
+    if path.isfile(tmp_dir+"/"+file_name):
+        print " >> File {0}/{1}".format(tmp_dir,file_name_zip)
+        print "    was unzipped to {0}/{1}".format(tmp_dir,file_name)
+    else:
+        print " >> File unzip for {}/{} failed..".format(tmp_dir,file_name_zip)
+
+    # 2 # Check if destination archive directory exists; if not, create it.
+    if not os.path.isdir(archive_path_dict['full_path']):
+        make_directory(archive_path_dict)
+    else:
+        pass
+
+    if not path.isfile(archive_path_dict['full_path']+formatted_file_name):
+        shutil.move(tmp_dir+"/"+file_name,archive_path_dict['full_path']+formatted_file_name)
+        print " >> File was moved to {}{}".format(archive_path_dict['full_path'], formatted_file_name)
+        file_archived = True
+        print " >> Cleaning tmp directory..."
+        os.remove(tmp_dir+"/"+file_name_zip)
+
+    else:
+        print " >> File {}/{} already exists!".format(archive_path_dict['full_path'], formatted_file_name)
+
+    return file_archived
+
+def get_archive_path(doyo,year,station_id):
+    """
+    1) Takes in Day Number Of the Year - abbrevated doyo - and year
+    2) Creates path to the correct location in the archive
+    """
+
+    # Part of the path - the months - are in alphabeticals
+    month_dict = {'01':'jan','02':'feb','03':'mar','04':'apr','05':'may','06':'jun',
+                        '07':'jul','08':'aug','09':'sep','10':'oct','11':'nov','12':'dec'}
+
+    ## Work with formats
+    inptime = "%s-%s" % (year, doyo)
+    file_date = gpstime.toDatetime(inptime,"%Y-%j")
+
+    root = "/data"
+    month = month_dict['%02d' % file_date.month]
+    frequency = '15s_24hr'
+    data_type = 'raw'
+
+    # Define the path
+    full_path = "/data/{}/{}/{}/15s_24hr/raw/".format(year,month,station_id)
+
+    # build the path dictiona
+    archive_path_dict = {'root':root,'year':year,'month':month,'station_id':station_id,'frequency':frequency,'data_type':data_type,'full_path':full_path}
+
+    return archive_path_dict
+
+def get_file_name(doyo, year,station_id):
+    """
+    1) Takes in Day Number Of the Year - abbrevated doyo - and year
+    2) Creates a file name with the yyyymmdd format
+    """
+
+    #-----------------------#
+    # 1 # Prep date values
+    #-----------------------#
+    ## Set the default for the return variable
+    file_found = False 
+
+    ## Work with formats
+    inptime = "%s-%s" % (year, doyo)
+    file_date = gpstime.toDatetime(inptime,"%Y-%j")
+    month = file_date.month
+    day = file_date.day
+
+    #-----------------------#
+    # 2 # Build proper file name from doyo
+    #-----------------------#
+    file_name = "{}{}{}{}0000a.m00".format(station_id,year,'%02d' % month, '%02d' % day)
+    
+    return file_name
+
+def make_directory(archive_path_dict):
+
+    # Create the path in this order
+    path = [str(archive_path_dict['year']), archive_path_dict['month'], archive_path_dict['station_id'], archive_path_dict['frequency'], archive_path_dict['data_type']]
+
+    root = archive_path_dict['root']
+    print path
+
+    for folder in path:
+        root = root + '/' + folder
+        if not os.path.isdir(root):
+            print ' >> Destination %s does not exist. Creating folder %s ' % (root, folder)
+            os.mkdir(root)
+
+def program_info_screen():
+    ''' Print software info.'''
+    # Only splash screen info here
+
+    current_func = sys._getframe().f_code.co_name + '() >> '
+
+    print ''
+    print "Copyright (c) 2016 Icelandic Met Office"
+    print "syncDYNG2DYNA 0.1 (Jul 2016)"
+    print ''
+
+def exit_gracefully(signum, frame):
+    ''' Exit gracefully on Ctrl-C '''
+
+    current_func = sys._getframe().f_code.co_name + '() >> '
+
+    # restore the original signal handler as otherwise evil things will happen
+    # in raw_input when CTRL+C is pressed, and our signal handler is not re-entrant
+    signal.signal(signal.SIGINT, original_sigint)
+
+    try:
+        if raw_input("\nReally quit? (y/n)> ").lower().startswith('y'):
+            sys.exit(1)
+
+    except KeyboardInterrupt:
+        print 'Ok ok, quitting'
+        sys.exit(1)
+
+    # restore the exit gracefully handler here
+    signal.signal(signal.SIGINT, exit_gracefully)
+
+    # Method borrowed from:
+    # http://stackoverflow.com/questions/18114560/python-catch-ctrl-c-command-prompt-really-want-to-quit-y-n-resume-executi
+
+def main():
+    ''' main '''
+
+    # Display some nice program info
+    program_info_screen()
+
+    # Instantiate argparser
+    parser = argparse.ArgumentParser()
+
+    # Setup the argument parser
+    parser.add_argument('-d', '--days',
+                        type=int,
+                        default='1',
+                        help='''Number of days back to check for data.''')
+    parser.add_argument('-s', '--sync',
+                        action='store_true',
+                        help='Sync new or partal files from source.')
+ 
+    # Fetch the arguments
+    args = parser.parse_args()
+
+    ## 1 Sync the data to /temp
+    sync_data(args)
+
+if __name__ == '__main__':
+    # This is used to catch Ctrl-C exits
+    original_sigint = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, exit_gracefully)
+
+    main()

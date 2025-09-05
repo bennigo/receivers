@@ -1,0 +1,577 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+# ------------------------------- #
+#
+# syncdata.py 0.2
+# Code made by fjalar@vedur.is
+# Iceland Met Office
+# 2016
+#
+# ------------------------------- #
+
+
+'''
+syncdata.py 0.2 -- Data syncronization script for GPS data.
+
+Created by Fjalar Sigurdarson.
+Copyright (c) 2015-2016 Icelandi Met Office - http://en.vedur.is. All rights reserved.
+'''
+
+# raw2rinex specific imports
+import datalib
+
+# gps management specific imports
+import cparser
+import receivers.NetRS as NetRS
+import receivers.NetR9 as NetR9
+#import receivers.PolaRX2e as PolaRX2e
+#import receivers.Topcon as Topcon # not yet implemented
+#import receivers.Leica as Leica # not yet implemented
+
+# third party imports
+import argparse, os, sys, signal
+import hashlib, urllib, urllib2, base64
+import logging, logging.handlers
+import shutil
+
+import requests
+from clint.textui import progress
+#from dateutil.relativedelta import relativedelta
+#import subprocess, time, glob, shutil
+#from datetime import datetime
+#from datetime import date
+
+
+
+######################################################
+# General Todo:
+#
+# - clean code up according to pylint
+# - create config file and move hard coded paths to the config.
+#
+######################################################
+
+
+class SyncData(object):
+    ''' SyncData class '''
+
+    def __init__(self, station, arguments):
+
+        self.station_info = station
+        self.name = station['station']['name']
+        self.sid = station['station']['id']
+        self.ip_number = station['router']['ip']
+        self.ip_port = station['receiver']['httpport']
+        self.receiver_type = station['receiver']['type']
+        self.frequency = arguments.freq.lower()
+        self.months = arguments.months
+        self.root_destination = arguments.dest
+        self.source_local = arguments.source_local.lower()
+        self.station_user = station['receiver']['user']
+        self.station_passw = station['receiver']['pwd']
+
+
+        # Create logger
+        self.logger = logging.getLogger(__name__)
+
+        # Create handler with StreamHandler or FileHandler
+        handler = logging.StreamHandler(stream=sys.stdout)
+        #handler = logging.FileHandler('syncdata.log')
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s',
+                                        datefmt='%m/%d/%y %H:%M')
+        handler.setFormatter(formatter)
+        handler.setLevel(logging.DEBUG)
+
+        # Connect handler to logger
+        self.logger.addHandler(handler)
+
+        # Test logger
+        #self.logger.debug('This is debug')
+        #self.logger.info('This is info')
+        #self.logger.warning('This is warning')
+
+    def info(self):
+        ''' Prints out information about the station syncdata is instantiated with.'''
+
+        print '-------------------------'
+        print '## Station information ##'
+        print '-------------------------'
+        print 'Station name:\t%s' % self.name
+        print 'Station id:\t%s' % self.sid
+        print 'Receiver type:\t%s' % self.receiver_type
+        print 'Frequency:\t%s' % self.frequency
+        print 'Months:\t\t%s' % self.months
+        print 'Root location:\t%s' % self.root_destination
+        print ''
+
+    def get_station_files(self, months):
+        ''' Collects a list of file for each requested month and returns a list of dictionaries,
+            one dictionary per month.'''
+
+        current_func = sys._getframe().f_code.co_name + '() >> '
+
+        # TODO: Add support for all receiver types. Currently only Trimble receivers are supported.
+        #       This task can only be completed by adding/completing the receiver modules.
+
+        # Key variables
+        receiver = None      # Variable for receiver object if receiver type is known and supported
+        folder_prefix = ''   # Values defined depending on receiver type and passed to
+        frequency_folder = '' # the receiver object.
+        file_list = []       # Final list passed back
+
+        # Break down the YYYYMM parameter month_backwards
+        year = months['year']
+        month = months['month_number']
+
+        # Check what type the receiver is for the station and apply the
+        # proper folder format on the station for the given frequency
+        if self.receiver_type == 'NetRS':
+            receiver = NetRS.NetRS(self.station_info)
+            frequency_folder = self.frequency
+
+        elif self.receiver_type == 'NetR9':
+            receiver = NetR9.NetR9(self.station_info)
+            folder_prefix = 'Internal/'
+            if self.frequency == 'l':
+                frequency_folder = '30s_24hr'
+            elif self.frequency == 'a':
+                frequency_folder = '15s_24hr'
+            elif self.frequency == 'c':
+                frequency_folder = '15s_8hr'
+            elif self.frequency == 'b':
+                frequency_folder = '1Hz_1hr'
+            elif self.frequency == 'f':
+                frequency_folder = '5Hz_1hr'
+            elif self.frequency == 'u':
+                frequency_folder = '10Hz_1hr'
+            elif self.frequency == 'h':
+                frequency_folder = '20Hz_1hr'
+            elif self.frequency == 'i':
+                frequency_folder = '50Hz_1hr'
+            else:
+                # This case should never happen unless the default value is removed
+                # from the argparser.
+
+                # Logger
+                self.logger.error('%s No frequency letter chosen...' % current_func)
+                sys.exit()
+
+        # TODO: implement for other receiver types - see receiver.py modules
+
+        #elif self.station_info['receiver']['type'] == 'PolaRx2e':
+        #    receiver = PolaRX2e.PolaRX2e(self.station_info)
+
+        #elif self.station_info['receiver']['type'] == 'Topcon':
+        #    Receiver = Topcon.Topcon(self.station_info)
+
+        #elif self.station_info['receiver']['type'] == 'Leica':
+        #    Receiver = Leica.Leica(self.station_info)
+
+        # It might be that there is not a support for a particular receiver.
+
+        # Check if a receiver object was created - if not, receiver type was not known or
+        # misspelled
+        if receiver:
+
+            # Fetch file list from the station for the given month
+            files_error = receiver.getDirList(folder_prefix + year + month + '/' + frequency_folder)
+
+            files_from_receiver = files_error['value']
+            error_from_receiver = files_error['error']
+
+            # Create a dictionary with name, size and md5 for each file and collect in a list
+            if files_from_receiver:
+                for one_file in files_from_receiver:
+                    file_dict = {'name':'', 'size':'', 'md5':''}
+                    file_dict['name'] = one_file['name']
+                    file_dict['size'] = one_file['size']
+                    file_dict['md5'] = hashlib.md5(file_dict['name'] +
+                                        str(file_dict['size'])).hexdigest()
+
+                    # This is a special case handling for NetR9 - .T0B files are
+                    # files that are currently being logged to.
+                    if not file_dict['name'].endswith('.T0B'):
+                        file_list.append(file_dict)
+
+                    # INFO: It might be neccessary to add some special handling here for files
+                    # from other receivers than Trimble.
+            else:
+                # No files from receiver for current month
+                # Logger
+                self.logger.info('%s %s' % (current_func, error_from_receiver))
+        else:
+            # Logger
+            self.logger.error('%s Receiver type %s currently not supported'
+                                % (current_func, self.receiver_type))
+            sys.exit()
+
+        print 'receiver list length for month %s %s:\t%s' % (month, year, len(file_list))
+
+        return file_list
+
+    def diff_sources(self, destination_files, source_files):
+        ''' Compares two lists of files, source (reiceiver) files and
+            destination (in-house) files '''
+
+        # Raw station 2 Raw local comparison
+        # Station Raw files are here the source and Local Raw files the destination
+
+        partal_files = []
+
+        # Compare file lists and filter out the new ones
+        while destination_files:
+
+            destination_file = destination_files.pop()
+            index = None
+
+            for index, source_file in enumerate(source_files):
+
+                if source_file['name'] == destination_file['name']:
+
+                    if source_file['md5'] == destination_file['md5']:
+                        source_files.pop(index)
+                        break
+                    else:
+                        source_files.pop(index)
+                        partal_files.append(destination_file)
+                        break
+
+        return source_files, partal_files
+
+    def sync_sources(self, files, months):
+        ''' Syncronize station data storage with the local data storeage.
+            Files that are missing in the local storeage are passed for handling.'''
+
+        current_func = sys._getframe().f_code.co_name+'() >> '
+
+        # TODO: Sync files with different methods: ftp (for TOPCON e.g.)
+
+        new_files, partal_files = files
+
+        # Logger
+        self.logger.info('%s New files %s' % (current_func, new_files))
+        self.logger.info('%s Partial files %s' % (current_func, partal_files))
+
+        # list of new and partal files to be returned
+        file_lists = []
+
+        # Break down the year array to use parts of it
+        year = months['year']
+        month_name = months['month_name']
+        month_number = months['month_number']
+
+        # Define destination folder based on frequency letter definition
+
+        if self.receiver_type == 'NetRS':
+            #receiver = NetRS.NetRS(self.station_info)
+            frequency_folder = self.frequency
+            if self.frequency == 'l':
+                frequency_destination = '30s_24hr'
+            elif self.frequency == 'a':
+                frequency_destination = '15s_24hr'
+            elif self.frequency == 'c':
+                frequency_destination = '15s_8hr'
+            elif self.frequency == 'b':
+                frequency_destination = '1Hz_1hr'
+            elif self.frequency == 'f':
+                frequency_destination = '5Hz_1hr'
+            elif self.frequency == 'u':
+                frequency_destination = '10Hz_1hr'
+            elif self.frequency == 'h':
+                frequency_destination = '20Hz_1hr'
+            elif self.frequency == 'i':
+                frequency_destination = '50Hz_1hr'
+
+        if self.receiver_type == 'NetR9':
+            #receiver = NetR9.NetR9(self.station_info)
+            folder_prefix = 'Internal/'
+            if self.frequency == 'l':
+                frequency_folder = '30s_24hr'
+                frequency_destination = '30s_24hr'
+            elif self.frequency == 'a':
+                frequency_folder = '15s_24hr'
+                frequency_destination = '15s_24hr'
+            elif self.frequency == 'c':
+                frequency_folder = '15s_8hr'
+                frequency_destination = '15s_8hr'
+            elif self.frequency == 'b':
+                frequency_folder = '1Hz_1hr'
+                frequency_destination = '1Hz_1hr'
+            elif self.frequency == 'f':
+                frequency_folder = '5Hz_1hr'
+                frequency_destination = '5Hz_1hr'
+            elif self.frequency == 'u':
+                frequency_folder = '10Hz_1hr'
+                frequency_destination = '10Hz_1hr'
+            elif self.frequency == 'h':
+                frequency_folder = '20Hz_1hr'
+                frequency_destination = '20Hz_1hr'
+            elif self.frequency == 'i':
+                frequency_folder = '50Hz_1hr'
+                frequency_destination = '50Hz_1hr'
+            else:
+                # Logger
+                self.logger.error('%s No frequency chosen: %s' % (current_func, self.frequency))
+                sys.exit()
+
+        # TODO : Wrap sync function (the download) with timing and log out
+
+        # Create one list of lists (new_files, partal_files)
+        if len(new_files) > 0:
+            new_files_dict = {'name':'new_files', 'list': new_files}
+            file_lists.append(new_files_dict)
+
+        if len(partal_files) > 0:
+            partial_files_dict = {'name':'partal_files', 'list': partal_files}
+            file_lists.append(partial_files_dict)
+
+        # Process
+        for file_list in file_lists:
+
+            print 'Syncing %s files...' % file_list['name']
+            for a_file in file_list['list']:
+
+                # TODO: Move source definitions to the receiver modules. The definition should
+                #       be contained in each receiver module and not defined here.
+
+                # Define source and destination
+                if self.receiver_type == 'NetRS':
+                    source = 'http://%s:%s/prog/download?loggedfile&path=/%s/%s/%s' % (
+                    self.ip_number, self.ip_port, year + month_number, frequency_folder,
+                    a_file['name'])
+                if self.receiver_type == 'NetR9':
+                    source = 'http://%s:%s/prog/download?file&path=/%s/%s/%s/%s' % (
+                        self.ip_number, self.ip_port, folder_prefix, year + month_number,
+                        frequency_folder, a_file['name'])
+
+                # File destination in the archive tree
+                destination = '%s/%s/%s/%s/%s/%s' % (self.root_destination, year, month_name,
+                    self.sid, frequency_destination, 'raw')
+
+                # Download destination before moving the File destination here above
+                download_temp_dir = '/home/gpsops/tmp/download'
+
+                # Check if destination directory path exists; if not, create it
+                if not os.path.isdir(destination):
+                    datalib.make_directory(self.root_destination, year, month_name,
+                                           self.sid, frequency_destination, 'raw')
+
+                print 'Source: ', source
+                print 'Destination: ', destination + '/' + a_file['name']
+                print '-----'
+
+                #testfile = urllib.URLopener()
+
+                if len(self.station_user) > 0:
+
+                    # In this case we have to work with user and password authentication to the station
+                    try:
+                        request = urllib2.Request(source)
+                        base64str=base64.encodestring('%s:%s' % (self.station_user, self.station_passw)).replace('\n', '')
+                        request.add_header("Authorization", "Basic %s" % base64str)
+                        result = urllib2.urlopen(request)
+                        with open(destination + '/' + a_file['name'], "wb") as local_file:
+                            local_file.write(result.read())
+                            local_file.close()
+
+                    except Exception, error:
+                        self.logger.error(error)
+                else:
+                    # This is more simple. No authentication needed.
+                    try:
+                        file_handle = requests.get(source, stream=True, timeout=40)
+                        with open(download_temp_dir + '/' + a_file['name'], "wb") as file:
+                            # The way to use this would be to get the content-lenght for the progress bar
+                            # to set the expected size but the receivers do not return standard web service headers
+                            # so the shortcut here is to set the expect value to sone average number and be happy :)
+                            #total_length = int(r.headers.get('content-length'))
+                            total_length = 3000000
+                            print "Downloading to {}".format(download_temp_dir)
+                            for chunk in progress.bar(file_handle.iter_content(chunk_size=1024), expected_size=(total_length/1024) + 1): 
+                                if chunk:
+                                    file.write(chunk)
+                                    file.flush()
+
+                        if os.path.isfile(download_temp_dir + '/' + a_file['name']):
+                            print "Moving file to {}".format(destination)
+                            shutil.move(download_temp_dir + '/' + a_file['name'], destination)
+                        else:
+                            print "File download failed..."
+                    except Exception, error:
+                        self.logger.error(error)
+
+def program_info_screen():
+    ''' Print software info.'''
+    # Only splash screen info here
+
+    current_func = sys._getframe().f_code.co_name + '() >> '
+
+    print ''
+    print "Copyright (c) 2011-2012 Icelandic Met Office"
+    print "syncData 0.1 (March 2015)"
+
+def validate_args(arguments):
+    ''' Validate input arguments before going further.'''
+
+    current_func = sys._getframe().f_code.co_name + '() >> '
+
+    if len(arguments.SID) != 4:
+        print ''
+        print '%s ERROR: Not a valid station ID. Station IDs are 4 letters. E.g.: GFUM' % (
+        current_func)
+        sys.exit()
+
+    if arguments.freq.lower() not in ['a', 'b', 'c', 'f', 'h', 'i', 'l', 'u']:
+        print ''
+        print '%s ERROR: Frequency "%s" is not valid.' % (
+            current_func, arguments.freq)
+        sys.exit()
+
+    if not os.path.isdir(arguments.dest):
+        print ''
+        print '%s ERROR: Destination directory "%s" does not exist.' % (
+            current_func, arguments.dest)
+        sys.exit()
+
+    if arguments.source_local.lower() not in ['old', 'new']:
+        print ''
+        print '%s ERROR: --source-local "%s" is invalid. Only values "old" or "new" are valid.' % (
+            current_func, arguments.source_local)
+        sys.exit()
+
+    if arguments.log not in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
+        print ''
+        print '%s ERROR: Parameter "%s" for argument --log not valid.' % (
+            current_func, arguments.log)
+        sys.exit()
+
+def exit_gracefully(signum, frame):
+    ''' Exit gracefully on Ctrl-C '''
+
+    current_func = sys._getframe().f_code.co_name + '() >> '
+
+    # restore the original signal handler as otherwise evil things will happen
+    # in raw_input when CTRL+C is pressed, and our signal handler is not re-entrant
+    signal.signal(signal.SIGINT, original_sigint)
+
+    try:
+        if raw_input("\nReally quit? (y/n)> ").lower().startswith('y'):
+            sys.exit(1)
+
+    except KeyboardInterrupt:
+        print 'Ok ok, quitting'
+        sys.exit(1)
+
+    # restore the exit gracefully handler here
+    signal.signal(signal.SIGINT, exit_gracefully)
+
+    # Method borrowed from:
+    # http://stackoverflow.com/questions/18114560/python-catch-ctrl-c-command-prompt-really-want-to-quit-y-n-resume-executi
+
+def main():
+    ''' main '''
+
+    # Display some nice program info
+    program_info_screen()
+
+    # Instantiate argparser
+    parser = argparse.ArgumentParser()
+
+    # Setup the argument parser
+    parser.add_argument('SID',
+                        type=str,
+                        help='Station ID')
+    parser.add_argument('-f', '--freq',
+                        type=str,
+                        default='a',
+                        help='''Data sampling frequency. Default is A. A=15sec, B=1Hz, 
+                                C=5Hz, H=20HZ. One or more frequencies can be given.''')
+    parser.add_argument('-m', '--months',
+                        type=int,
+                        default=1,
+                        help='Number of months to sync from the station.')
+    # TODO: Add time window handling so data for certain time window can be checked.
+    #parser.add_argument('--days', type=str, default='A',
+    #                    help='Number of days to sync from the station.')
+    parser.add_argument('--dest',
+                        type=str,
+                        default='/data',
+                        help='Destination folder, other than defined in syncdata.cfg.')
+    parser.add_argument('--source-local',
+                        type=str,
+                        default='new',
+                        help='''Source_local defines if old or new file structure should be checked. 
+                                Values "old" or "new" should be used. "new" is default.''')
+    parser.add_argument('-s', '--sync',
+                        action='store_true',
+                        help='Sync new or partal files from source.')
+    parser.add_argument('-l', '--log',
+                        type=str,
+                        default='INFO',
+                        help='''Set the logging level for the output file: DEBUG (default) 
+                                / INFO / WARNING / ERROR / CRITICAL''')
+
+
+    # Fetch the arguments
+    args = parser.parse_args()
+
+    # Validate arguments - exit with a message if they are not.
+    # TODO : See if argparser can handle all vaidation cases. Some are already covered.
+    validate_args(args)
+
+    # Instantiate a parser and get station config
+    parser = cparser.Parser()
+    station_info = parser.getStationInfo(args.SID.upper())
+    if station_info:
+
+        sync = SyncData(station_info, args)
+        sync.info()
+
+        months_backwards = datalib.months_backwards(int(args.months))
+        #print months
+
+        print '--------------------'
+        print '##   Data files   ##'
+        print '--------------------'
+
+        for month_backwards in months_backwards:
+
+            station_files = sync.get_station_files(month_backwards)
+            local_files = datalib.get_files(sync.frequency, sync.root_destination,
+                                               sync.sid, month_backwards, 'raw')
+
+            new_files, partial_files = sync.diff_sources(local_files, station_files)
+
+            if len(new_files) > 0:
+
+                print ''
+                print '## New files ##'
+                print '----------------------------------------------------------------------------------------------'
+                for files in new_files:
+                    print files
+                print '----------------------------------------------------------------------------------------------'
+
+            if len(partial_files) > 0:
+
+                print ''
+                print '## Partial files ##'
+                print '----------------------------------------------------------------------------------------------'
+                for files in partial_files:
+                    print files
+                print '----------------------------------------------------------------------------------------------'
+
+            if args.sync:
+                sync.sync_sources((new_files, partial_files), month_backwards)
+                print ""
+                print "STATUS: Sync complete!"
+    else:
+        print ''
+        print '__main__ ERROR: Unknown station ID. Use "info" to query station info.'
+
+if __name__ == '__main__':
+    # This is used to catch Ctrl-C exits
+    original_sigint = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, exit_gracefully)
+
+    main()

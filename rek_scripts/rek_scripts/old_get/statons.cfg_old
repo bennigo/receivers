@@ -1,0 +1,954 @@
+## GPS station config file - DEV-DEMO
+## Created July 2011
+## SFS - fjalar@vedur.is
+
+## BGO - changed configuration of DYNC orginal file in gps.cfg.04082011
+
+# The only valid variables are listed in the template here below.
+# Other variables, plus lines with the hash sign as first character, are ignored.
+
+#############################################################################################
+
+## Station name - this is just for ease of reading the config.. not necessary.
+#Station_NAME 		= Station name (again)
+#Station_ID		= 4 letter id , e.g. DYNC
+#Receiver_TYPE 		= NetRS, NetR9, Topcon, Septentrino, Aztech
+#Receiver_IP   		= e.g 192.168.7.150  Ip number set in the GPS instrument
+#Reveiver_HTTP_PORT    = A specific port for a given IP number to nat with http protocol on the standard port
+#                     i.e (http; Router_IP:Receiver_HTTP_PORT -> Receiver_IP:80) which is defined in a router, modem or a computer.
+#Reveiver_FTP_PORT    = port for ftp protocol
+#Receiver_TELNET_PORT = 
+#                     i.e (ftp; Router_IP:Receiver_FTP_PORT -> Receiver_IP:21) which is defined in a router, modem or a computer.
+#Receiver_VOLT_P 	= 1 or 2 - NetRS ONLY!- it can differ which port is used for voltage on the NetRS resulting in two different commands to be sent.
+#Connection_TYPE 	= cable, (direct,sil,tunnel,serial,dialup), 3G, radio, Wifi-radio,ppp-radio, E-max - 
+#                     for more than one kind, list in sequence from Reykjavík:  e.g. "3G, tunnel, Freewave" for GFUM
+#                     The second colum (tunnel: access instrument trhough port, sil: acces instrument trhough sil computer
+#                                       direct: direct acces to receivers IP number, serial: receiver connected trhough serial port)
+#Proxy_SERVER			= jar or kjarni A computer allowed to access the sil computer
+#Proxy_HOST		= ask,....  connected on a local network or serial device through a sil computer
+#Proxy_HTTP_PORT         = 8102, for forwarding the connection with using a tunnel through sil computer
+#PPP_conn			= yes/no .. these connections are currently only on god(GOLA), hau(HAUD) and nyl(NYLA).. 
+#Router_TYPE	  	= Conel, West, HUAWEI, Freewave, Straigthcore...something.. 
+#Router_IP     		= NN Ip numbver of a router
+#Router_number    = +354 869 8967
+#Serial_DEVICE   = /dev/ttyS0  .. device for stations connectet trhough serial cable
+
+#############################################################################################
+
+#########
+### A ###
+#########
+
+## Árolt
+Station_NAME    	= Árholt
+Station_ID      	= ARHO
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8080
+Connection_TYPE 	= 3G-radio
+Router_TYPE     	= Conel
+Router_IP       	= 157.157.222.109
+Router_NUMBER   	= +354-897-4962
+
+## AUST
+Station_NAME            = Austmannsbunga
+Station_ID              = AUST
+Receiver_TYPE           = NetR9       
+Receiver_HTTP_PORT      = 8060
+Receiver_RTP_PORT       = 2543
+Receiver_REFTEK_PORT    = 5000 
+Connection_TYPE         = 3G-radio
+Router_TYPE             = Conel
+Router_IP               = 157.157.145.101
+Router_NUMBER           = +354-862-4187
+
+#########
+### B ###
+#########
+
+## Búfellsalda    
+Station_NAME  	        = Búrfellsalda
+Station_ID   	        = BALD
+Receiver_TYPE           = NetRS       
+Receiver_IP             = 10.140.48.25
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host
+Router_TYPE 	        = Freewave
+Router_IP 	        = 10.140.48.35
+Proxy_USER              = sil
+Proxy_HOST 	        = kjarni
+Proxy_HTTP_PORT         = 8102
+
+# Baughóll - Húsavík
+Station_NAME    	= Baughóll
+Station_ID     		= BAUG
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8060
+Connection_TYPE 	= IP,radio
+Router_TYPE     	= Conel
+Router_Number   	= +354-893-3046
+Router_IP       	= 157.157.100.21
+
+## BRUJ - Out of commission by LV : 9. August 2011
+#Station_NAME    	= Brúarjökull
+#Receiver_ID     	= BRUJ
+#Receiver_TYPE   	= NetRS
+#Connection_TYPE 	= 3G-radio
+#Router_TYPE     	= Conel
+#Router_IP       	= 157.157.40.2
+
+## Búðarháls
+Station_NAME            = Búðarháls
+Station_ID              = BUDH
+Receiver_TYPE           = NetRS
+Receiver_HTTP_PORT      = 8134
+#Receiv_IP    		= 192.168.7.134 7-net terminated 2012
+#Receiver_IP    	= 213.220.119.210  # -> 79.134.238.254 Changes made by ISP Ábótinn 22.feb 2013
+#Receiver_IP     	= 79.134.238.254 #-> 213.220.119.210 BGO 14.05.2013
+#Receiver_IP     	= 5.23.76.66 # SFS 02.12.2013 (ábótagrín)
+Connection_TYPE         = IP,cable
+Router_TYPE             = ?
+Router_IP               = 5.23.76.66
+
+#########
+### D ###
+#########
+
+## Dyngjuháls
+Station_NAME 	        = Dyngjuháls
+Station_ID	        = DYNC 				
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,radio
+Router_TYPE	        = West
+Router_IP     	        = 157.157.40.107
+Router_NUMBER           = +354-???-????
+
+#########
+### E ###
+#########
+
+## Enta
+Station_NAME 	        = Enta
+Station_ID	        = ENTC 				
+Receiver_TYPE 	        = NetR9 			
+Receiver_HTTP_PORT      = 8060
+Connection_TYPE         = IP,radio
+Router_TYPE	        = Conel
+Router_IP     	        = 157.157.145.100
+Router_NUMBER           = +354-862-4186
+
+## Eyvindstungur
+Station_NAME 	        = Eyvindstungur
+Station_ID	        = EYVI
+Receiver_TYPE 	        = Topcon 			
+Receiver_TELNET_PORT    = 8002
+Receiver_FTP_PORT       = 2121
+Receiver_USER           = eyvi
+Receiver_PASS           = E67F8PV
+Connection_TYPE         = IP,radio
+Router_TYPE	        = Conel
+Router_IP     	        = 157.157.40.120
+Router_NUMBER           = +354-899-8368
+
+#########
+### F ###
+#########
+
+## Feðgiar
+Station_NAME 	        = Feðgar
+Station_ID	        = FEDG 				
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8174
+Connection_TYPE         = IP,radio
+Router_TYPE             = ?
+#Router_IP              = 213.220.119.210
+Router_IP		= 5.23.76.66 # SFS 02.12.2013 (ábótagrín)
+
+## Fimmvörðuháls
+Station_NAME 	        = Fimmvörðuháls
+Station_ID	        = FIM2
+Receiver_TYPE 	        = NetR9 			
+Receiver_HTTP_PORT      = 8060
+Connection_TYPE         = IP,direct
+Router_TYPE	        = Conel
+Router_IP     	        = 157.157.40.114
+Router_NUMBER           = +354-863-8661
+
+## Fjórðungsalda
+Station_NAME 	        = Fjórðungsalda
+Station_ID	        = FJOC
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,radio
+Router_TYPE	        = Conel
+Router_IP   	        = 157.157.40.3
+Router_NUMBER           = +354-897-8617
+
+
+## Fitjarás
+Station_NAME 	        = Fitjarás
+Station_ID	        = FITC
+Receiver_TYPE 	        = NetRS
+Receiver_HTTP_PORT      = 8132 			
+Connection_TYPE         = IP,direct
+Router_TYPE             = ?
+#Router_IP              = 213.220.119.210
+Router_IP		= 5.23.76.66 # SFS 02.12.2013 (ábótagrín)
+
+## Flatey
+Station_NAME 	        = Flatey
+Station_ID	        = FTEY
+Receiver_TYPE 	        = NetR9 			
+Receiver_IP   	        = 192.168.100.62
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host,sshserver
+Proxy_USER              = sil
+Proxy_SSH_SERVER        = kjarni
+Proxy_HOST	        = fla
+Proxy_HTTP_PORT         = 8110
+
+
+#########
+### G ###
+#########
+
+## Garður
+Station_NAME 	        = Garður
+Station_ID	        = GAKE
+Receiver_TYPE 	        = PolaRx2e 			
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,direct
+Rotuer_TYPE             = HUAWEI 
+Router_IP               = 157.157.222.110
+
+## Geitafell
+Station_NAME 	        = Geitafell     
+Station_ID	        = GFEL
+Receiver_TYPE 	        = NetR9 			
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,radio
+Router_TYPE	        = Conel
+Router_IP     	        = 157.157.40.55
+Router_NUMBER           = +354-894-3814
+
+## Glerhaus
+Station_NAME 	        = Glerhaus
+Station_ID	        = GLER
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8166
+Connection_TYPE         = IP,cable,wifi-radio
+Router_TYPE             = Straightcore
+#Router_IP               = 213.220.119.210        
+Router_TYPE		= Straightcore
+Router_IP		= 5.23.76.66
+
+## Goðaland við Mýrdalsjökul
+Station_NAME 	        = Goðaland við Mýrdalsjökul
+Station_ID	        = GOLA
+Receiver_TYPE 	        = NetRS 			
+Receiver_IP   	        = 192.168.100.65
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host,sshserver
+Proxy_USER              = sil
+Proxy_SSH_SERVER        = kjarni
+Proxy_HOST	        = god
+Proxy_HTTP_PORT         = 8120
+
+## Granastaðir
+Station_NAME 	        = Granastaðir
+Station_ID	        = GRAN
+Receiver_TYPE 	        = PolaRx2e 			
+Receiver_IP   	        = 192.168.100.64
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host,sshserver
+Proxy_USER              = sil
+Proxy_SSH_SERVER        = kjarni
+Proxy_HOST	        = gra
+Proxy_HTTP_PORT         = 8230
+
+## Grímsey
+Station_NAME 	        = Grímsey
+Station_ID	        = GMEY
+Receiver_TYPE 	        = NetR9
+Receiver_IP             = 192.168.100.64
+Receiver_HTTP_PORT      = 80 			
+Connection_TYPE         = IP,host,sshserver
+Proxy_SSH_SERVER        = kjarni
+Proxy_USER              = sil
+Proxy_HOST	        = gri
+Proxy_HTTP_PORT         = 8140
+
+## Grímsfjall
+Station_NAME 	        = Grímsfjall
+Station_ID	        = GFUM
+Receiver_TYPE 	        = NetRS			
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,radio
+Router_TYPE	        = Conel,Freewave
+Router_IP     	        = 157.157.40.34
+Router_NUMBER           = +354-???-???? # shared with SIL
+
+## Grænavatn
+Station_NAME 	        = Grænavatn
+Station_ID	        = GRVA
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,radio
+Router_TYPE	        = Conel
+Router_IP     	        = 157.157.145.13
+Router_NUMBER           = +354-897-9276
+
+
+#########
+### H ###
+#########
+
+## Hafrahvammagljúfur
+Station_NAME 	        = Hafrahvammagljúfur
+Station_ID	        = HAHV
+Receiver_TYPE 	        = NetRS 			
+Receiver_IP   	        = 10.140.48.23
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host
+Proxy_USER              = sil
+Proxy_HOST 	        = kjarni
+Proxy_HTTP_PORT         = 8101
+Router_TYPE 	        = Freewave
+Router_IP 	        = 10.140.48.32
+
+Station_NAME      	= Hamarinn
+Station_ID     		= HAFS
+#Receiver_TYPE   	= NetRS  # 24.10.2011 - 04.06.2013
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8060
+Connection_TYPE 	= IP,radio
+Router_TYPE     	= Conel
+Router_IP       	= 157.157.124.69
+Router_NUMBER   	= +354-862-6524
+
+Station_NAME    	= Hamragarðaheiði
+Station_ID     		= HAMR
+Receiver_TYPE   	= NetRS
+Receiver_HTTP_PORT 	= 8080
+Connection_TYPE 	= 3G
+Router_TYPE     	= Conel
+#Router_IP      	= 157.157.40.53 # new IP 18.12.2012
+Router_IP       	= 157.157.40.147 # new IP 18.12.2012
+#Router_NUMBER   	= +354-894-3812 # new GSM 18.12.2012
+Router_NUMBER   	= +354-894-4021 # new GSM 18.12.2012
+
+
+## Háumýrar
+Station_NAME 	        = Háumýrar
+Station_ID	        = HAUC
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,radio
+Router_TYPE	        = Conel
+Router_IP     	        = 157.157.145.12
+Router_NUMBER           = +354-863-8435
+
+## Haukadalur
+Station_NAME 	        = Haukadalur
+Station_ID	        = HAUD
+Receiver_TYPE 	        = NetRS 			
+Receiver_IP   	        = 192.168.0.1
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host,sshserver
+Router_IP               = 213.220.119.210
+Proxy_USER              = sil
+Proxy_SSH_SERVER        = kjarni
+Proxy_HOST	        = hau
+Proxy_HTTP_PORT         = 8150
+
+## Heklukriki
+Station_NAME 	        = Heklukriki
+Station_ID	        = HEKR
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8176
+Connection_TYPE         = IP,cable
+Router_TYPE             = ?
+#Router_IP              = 213.220.119.210
+Router_IP		= 5.23.76.66 # SFS 02.12.2013 (ábótagrín)
+
+## Hestalda
+Station_NAME 	        = Hestalda
+Station_ID	        = HESA
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8170
+Connection_TYPE         = IP,direct
+Router_TYPE             = ?
+#Router_IP              = 213.220.119.210
+Router_IP     		= 5.23.76.66 # SFS 02.12.2013 (ábótagrín)
+
+## Héðinshöfði
+Station_NAME 	        = Héðinshöfði
+Station_ID	        = HEDI
+Receiver_TYPE 	        = NetR9
+Receiver_IP             = 192.168.100.64 
+Receiver_HTTP_PORT      = 80			
+Connection_TYPE         = IP,host,sshserver
+Proxy_USER              = sil
+Proxy_SSH_SERVER        = kjarni
+Proxy_HOST	        = hed
+Proxy_HTTP_PORT         = 8160
+
+## Hlíðarfjall
+Station_NAME    	= Hlíðarfjall
+Station_ID     		= HLFJ
+Receiver_TYPE   	= NetRS
+Receiver_HTTP_PORT 	= 8080
+Connection_TYPE 	= 3G-radio
+Router_TYPE     	= Conel UTMS-UR5
+Router_NUMBER   	= +354-864-8753
+Router_IP		= 157.157.222.115
+
+## Hlíðardalsskóli
+Station_NAME    	= Hlíðardalsskóli
+Station_ID     		= HLID
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8080
+Connection_TYPE 	= 3G-radio
+Router_TYPE     	= Conel UTMS-UR5
+Router_NUMBER   	= +354-852-8421
+Router_IP       	= 157.157.222.166
+
+## Hólar á Tjörnesi
+Station_NAME	        = Hólar á Tjörnesi
+Station_ID	        = HOTJ
+Receiver_TYPE 	        = NetR9
+Receiver_IP             = 192.168.100.65
+Receiver_HTTP_PORT      = 80		
+Connection_TYPE         = IP,host,sshserver
+Proxy_USER              = sil
+Proxy_SSH_SERVER        = kjarni
+Proxy_HOST	        = fla
+Proxy_HTTP_PORT         = 8111
+
+## HUSM
+Station_NAME            = Húsmúli
+Station_ID              = HUSM
+Receiver_TYPE           = NetR9       
+Receiver_HTTP_PORT      = 8060
+Connection_TYPE         = IP,radio
+Router_TYPE             = Conel
+Router_IP               = 157.157.40.119
+Router_NUMBER           = +354-899-8305
+
+## Hveragerði
+Station_NAME    	= Hveragerði
+Station_ID     		= HVER
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8060
+Connection_TYPE 	= IP,radio
+Router_TYPE     	= Conel
+Router_IP       	= 194.144.251.18
+Router_NUMBER   	= +354-695-8513
+
+## Hveravellir
+Station_NAME            = Hveravellir
+Station_ID              = HVEL
+Receiver_TYPE           = NetRS       
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,direct
+Router_TYPE             = Conel
+Router_IP               = 157.157.222.90
+Router_NUMBER           = +354-???-????
+
+## Láguhvolar
+Station_NAME    	= Láguhvolar
+Station_ID     		= HVOL
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8060
+Connection_TYPE 	= IP,radio
+Router_TYPE     	= Conel
+Router_IP       	= 157.157.222.75
+Router_NUMBER   	= +354-896-1157
+
+#########
+### I ###
+#########
+
+## Innri Skúti
+Station_NAME 	        = Innri Skúti
+Station_ID	        = INSK
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,direct
+Router_TYPE	        = ??
+Router_IP               = 157.157.40.185
+
+## Inntakshús Kárahnjúkavirkjunar
+Station_NAME 	        = Inntakshús Kárahnjúkavirkjunar
+Station_ID	        = INTA
+Receiver_TYPE 	        = NetRS 			
+Receiver_IP   	        = 10.140.48.20
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host
+Router_TYPE 	        = Freewave
+Router_IP 	        = 10.140.48.30
+Proxy_USER              = sil
+Proxy_HOST		= kjarni
+Proxy_HTTP_PORT         = 8100
+
+## Ísakot
+Station_NAME    	= Ísakot
+Station_ID     		= ISAK
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8060
+Connection_TYPE 	= IP,radio
+Router_TYPE     	= Conel
+Router_IP       	= 157.157.222.116
+Router_NUMBER   	= +354-8649054
+
+#########
+### J ###
+#########
+
+## Jökulheimar
+Station_NAME 	        = Jökulheimar
+Station_ID	        = JOKU 				
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8060
+Connection_TYPE         = IP,radio
+Router_TYPE	        = Westermo
+Router_IP     	        = 157.157.145.118
+Router_NUMBER           = +354-???-????
+
+#########
+### K ###
+#########
+
+## Kálfafell
+Station_NAME    	= Kálfafell
+Station_ID     		= KALF
+Receiver_TYPE   	= NetRS
+Receiver_HTTP_PORT 	= 8060
+Connection_TYPE 	= IP,radio
+Router_TYPE     	= Conel UTMS-UR5
+Router_IP		= 157.157.40.151
+Router_NUMBER   	= +354-894-0877
+
+## Kálfholt í Holtum
+Station_NAME 	        = Kálfholt í Holtum
+Station_ID	        = KALT
+Receiver_TYPE 	        = NetRS
+Receiver_USER           = silgps
+Receiver_PASS           = katla1918
+Connection_TYPE         = IP,radio,direct
+Router_TYPE             = Emax
+Router_IP		= 88.149.12.119
+
+
+## Kiðagilsdrög
+Station_NAME 	        = Kiðagilsdrög
+Station_ID	        = KIDC
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8080 
+Connection_TYPE         = IP,direct 
+Router_TYPE	        = Conel
+Router_IP   	        = 157.157.40.2
+Router_NUMBER           = +354-897-8645
+
+## Kiðjaberg
+Station_NAME 	        = Kiðjaberg             
+Station_ID	        = KIDJ
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT	= 8060
+Receiver_USER           = silgps
+Receiver_PASS           = katla1918
+Connection_TYPE         = IP,radio
+#Router_TYPE            = E-max
+Router_TYPE		= Conel UTMS-UR5
+Router_IP		= 157.157.145.126
+
+## Kópasker
+Station_NAME 	        = Kópasker
+Station_ID	        = KOSK
+Receiver_TYPE 	        = PolaRx2e 			
+Receiver_HTTP_PORT      = 8081
+Connection_TYPE         = IP,direct
+Rotuer_TYPE             = HUAWEI 
+Router_IP               = 157.157.222.3
+
+# Krísuvík
+Station_NAME 	        = Krísuvík
+Station_ID	        = KRIV
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,direct
+Router_TYPE             = Westermo
+#Router_IP   	        = 157.157.124.129
+Router_IP   	        = 10.4.1.22
+Router_NUMBER           = +354-???-????
+
+## Kvíslarhóll
+Station_NAME 	        = Kvíslarhóll
+Station_ID	        = KVIS
+Receiver_TYPE 	        = PolaRx2e 			
+#Receiver_IP   	         = 192.168.100.67
+Receiver_HTTP_PORT      = 8080
+#Connection_TYPE        = IP,host,sshserver
+Connection_TYPE		= IP,radio
+Router_TYPE		= NN
+Router_IP		= 157.157.124.206
+Router_NUMBER		= NN
+#Proxy_USER              = sil
+#Proxy_SSH_SERVER        = kjarni
+#Proxy_HOST	        = flaa
+#Proxy_HTTP_PORT         = 8112
+
+## Kvísker 
+Station_NAME            = Kvísker
+Station_ID              = KVSK
+Receiver_TYPE           = Topcon      
+Receiver_TELNET_PORT    = 8002
+Receiver_FTP_PORT       = 2121
+Receiver_USER           = kvsk
+Receiver_PASS           = U0CNWSN
+Connection_TYPE         = IP,direct
+Router_TYPE             = Conel
+Router_IP               = 157.157.40.121
+Router_NUMBER           = +354-899-8343
+
+#########
+### L ###
+#########
+
+## Lambafell
+Station_NAME 	        = Lambafell
+Station_ID	        = LFEL
+Receiver_TYPE 	        = NetRS 
+Receiver_HTTP_PORT      = 1563
+Connection_TYPE         = IP,radio
+Router_TYPE	        = Conel,Freewave
+Router_IP   	        = 157.157.40.185
+
+#########
+### M ###
+#########
+
+## Móhálsadalur
+Station_NAME 	        = Móhálsadalur  
+Station_ID	        = MOHA
+Receiver_TYPE 	        = NetRS 			
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,radio
+Router_TYPE	        = Conel
+Router_IP     	        = 157.157.40.54
+Router_NUMBER           = +354-894-3813
+
+## Mjóaskarð
+Station_NAME 	        = Mjóaskarð
+Station_ID	        = MJSK
+Receiver_TYPE 	        = NetRS 
+Receiver_USER           = silgps
+Receiver_PASS           = katla1918
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,direct
+Router_TYPE             = ??
+Router_IP   	        = 130.208.196.45
+
+#########
+### N ###
+#########
+
+## Norðurbjallar - suðurendi
+Station_NAME 	        = Norðurbjallar - suðurendi
+Station_ID	        = NORS
+Receiver_TYPE 	        = NetRS 
+Receiver_HTTP_PORT      = 8168
+Connection_TYPE         = IP,radio
+Router_TYPE             = Freewave
+Router_IP		= 5.23.76.66 # SFS 02.12.2013 (ábótagrín)
+
+
+## Nýlenda 
+Station_NAME 	        = Nýlenda
+Station_ID	        = NYLA
+Receiver_TYPE 	        = NetRS 
+#Receiver_IP   	         = 192.168.0.1
+Receiver_HTTP_PORT      = 8060
+Connection_TYPE         = IP,radio
+Router_TYPE             = Conel
+Router_IP		= 157.157.77.37
+#Proxy_USER              = sil
+#Proxy_SSH_SERVER        = kjarni
+#Proxy_HOST	         = nyl
+#Proxy_HTTP_PORT         = 8180
+
+#########
+### O ###
+#########
+
+### Ölkelduháls
+Station_NAME        = Ölkelduháls
+Station_ID          = OLKE
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8080
+Connection_TYPE 	= IP,radio
+Router_TYPE     	= Conel
+Router_IP           = 157.157.40.232
+Router_NUMBER   	= +354-862-4185
+
+## Öldufell
+Station_NAME            = Öldufell
+Station_ID              = OFEL
+Receiver_TYPE           = NetR9       
+Receiver_HTTP_PORT      = 8060
+Connection_TYPE         = IP,direct
+Router_TYPE             = Conel UTMS-UR5
+Router_IP               = 157.157.145.99
+Router_NUMBER           = +354-862-4185
+
+#########
+### R ###
+#########
+
+## Raufarhöfn
+Station_NAME    	= Raufarhöfn
+Station_ID     		= RHOF
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8080
+Connection_TYPE 	= 3G-radio
+Router_TYPE     	= Conel
+Router_IP       	= 157.157.222.107
+Router_NUMBER   	= +354-895-7786
+
+## Rjúpnafell
+Station_NAME            = Rjúpnafell
+Station_ID              = RFEL
+Receiver_TYPE           = NetRS       
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,direct
+Router_TYPE             = West
+Router_IP               = 157.157.145.107
+Router_NUMBER           = +354-856-4273
+
+#########
+### S ###
+#########
+
+## Saltvík
+Station_NAME 	        = Saltvík
+Station_ID	        = SAVI
+Receiver_TYPE 	        = PolaRx2e
+Receiver_IP             = 192.168.100.64
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host,sshserver
+Proxy_USER              = sil
+Proxy_SSH_SERVER        = kjarni
+Proxy_HOST	        = fla
+Proxy_HTTP_PORT         = 8113
+
+## Sarpur 
+Station_NAME 	        = Sarpur
+Station_ID	        = SARP
+Receiver_TYPE 	        = NetRS    			
+Connection_TYPE         = IP,direct
+Router_TYPE             = Conel
+Receiver_HTTP_PORT      = 8080
+Router_NUMBER           = +354-895-6339
+Router_IP   	        = 157.157.40.152
+
+
+## Sauðárháls
+Station_NAME 	        = Sauðárháls
+Station_ID	        = SAUD
+Receiver_TYPE 	        = NetRS
+Receiver_IP   	        = 10.140.48.22
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host
+Router_TYPE 	        = Freewave
+Router_IP 	        = 10.140.48.32
+Proxy_USER              = sil
+Proxy_HOST	        = kjarni
+Proxy_HTTP_PORT         = 8103
+
+## Saurbær
+Station_NAME 	        = Saurbær
+Station_ID	        = SAUR
+Receiver_TYPE 	        = NetRS
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,direct
+Router_TYPE             = NN
+Router_IP   	        = 157.157.40.149
+Router_NUMBER           = +354-???-????
+
+## Selfoss
+Station_NAME 	        = Selfoss
+Station_ID	        = SELF
+Receiver_TYPE 	        = NetRS
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,radio
+Router_TYPE             = Conel
+Router_IP   	        = 157.157.40.9
+Router_NUMBER           = +354-856-4273
+
+## Siglufjörður
+Station_NAME 	        = Siglufjörður
+Station_ID	        = SIFJ
+Receiver_TYPE 	        = NetR9 			
+Receiver_IP   	        = 192.168.100.53
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host,sshserver
+Connection_PORT         = 8190
+Proxy_USER              = sil
+Proxy_SSH_SERVER        = kjarni
+Proxy_HOST	        = sig
+Proxy_HTTP_PORT         = 8190
+
+## Sjúkrahúsið Húsavík
+Station_NAME    	= Sjúkrahúsið Húsavík
+Station_ID     		= SJUK
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT	= 8080
+Connection_TYPE 	= IP,radio
+Router_IP		= 157.157.222.108
+Router_TYPE     	= Conel
+Router_NUMBER   	= +354-897-4665
+
+## Skógá
+Station_NAME            = Skógá
+Station_ID              = SKOG
+Receiver_TYPE           = NetRS       
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,direct
+Router_TYPE             = Conel
+Router_IP               = 157.157.40.115
+Router_NUMBER           = +354-891-8641
+
+## Skriða
+Station_NAME    	= Skriða
+Station_ID     		= SKDA
+Receiver_TYPE   	= NetRS
+Receiver_HTTP_PORT 	= 8080
+Connection_TYPE 	= IP,radio
+Router_TYPE     	= Conel UTMS-UR5
+Router_IP		= 157.157.222.114
+Router_NUMBER   	= +354-864-8531
+
+#Skrokkalda
+Station_NAME            = Skrokkalda
+Station_ID              = SKRO
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8080
+Connection_TYPE 	= 3G-radio
+Router_IP		= 157.157.222.55
+Router_TYPE     	= Westermo MRD-310
+Router_NUMBER   	= +354-XXX-XXXX
+
+## Sólheimaheiði
+## Breyttist úr NETRS í NETR9 tæki í byrjun september 2011
+Station_NAME            = Sólheimaheiði
+Station_ID              = SOHO
+Receiver_TYPE           = NetR9       
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,direct
+Router_TYPE             = Conel
+Router_IP               = 157.157.40.10
+Router_NUMBER           = +354-897-7837
+
+## Snæbýli
+Station_NAME            = Snæbýli
+Station_ID              = SNAE
+Receiver_TYPE           = NetRS       
+Receiver_HTTP_PORT      = 8060
+Receiver_FTP_PORT       = 2121
+Connection_TYPE         = IP,direct
+Router_TYPE             = Conel
+Router_IP               = 157.157.40.106
+Router_NUMBER           = +354-895-9788
+
+## Stóra Kjalalda
+Station_NAME            = Stóra Kjalalda
+Station_ID              = STKA
+Receiver_TYPE           = NetRS       
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,direct
+Router_TYPE             = Conel
+Router_IP               = 157.157.40.150
+Router_NUMBER           = +354-894-1874
+
+## Stórólfshvoll
+Station_NAME            = Stórólfshvoll
+Station_ID              = STOR
+Receiver_TYPE           = NetRS       
+Receiver_IP             = 192.168.100.64
+Receiver_HTTP_PORT      = 80
+Connection_TYPE         = IP,host,sshserver
+Proxy_USER              = sil
+Proxy_SSH_SERVER        = kjarni
+Proxy_HOST	        = god
+Proxy_HTTP_PORT         = 8121
+
+## Steinsholt
+Station_NAME            = Steinsholt
+Station_ID              = STE2
+Receiver_TYPE           = NetRS       
+Receiver_HTTP_PORT      = 8080
+Connection_TYPE         = IP,radio
+Router_TYPE             = Conel
+Router_IP               = 157.157.40.116
+Router_NUMBER           = +354-863-1814
+
+## Söðulfell - Temporarily removed due to power issues - Dec 2011
+Station_NAME    	= Söðulfell
+Station_ID     		= SODU
+Receiver_TYPE   	= NetRS       
+Receiver_HTTP_PORT 	= 8088
+Receiver_USER   	= gps
+Receiver_PASS   	= katla1918
+Router_IP       	= 130.208.196.45
+
+
+#########
+### V ###
+#########
+
+## Vestmannaeyjar
+Station_NAME    	= Vestmannaeyjar
+Station_ID     		= VMEY
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8060
+Connection_TYPE 	= IP,radio
+Router_TYPE     	= Conel
+Router_IP       	= 157.157.222.54
+Router_NUMBER   	= +354-852-8002
+
+#Vogsósar
+Station_NAME    	= Vogsósar
+Station_ID     		= VOGS
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8060
+Router_TYPE     	= Conel
+#Router_IP       	= 157.157.222.163 #20140502
+Router_IP       	= 194.144.251.19
+#Router_NUMBER   	= +354-852-8372 #20140502
+Router_NUMBER   	= +354-694-8512
+
+#Vonarskarð
+Station_NAME    	= Vonarskarð
+Station_ID     		= VONC
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8060
+Router_TYPE     	= Conel
+Router_IP       	= 157.157.124.103
+Router_NUMBER   	= +354-894-3789
+
+#########
+### Þ ###
+#########
+
+#Þrvaldseyri
+Station_NAME    	= Þorvaldseyri
+Station_ID     		= THEY
+Receiver_TYPE   	= NetR9
+Receiver_HTTP_PORT 	= 8080
+Connection_TYPE		= IP,radio
+Router_TYPE     	= Conel
+Router_IP       	= 157.157.40.186
+Router_NUMBER   	= +354-894-5921
+
+# EOF must be in place so the parser knows were to stop. IF EOF is missing the last station is not processed.
+EOF
