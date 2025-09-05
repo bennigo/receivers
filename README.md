@@ -95,6 +95,12 @@ print(f"Downloaded {result['files_downloaded']} files")
 - Using fallback configuration for testing (ELDC: 10.6.1.90:2160)
 - Full integration requires completing station configuration files
 
+🎯 **Future Integration Objective**:
+- **tostools integration**: tostools will be enhanced to automatically update stations.cfg
+- This will populate missing router/receiver connection details from operational data
+- Enables seamless configuration management between TOS API and receivers package
+- Reduces manual configuration maintenance and ensures data consistency
+
 📋 **Planned**:
 - Additional receiver types (Leica, NetRS, etc.)
 - API integration endpoints
@@ -133,7 +139,22 @@ This package is part of the GPS library ecosystem:
 - **gtimes**: GPS time processing
 - **gps_parser**: Station configuration management  
 - **geo_dataread**: GPS data analysis
-- **tostools**: TOS API integration
+- **tostools**: TOS API integration → **Future objective: auto-update stations.cfg**
+
+### Integration Roadmap
+
+The receivers package will integrate with tostools to automatically maintain station configurations:
+
+```mermaid
+graph LR
+    A[TOS API] --> B[tostools]
+    B --> C[stations.cfg]
+    C --> D[gps_parser]
+    D --> E[receivers]
+    E --> F[Station Health/Data]
+```
+
+This eliminates manual configuration maintenance and ensures operational data consistency.
 
 ## 📋 Configuration
 
