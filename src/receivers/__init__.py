@@ -5,19 +5,19 @@ __author__ = "Benedikt Gunnar Ófeigsson"
 __email__ = "bgo@vedur.is"
 
 # Import base classes and exceptions
-from .base.receiver import BaseReceiver
 from .base.exceptions import (
-    ReceiverError,
+    ConfigurationError,
     ConnectionError,
     DownloadError,
-    ConfigurationError,
+    ReceiverError,
 )
+from .base.receiver import BaseReceiver
 
 # Conditionally import receiver implementations
 __all__ = [
     "BaseReceiver",
     "ReceiverError",
-    "ConnectionError", 
+    "ConnectionError",
     "DownloadError",
     "ConfigurationError",
 ]

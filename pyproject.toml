@@ -93,6 +93,8 @@ packages = ["src/receivers"]
 [tool.ruff]
 target-version = "py38"
 line-length = 88
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -106,9 +108,10 @@ ignore = [
     "E501",  # line too long (handled by black)
     "N803",  # argument name should be lowercase (GPS functions use camelCase)
     "N806",  # variable in function should be lowercase (legacy GPS code)
+    "B904",  # Within except clause, raise exceptions with raise ... from err
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "tests/*.py" = ["N802", "N803"]  # Allow uppercase in test names
 
 [tool.black]

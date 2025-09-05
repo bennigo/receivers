@@ -4,14 +4,12 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
 from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 # Import receiver classes (conditionally)
 try:
@@ -56,7 +54,7 @@ def create_receiver(station_id: str, receiver_type: str = "polarx5") -> Any:
         station_info = parser.getStationInfo(station_id.upper())
         if not station_info:
             raise ValueError(f"No configuration found for station {station_id}")
-    
+
     if receiver_type.lower() == "polarx5":
         if not HAS_POLARX5:
             raise ValueError("PolaRX5 support not available (missing dependencies)")
@@ -67,7 +65,7 @@ def create_receiver(station_id: str, receiver_type: str = "polarx5") -> Any:
 
 def format_health_status(health: Dict[str, Any]) -> None:
     """Format and display health status using Rich."""
-    
+
     # Main status panel
     status_color = "green" if health["overall_status"] == "healthy" else "red"
     status_panel = Panel(
@@ -76,22 +74,22 @@ def format_health_status(health: Dict[str, Any]) -> None:
         expand=False
     )
     console.print(status_panel)
-    
+
     # Connection details table
     table = Table(title="Connection Status", box=box.ROUNDED)
     table.add_column("Component", style="cyan")
     table.add_column("Status", style="bold")
     table.add_column("Details", style="dim")
-    
+
     conn = health["connection"]
     router_status = "✅ OK" if conn["router"] else "❌ FAIL"
     receiver_status = "✅ OK" if conn["receiver"] else "❌ FAIL"
-    
+
     table.add_row("Router", router_status, f"{conn['ip']}:{conn['port']}")
     table.add_row("Receiver", receiver_status, conn.get("error", ""))
-    
+
     console.print(table)
-    
+
     # Timestamp
     console.print(f"\n[dim]Last checked: {health['timestamp']}[/dim]")
 
@@ -101,14 +99,14 @@ def cmd_health(args) -> int:
     try:
         receiver = create_receiver(args.station_id, args.receiver_type)
         health = receiver.get_health_status()
-        
+
         if args.json:
             console.print(json.dumps(health, indent=2))
         else:
             format_health_status(health)
-            
+
         return 0 if health["overall_status"] == "healthy" else 1
-        
+
     except Exception as e:
         console.print(f"[red]Error checking health: {e}[/red]")
         return 1
@@ -118,7 +116,7 @@ def cmd_download(args) -> int:
     """Download data from receiver."""
     try:
         receiver = create_receiver(args.station_id, args.receiver_type)
-        
+
         # Prepare download parameters
         download_args = {
             "start": args.start,
@@ -129,16 +127,16 @@ def cmd_download(args) -> int:
             "archive": args.archive,
             "loglevel": logging.DEBUG if args.verbose else logging.INFO
         }
-        
+
         if args.tmp_dir:
             download_args["tmp_dir"] = args.tmp_dir
-            
+
         console.print(f"[bold]Downloading data for {args.station_id}[/bold]")
         if args.dry_run:
             console.print("[yellow]DRY RUN - No files will be downloaded[/yellow]")
-            
+
         result = receiver.download_data(**download_args)
-        
+
         # Display results
         if args.json:
             console.print(json.dumps(result, indent=2, default=str))
@@ -149,9 +147,9 @@ def cmd_download(args) -> int:
             console.print(f"Files missing: {result['files_missing']}")
             console.print(f"Files downloaded: {result['files_downloaded']}")
             console.print(f"Duration: {result['duration']:.2f} seconds")
-            
+
         return 0
-        
+
     except Exception as e:
         console.print(f"[red]Error during download: {e}[/red]")
         return 1
@@ -161,10 +159,10 @@ def cmd_status(args) -> int:
     """Show receiver status information."""
     try:
         receiver = create_receiver(args.station_id, args.receiver_type)
-        
+
         info = receiver.get_station_info()
         connection = receiver.get_connection_status()
-        
+
         if args.json:
             data = {"station_info": info, "connection": connection}
             console.print(json.dumps(data, indent=2))
@@ -173,21 +171,21 @@ def cmd_status(args) -> int:
             table = Table(title=f"Station {args.station_id} Status", box=box.ROUNDED)
             table.add_column("Property", style="cyan")
             table.add_column("Value", style="bold")
-            
+
             table.add_row("Station ID", info["station_id"])
             table.add_row("Receiver Type", info["receiver_type"])
             table.add_row("IP Address", info["ip"])
             table.add_row("FTP Port", str(info["port"]))
             table.add_row("Passive Mode", "Yes" if info["pasv_mode"] else "No")
-            
+
             # Connection status
             conn_status = "✅ Connected" if connection["receiver"] else "❌ Disconnected"
             table.add_row("Connection", conn_status)
-            
+
             console.print(table)
-            
+
         return 0
-        
+
     except Exception as e:
         console.print(f"[red]Error getting status: {e}[/red]")
         return 1
@@ -207,33 +205,33 @@ Examples:
   receivers download VMEY --start 2024-01-15 --end 2024-01-20 --dry-run
         """
     )
-    
+
     parser.add_argument(
         "--version",
         action="version",
         version="%(prog)s 0.1.0"
     )
-    
+
     # Global options
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Enable verbose output"
     )
-    
+
     parser.add_argument(
         "--json",
-        action="store_true", 
+        action="store_true",
         help="Output results as JSON"
     )
-    
+
     # Subcommands
     subparsers = parser.add_subparsers(
         dest="command",
         help="Available commands",
         metavar="COMMAND"
     )
-    
+
     # Health check command
     health_parser = subparsers.add_parser(
         "health",
@@ -246,13 +244,13 @@ Examples:
         help="Station identifier (e.g., REYK, HOFN, VMEY)"
     )
     health_parser.add_argument(
-        "-t", "--receiver-type", 
+        "-t", "--receiver-type",
         default="polarx5",
         choices=["polarx5"],
         help="Receiver type (default: polarx5)"
     )
     health_parser.set_defaults(func=cmd_health)
-    
+
     # Download command
     download_parser = subparsers.add_parser(
         "download",
@@ -266,7 +264,7 @@ Examples:
     )
     download_parser.add_argument(
         "-t", "--receiver-type",
-        default="polarx5", 
+        default="polarx5",
         choices=["polarx5"],
         help="Receiver type (default: polarx5)"
     )
@@ -275,7 +273,7 @@ Examples:
         help="Start date (ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
     )
     download_parser.add_argument(
-        "-e", "--end", 
+        "-e", "--end",
         help="End date (ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
     )
     download_parser.add_argument(
@@ -311,11 +309,11 @@ Examples:
         help="Temporary download directory"
     )
     download_parser.set_defaults(func=cmd_download)
-    
+
     # Status command
     status_parser = subparsers.add_parser(
         "status",
-        help="Show receiver status information", 
+        help="Show receiver status information",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="Display detailed status information for a receiver"
     )
@@ -330,20 +328,20 @@ Examples:
         help="Receiver type (default: polarx5)"
     )
     status_parser.set_defaults(func=cmd_status)
-    
+
     # Parse arguments
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         return 1
-    
+
     # Set up logging
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.WARNING)
-    
+
     # Execute command
     return args.func(args)
 
