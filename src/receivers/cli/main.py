@@ -47,17 +47,26 @@ def create_receiver(station_id: str, receiver_type: str = "polarx5") -> Any:
     if not HAS_GPS_PARSER:
         # For now, create a minimal config for testing
         station_info = {
-            "router": {"ip": "10.4.1.100"},  # Example IP
-            "receiver": {"ftpport": "21"},
+            "router": {"ip": "10.6.1.90"},  # Updated IP
+            "receiver": {"ftpport": "2160"},
         }
         console.print(
             "[yellow]Warning: gps_parser not available, using minimal config[/yellow]"
         )
     else:
-        parser = gps_parser.Parser()
-        station_info = parser.getStationInfo(station_id.upper())
-        if not station_info:
-            raise ValueError(f"No configuration found for station {station_id}")
+        parser = gps_parser.ConfigParser()
+        parsed_info = parser.getStationInfo(station_id.upper())
+        if not parsed_info or 'router' not in parsed_info:
+            # Fall back to minimal config if full config not available
+            console.print(
+                "[yellow]Warning: Full station config not available, using minimal config[/yellow]"
+            )
+            station_info = {
+                "router": {"ip": "10.6.1.90"},  # Updated IP
+                "receiver": {"ftpport": "2160"},
+            }
+        else:
+            station_info = parsed_info
 
     if receiver_type.lower() == "polarx5":
         if not HAS_POLARX5:
