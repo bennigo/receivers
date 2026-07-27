@@ -7,14 +7,22 @@ against the real RUT241 state shapes captured live 2026-06-07.
 
 from __future__ import annotations
 
+import os
+import stat
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from receivers.cfg.conntrack_helper import (
+    HostKeyMismatchError,
+    ProbeAuthError,
     ProbeError,
+    ProbeUnreachableError,
+    TofuHostKeyPolicy,
+    _connect,
     check_conntrack_helper,
     ensure_conntrack_helper,
+    resolve_known_hosts_path,
 )
 
 
@@ -202,3 +210,160 @@ def test_module_reload_busy_is_not_fatal():
         res = ensure_conntrack_helper("10.6.1.228", ftp_ports="21,2160", dry_run=False)
     assert res["applied"] is True
     assert any("busy" in n for n in res.get("notes", []))
+
+
+# ---------------------------------------------------------------------------
+# SSH host-key trust (the tests above mock _connect wholesale, so none of them
+# exercise host-key handling — these drive _connect itself with paramiko's
+# SSHClient patched out).
+# ---------------------------------------------------------------------------
+
+
+def _connect_kwargs(known_hosts):
+    return dict(
+        ssh_user="root",
+        password="secret",
+        port=22,
+        timeout=5,
+        known_hosts=str(known_hosts),
+    )
+
+
+def _fake_key(b64: str, blob: bytes, name: str = "ssh-ed25519"):
+    key = MagicMock()
+    key.get_base64.return_value = b64
+    key.asbytes.return_value = blob
+    key.get_name.return_value = name
+    return key
+
+
+def test_connect_pins_host_keys_in_known_hosts_file(tmp_path):
+    """_connect must load a known_hosts file (creating it 0600) and use TOFU."""
+    kh = tmp_path / "state" / "router_known_hosts"
+    fake_client = MagicMock()
+    with patch("paramiko.SSHClient", return_value=fake_client):
+        client = _connect("10.6.1.228", **_connect_kwargs(kh))
+
+    assert client is fake_client
+    # load_host_keys() is what sets paramiko's _host_keys_filename — without it
+    # a first-contact key would live in memory only and be forgotten on exit.
+    fake_client.load_host_keys.assert_called_once_with(str(kh))
+    policy = fake_client.set_missing_host_key_policy.call_args[0][0]
+    assert isinstance(policy, TofuHostKeyPolicy)
+    assert kh.exists()
+    assert stat.S_IMODE(os.stat(kh).st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(kh.parent).st_mode) == 0o700
+
+
+def test_changed_host_key_is_refused_loudly(tmp_path):
+    """A CHANGED key must raise HostKeyMismatchError, not 'unreachable'.
+
+    Regression guard for the ordering of the except clauses: BadHostKeyException
+    is an SSHException, so a generic handler would report a MITM as a flaky link
+    and invite a retry that hands over the router password.
+    """
+    paramiko = pytest.importorskip("paramiko")
+    kh = tmp_path / "router_known_hosts"
+    fake_client = MagicMock()
+    fake_client.connect.side_effect = paramiko.BadHostKeyException(
+        "10.6.1.228", _fake_key("QUFB", b"got"), _fake_key("QkJC", b"expected")
+    )
+    with patch("paramiko.SSHClient", return_value=fake_client):
+        with pytest.raises(HostKeyMismatchError) as excinfo:
+            _connect("10.6.1.228", **_connect_kwargs(kh))
+
+    msg = str(excinfo.value)
+    assert "MISMATCH" in msg
+    assert "SHA256:" in msg  # both fingerprints, for out-of-band comparison
+    assert f"ssh-keygen -R 10.6.1.228 -f {kh}" in msg  # the escape hatch
+    assert not isinstance(excinfo.value, ProbeUnreachableError)
+
+
+def test_changed_host_key_message_uses_bracketed_nonstandard_port(tmp_path):
+    paramiko = pytest.importorskip("paramiko")
+    kh = tmp_path / "router_known_hosts"
+    fake_client = MagicMock()
+    fake_client.connect.side_effect = paramiko.BadHostKeyException(
+        "10.6.1.228", _fake_key("QUFB", b"got"), _fake_key("QkJC", b"expected")
+    )
+    kwargs = _connect_kwargs(kh)
+    kwargs["port"] = 2222
+    with patch("paramiko.SSHClient", return_value=fake_client):
+        with pytest.raises(HostKeyMismatchError) as excinfo:
+            _connect("10.6.1.228", **kwargs)
+    assert f'ssh-keygen -R "[10.6.1.228]:2222" -f {kh}' in str(excinfo.value)
+
+
+def test_auth_and_network_failures_still_map_to_their_own_errors(tmp_path):
+    """The new BadHostKey clause must not shadow the existing mappings."""
+    paramiko = pytest.importorskip("paramiko")
+    kh = tmp_path / "router_known_hosts"
+
+    fake_client = MagicMock()
+    fake_client.connect.side_effect = paramiko.AuthenticationException("nope")
+    with patch("paramiko.SSHClient", return_value=fake_client):
+        with pytest.raises(ProbeAuthError):
+            _connect("10.6.1.228", **_connect_kwargs(kh))
+
+    fake_client = MagicMock()
+    fake_client.connect.side_effect = OSError("timed out")
+    with patch("paramiko.SSHClient", return_value=fake_client):
+        with pytest.raises(ProbeUnreachableError):
+            _connect("10.6.1.228", **_connect_kwargs(kh))
+
+
+def test_unreadable_known_hosts_fails_closed(tmp_path):
+    """A corrupt/unreadable store must stop the connect, not fall back to TOFU."""
+    kh = tmp_path / "router_known_hosts"
+    fake_client = MagicMock()
+    fake_client.load_host_keys.side_effect = OSError("boom")
+    with patch("paramiko.SSHClient", return_value=fake_client):
+        with pytest.raises(ProbeError):
+            _connect("10.6.1.228", **_connect_kwargs(kh))
+    fake_client.connect.assert_not_called()
+
+
+def test_tofu_policy_records_first_contact_key_on_disk(tmp_path):
+    """First contact is trusted, persisted 0600, and known to the next session."""
+    paramiko = pytest.importorskip("paramiko")
+    kh = tmp_path / "router_known_hosts"
+    kh.write_text("")
+    os.chmod(kh, 0o600)
+
+    client = paramiko.SSHClient()
+    client.load_host_keys(str(kh))
+    key = paramiko.RSAKey.generate(2048)
+    TofuHostKeyPolicy().missing_host_key(client, "10.6.1.228", key)
+
+    assert "10.6.1.228" in kh.read_text()
+    assert stat.S_IMODE(os.stat(kh).st_mode) == 0o600
+
+    # A later session loads the recorded key, so paramiko itself (not the
+    # policy) is what a changed key now has to get past.
+    next_client = paramiko.SSHClient()
+    next_client.load_host_keys(str(kh))
+    stored = next_client.get_host_keys().lookup("10.6.1.228")
+    assert stored is not None
+    assert stored.get(key.get_name()) == key
+
+
+def test_known_hosts_path_precedence(tmp_path, monkeypatch):
+    cfg = tmp_path / "receivers.cfg"
+    cfg.write_text(f"[teltonika]\nssh_known_hosts = {tmp_path / 'from_cfg'}\n")
+    empty_cfg = tmp_path / "empty.cfg"
+    empty_cfg.write_text("[teltonika]\nusername = admin\n")
+    monkeypatch.setenv("RECEIVERS_ROUTER_KNOWN_HOSTS", str(tmp_path / "from_env"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+    assert resolve_known_hosts_path(str(tmp_path / "explicit"), str(cfg)) == (
+        tmp_path / "explicit"
+    )
+    assert resolve_known_hosts_path(None, str(cfg)) == tmp_path / "from_cfg"
+    assert resolve_known_hosts_path(None, str(empty_cfg)) == tmp_path / "from_env"
+
+    monkeypatch.delenv("RECEIVERS_ROUTER_KNOWN_HOSTS")
+    # Default is XDG *data*, never ~/.cache: a cache wipe would silently reset
+    # trust-on-first-use for the whole fleet.
+    assert resolve_known_hosts_path(None, str(empty_cfg)) == (
+        tmp_path / "xdg" / "gps_receivers" / "router_known_hosts"
+    )
