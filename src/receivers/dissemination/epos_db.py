@@ -14,7 +14,8 @@ schema literally named ``gnss-europe-v0-2-9`` inside the ``epos`` database. We s
 ``search_path`` to that schema on connect, so all SQL references tables unqualified.
 
 All callers use parameterized SQL (psycopg2 ``%s``); the helpers here never format
-values into the statement text.
+values into the statement text. Table/column names — which cannot be bound as
+parameters — go through ``psycopg2.sql.Identifier`` so the driver quotes them.
 """
 
 from __future__ import annotations
@@ -169,17 +170,34 @@ def managed(overrides: Optional[dict[str, Any]] = None) -> Generator[Any, None, 
 # assumed, and some tables' ``id`` columns have no default. So we compute the next
 # id explicitly and emulate get-or-create with a SELECT — works on any of the
 # dev/local/prod schemas. Single-threaded ETL, so max(id)+1 is safe.
+#
+# Table and column names arrive from the caller and cannot be bound as parameters,
+# so they are composed with ``psycopg2.sql.Identifier`` — the driver quotes and
+# escapes them. Values always stay bound (``%s`` / ``sql.Placeholder``).
+# psycopg2 is imported lazily throughout this package, so the ``sql`` import lives
+# inside each function.
 
 
 def insert_row(cur, table: str, values: dict[str, Any]) -> int:
     """INSERT ``values`` into ``table`` with an explicit next id; return the id."""
-    cur.execute(f"SELECT COALESCE(MAX(id), 0) + 1 FROM {table}")
+    from psycopg2 import sql
+
+    cur.execute(
+        sql.SQL("SELECT COALESCE(MAX(id), 0) + 1 FROM {table}").format(
+            table=sql.Identifier(table)
+        )
+    )
     new_id = cur.fetchone()[0]
     cols = ["id"] + list(values.keys())
-    placeholders = ", ".join(["%s"] * len(cols))
     params = [new_id] + list(values.values())
     cur.execute(
-        f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders}) RETURNING id",
+        sql.SQL(
+            "INSERT INTO {table} ({cols}) VALUES ({placeholders}) RETURNING id"
+        ).format(
+            table=sql.Identifier(table),
+            cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
+            placeholders=sql.SQL(", ").join([sql.Placeholder()] * len(cols)),
+        ),
         params,
     )
     return int(cur.fetchone()[0])
@@ -193,11 +211,23 @@ def get_or_create(
     ``match`` are the identifying columns (looked up with ``=`` / ``IS NULL``);
     ``extra`` are additional columns set only on insert.
     """
-    where = " AND ".join(
-        f"{k} IS NULL" if v is None else f"{k} = %s" for k, v in match.items()
+    from psycopg2 import sql
+
+    where = sql.SQL(" AND ").join(
+        (
+            sql.SQL("{col} IS NULL").format(col=sql.Identifier(k))
+            if v is None
+            else sql.SQL("{col} = %s").format(col=sql.Identifier(k))
+        )
+        for k, v in match.items()
     )
     params = [v for v in match.values() if v is not None]
-    cur.execute(f"SELECT id FROM {table} WHERE {where} LIMIT 1", params)
+    cur.execute(
+        sql.SQL("SELECT id FROM {table} WHERE {where} LIMIT 1").format(
+            table=sql.Identifier(table), where=where
+        ),
+        params,
+    )
     row = cur.fetchone()
     if row is not None:
         return int(row[0])
@@ -208,7 +238,14 @@ def update_row(cur, table: str, row_id: int, values: dict[str, Any]) -> None:
     """UPDATE ``table`` row ``row_id`` with ``values`` (parameterized)."""
     if not values:
         return
-    sets = ", ".join(f"{k} = %s" for k in values)
+    from psycopg2 import sql
+
+    sets = sql.SQL(", ").join(
+        sql.SQL("{col} = %s").format(col=sql.Identifier(k)) for k in values
+    )
     cur.execute(
-        f"UPDATE {table} SET {sets} WHERE id = %s", list(values.values()) + [row_id]
+        sql.SQL("UPDATE {table} SET {sets} WHERE id = %s").format(
+            table=sql.Identifier(table), sets=sets
+        ),
+        list(values.values()) + [row_id],
     )

@@ -409,13 +409,21 @@ def cmd_db_drop_station(args: argparse.Namespace) -> int:
             """)
             tables = [row[0] for row in cur.fetchall()]
 
-            # Count rows per table
+            # Count rows per table. The table names come from information_schema,
+            # but they are still identifiers we cannot bind — compose them with
+            # sql.Identifier so psycopg2 quotes them; the label and the sid stay
+            # bound parameters (two per branch, in table order).
             if tables:
-                union_sql = " UNION ALL ".join(
-                    f"SELECT '{t}' AS tbl, COUNT(*) FROM {t} WHERE sid = %s"
+                from psycopg2 import sql
+
+                union_sql = sql.SQL(" UNION ALL ").join(
+                    sql.SQL(
+                        "SELECT %s AS tbl, COUNT(*) FROM {tbl} WHERE sid = %s"
+                    ).format(tbl=sql.Identifier(t))
                     for t in tables
                 )
-                cur.execute(union_sql, tuple(station_id for _ in tables))
+                params = tuple(v for t in tables for v in (t, station_id))
+                cur.execute(union_sql, params)
                 counts = [(row[0], row[1]) for row in cur.fetchall()]
             else:
                 counts = []
