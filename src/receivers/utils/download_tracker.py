@@ -471,10 +471,11 @@ def parse_date_from_filename(
         file_hour = hour if session_type == "b" else None
         return file_date, file_hour
 
-    # Try Leica format: SSSS[DDD][letter].m00
-    # DDD = day of year, letter = session (a=daily) or hour (a-x for 0-23)
+    # Try Leica / RINEX-2 short name: SSSS[DDD][f].YY[t] (or Leica .m00)
+    # DDD = day of year; f = file-sequence char: '0' = the DAILY file,
+    # a..x = hourly (hours 0..23). '0' is a digit, so match it explicitly.
     leica_match = re.match(
-        rf"^{re.escape(station_id)}(\d{{3}})([a-x])",
+        rf"^{re.escape(station_id)}(\d{{3}})([a-x0])",
         filename,
         re.IGNORECASE,
     )
@@ -488,10 +489,13 @@ def parse_date_from_filename(
         year = default_year if default_year is not None else datetime.now().year
         try:
             file_date = date(year, 1, 1) + timedelta(days=day_of_year - 1)
-            # Session letter a..x -> hours 0..23 for an HOURLY session. For a
-            # daily session (or no session context) 'a' denotes the daily file
-            # (no hour); b..x still map to 1..23 as before.
-            if session_letter == "a" and not _is_hourly_session(session_type):
+            # File-sequence char → hour: '0' is the RINEX-2 daily file (no
+            # hour). a..x map to hours 0..23 for an hourly session; for a daily
+            # session (or no session context) the letter 'a' also denotes the
+            # daily file, so it stays hourless. b..x still map to 1..23.
+            if session_letter == "0" or (
+                session_letter == "a" and not _is_hourly_session(session_type)
+            ):
                 file_hour = None
             else:
                 file_hour = ord(session_letter) - ord("a")
