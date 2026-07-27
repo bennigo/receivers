@@ -5,21 +5,134 @@ Handles downloading, installing, and configuring external tools required
 for converting GPS receiver data to RINEX format.
 """
 
+import hashlib
+import hmac
 import logging
 import os
 import platform
 import shutil
 import stat
 import subprocess
+import tarfile
 import tempfile
 import zipfile
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable, Dict, List, Optional
 from urllib.request import urlretrieve
 
 logger = logging.getLogger(__name__)
+
+# Read size for hashing downloads — archives are tens of MB, so stream them.
+_HASH_CHUNK_BYTES = 1024 * 1024
+
+# Schemes we are willing to fetch a binary over. Plain http would let anyone on
+# the path swap the payload, and the digest pin (when present) is only as good
+# as the definition it is compared against.
+_ALLOWED_DOWNLOAD_SCHEMES = ("https://",)
+
+
+class ToolIntegrityError(RuntimeError):
+    """A downloaded tool archive failed an integrity or safety check.
+
+    Raised on checksum mismatch, on a disallowed download scheme, and on
+    archive members that would be written outside the extraction directory
+    (zip-slip / tar-slip). Always fatal for the install in progress — the
+    installers translate it into a failed InstallResult.
+    """
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the hex SHA-256 digest of a file."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while chunk := fh.read(_HASH_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _download_verified(
+    url: str, dest: Path, tool_name: str, expected_sha256: Optional[str]
+) -> str:
+    """Download ``url`` to ``dest`` and check it against ``expected_sha256``.
+
+    Returns the computed hex digest. Raises ToolIntegrityError on a mismatch or
+    a non-https URL, deleting ``dest`` before it does so a rejected payload can
+    never be installed or picked up by a later run.
+    """
+    if not url.lower().startswith(_ALLOWED_DOWNLOAD_SCHEMES):
+        raise ToolIntegrityError(
+            f"Refusing to download {tool_name} over an insecure URL: {url}"
+        )
+
+    urlretrieve(url, dest)  # noqa: S310 — scheme checked above
+    digest = _sha256_file(dest)
+
+    if expected_sha256:
+        # compare_digest, not ==, so a mismatch cannot be probed by timing.
+        if not hmac.compare_digest(digest, expected_sha256.strip().lower()):
+            dest.unlink(missing_ok=True)
+            raise ToolIntegrityError(
+                f"Checksum mismatch for {tool_name} from {url}: "
+                f"expected sha256 {expected_sha256.strip().lower()}, got {digest}"
+            )
+        logger.debug(f"Verified {tool_name} download (sha256 {digest})")
+    else:
+        logger.warning(
+            f"{tool_name} download from {url} is NOT checksum-pinned "
+            f"(sha256 {digest}) — add this digest to ToolInfo.sha256 to pin it"
+        )
+
+    return digest
+
+
+def _reject_unsafe_member(name: str, dest_root: Path) -> None:
+    """Raise ToolIntegrityError if archive member ``name`` escapes ``dest_root``."""
+    # Absolute members ('/etc/cron.d/x', 'C:\\x') would be written outside the
+    # destination outright; PureWindowsPath catches the drive-qualified form,
+    # which a plain startswith('/') check misses.
+    if name.startswith(("/", "\\")) or PureWindowsPath(name).is_absolute():
+        raise ToolIntegrityError(f"Archive member has an absolute path: {name!r}")
+
+    # Then the traversal form ('../../etc/x'): normalise and confirm the result
+    # is still under the destination.
+    target = (dest_root / name.replace("\\", "/")).resolve()
+    if target != dest_root and dest_root not in target.parents:
+        raise ToolIntegrityError(
+            f"Archive member escapes the extraction directory: {name!r}"
+        )
+
+
+def _safe_extract_zip(zip_path: Path, dest_dir: Path) -> None:
+    """Extract a zip archive, rejecting members that escape ``dest_dir``.
+
+    zipfile.extractall() on its own will happily honour a member named
+    '../../etc/...' (zip-slip), so every member name is validated first and the
+    whole archive is refused if any one of them is unsafe.
+    """
+    dest_root = dest_dir.resolve()
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.infolist():
+            _reject_unsafe_member(member.filename, dest_root)
+        zf.extractall(dest_dir)
+
+
+def _safe_extract_tar(archive_path: Path, dest_dir: Path, mode: str = "r:gz") -> None:
+    """Extract a tar archive, rejecting members that escape ``dest_dir``.
+
+    Two layers. The explicit name check refuses absolute and '..' members up
+    front — tarfile's own filter merely *strips* a leading '/', which is safe
+    but silent, and a tool archive shipping absolute paths is suspect enough to
+    abort on. The 'data' filter then covers what names alone cannot: links
+    pointing outside the destination, device nodes, and setuid bits. Both raise
+    rather than skip, so an unsafe archive fails the install.
+    """
+    dest_root = dest_dir.resolve()
+    with tarfile.open(archive_path, mode) as tf:
+        for member in tf.getmembers():
+            _reject_unsafe_member(member.name, dest_root)
+        tf.extractall(dest_dir, filter="data")
 
 
 class InstallStatus(Enum):
@@ -56,6 +169,12 @@ class ToolInfo:
     version_cmd: Optional[List[str]] = None  # Command to check version
     version_pattern: Optional[str] = None  # Regex to extract version
     install_func: Optional[Callable] = None  # Custom install function
+    # Hex SHA-256 of the archive/binary at download_url. Pin this whenever a
+    # real digest is available: without it a compromised mirror or a MITM'd
+    # download installs an arbitrary binary that the daily pipeline then runs.
+    # None means "unpinned" — the install proceeds but logs the digest it saw
+    # at WARNING so an operator can paste it back in here. Never invent a value.
+    sha256: Optional[str] = None
 
 
 # Default installation directory
@@ -115,6 +234,9 @@ class ToolManager:
                 required_for=["G10", "Leica"],
                 auto_install=teqc_url is not None,
                 download_url=teqc_url,
+                # UNAVCO publishes no digest for the teqc archives (and the
+                # project is end-of-life), so this stays unpinned and warns.
+                sha256=None,
                 version_cmd=["teqc", "-version"],
                 version_pattern=r"teqc\s+(\d{4}[A-Za-z]+\d+)",
                 manual_instructions=(
@@ -128,6 +250,9 @@ class ToolManager:
                 required_for=["all"],
                 auto_install=False,  # Now requires registration
                 download_url=gfzrnx_url,
+                # Download is behind a registration wall (url is None on every
+                # platform) — nothing to pin until that changes.
+                sha256=None,
                 version_cmd=["gfzrnx", "-help"],  # Version shown at end of help
                 version_pattern=r"VERSION:\s*gfzrnx-([\d.]+-\d+)",
                 manual_instructions=(
@@ -145,6 +270,9 @@ class ToolManager:
                 required_for=["all"],
                 auto_install=rnx2crx_url is not None,
                 download_url=rnx2crx_url,
+                # GSI ships RNXCMP without a published checksum; pin here if a
+                # digest is ever obtained out of band (fail-closed on mismatch).
+                sha256=None,
                 version_cmd=["RNX2CRX", "-h"],
                 version_pattern=r"ver\.?\s*([\d.]+)",
                 manual_instructions=(
@@ -397,15 +525,16 @@ class ToolManager:
 
                 logger.info(f"Downloading teqc from {info.download_url}")
                 print("Downloading teqc...")
-                urlretrieve(info.download_url, zip_path)
+                _download_verified(info.download_url, zip_path, "teqc", info.sha256)
 
-                # Extract
-                with zipfile.ZipFile(zip_path, "r") as zf:
-                    zf.extractall(tmpdir)
+                _safe_extract_zip(zip_path, tmpdir)
 
-                # Find the teqc binary
+                # Find the teqc binary. Skip the archive itself — it is named
+                # teqc.zip and would otherwise match this prefix test.
                 teqc_bin = None
                 for f in tmpdir.iterdir():
+                    if f == zip_path:
+                        continue
                     if f.name.startswith("teqc") and f.is_file():
                         teqc_bin = f
                         break
@@ -458,7 +587,13 @@ class ToolManager:
 
             logger.info(f"Downloading gfzrnx from {info.download_url}")
             print("Downloading gfzrnx...")
-            urlretrieve(info.download_url, dest)
+            # Stage in a temp dir and only move into bin/ once the digest checks
+            # out — downloading straight onto `dest` would leave an unverified
+            # binary on the tool path when verification fails.
+            with tempfile.TemporaryDirectory() as tmpdir:
+                staged = Path(tmpdir) / "gfzrnx"
+                _download_verified(info.download_url, staged, "gfzrnx", info.sha256)
+                shutil.copy2(staged, dest)
 
             # Make executable
             dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -499,13 +634,11 @@ class ToolManager:
 
                 logger.info(f"Downloading Hatanaka tools from {info.download_url}")
                 print("Downloading Hatanaka compression tools...")
-                urlretrieve(info.download_url, archive_path)
+                _download_verified(
+                    info.download_url, archive_path, "rnx2crx", info.sha256
+                )
 
-                # Extract tar.gz
-                import tarfile
-
-                with tarfile.open(archive_path, "r:gz") as tf:
-                    tf.extractall(tmpdir)
+                _safe_extract_tar(archive_path, tmpdir)
 
                 # Find the binaries (they're in a subdirectory)
                 installed = []
