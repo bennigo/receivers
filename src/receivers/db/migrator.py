@@ -39,7 +39,9 @@ class Migrator:
         self.migrations_dir = migrations_dir or MIGRATIONS_DIR
 
     def _get_conn(self):
-        return get_connection(host_override=self.host_override)
+        # Single-host: schema/seed writes must never fan out to the pgdev
+        # mirror (a mirrored DDL/seed is a silent cross-host mutation).
+        return get_connection(host_override=self.host_override, single_host=True)
 
     def _has_migrations_table(self, conn) -> bool:
         """Check if schema_migrations table exists."""

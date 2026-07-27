@@ -20,6 +20,12 @@ Dual-write mode:
     Set ``mirror_host`` in ``[postgresql]`` to write to two databases simultaneously.
     The mirror is best-effort: failures are logged but never break the primary.
 
+    **A dual connection is NOT safe for every caller.** Pass ``single_host=True``
+    when the operation is destructive (schema DDL), id-keyed (surrogate ids are
+    not stable across hosts — see :class:`_DualCursor`), read-only, or must be
+    transactional on exactly one server.  ``receivers db`` verbs and
+    ``health-query`` do this.
+
 Usage:
     from receivers.health.database_factory import DatabaseConnectionFactory
 
@@ -27,6 +33,10 @@ Usage:
     with DatabaseConnectionFactory.connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
+
+    # Explicitly single-host (never fans out to the mirror)
+    with DatabaseConnectionFactory.connection(single_host=True) as conn:
+        ...
 
     # Direct connection (NOT limited — for long-lived connections only)
     conn = DatabaseConnectionFactory.get_connection()
@@ -42,6 +52,7 @@ Usage:
 import configparser
 import logging
 import os
+import re
 import threading
 import time as _time
 from contextlib import contextmanager
@@ -147,6 +158,9 @@ def _load_config_file() -> Dict[str, str]:
             "mirror_host",
             "mirror_user",
             "mirror_password",
+            "connect_timeout",
+            "statement_timeout",
+            "lock_timeout",
         ):
             if parser.has_option("postgresql", key):
                 result[key] = parser.get("postgresql", key)
@@ -158,6 +172,65 @@ def _load_config_file() -> Dict[str, str]:
     return _config_cache
 
 
+# ── Dual-write observability ──────────────────────────────────────────────────
+
+
+class MirrorMetrics:
+    """Process-local counters for dual-write health.
+
+    A mirror failure used to be a bare ``logger.warning`` — invisible unless
+    somebody grepped the log, which is how the rek-d01/pgdev catalog divergence
+    went unnoticed for months.  These counters give the scheduler (and any
+    future exporter) something to *observe*.
+    """
+
+    _lock = threading.Lock()
+    _counters: Dict[str, int] = {}
+
+    @classmethod
+    def incr(cls, name: str, amount: int = 1) -> None:
+        with cls._lock:
+            cls._counters[name] = cls._counters.get(name, 0) + amount
+
+    @classmethod
+    def snapshot(cls) -> Dict[str, int]:
+        """Return a copy of the current counters (for logging/metrics export)."""
+        with cls._lock:
+            return dict(cls._counters)
+
+    @classmethod
+    def reset(cls) -> None:
+        with cls._lock:
+            cls._counters.clear()
+
+
+# An ``id``-keyed UPDATE/DELETE must never fan out: surrogate ids are assigned
+# per-host, so an id read from the primary addresses an unrelated row on the
+# mirror.  This is not hypothetical — the mirror holds a fraction of the
+# primary's rows (see the 2026-07 archive_catalog divergence), so a fanned
+# ``UPDATE … WHERE id = %s`` corrupts whichever row happens to hold that id.
+# Matches ``id = %s`` / ``id = %(name)s`` / ``id IN %s`` but not ``station_id``,
+# ``format_id``, … (the lookbehind rejects a preceding word character).
+_ID_KEYED_DML_RE = re.compile(
+    r"^\s*(?:UPDATE|DELETE)\b.*\bWHERE\b.*(?<!\w)id\s*(?:=\s*(?:%s|%\(\w+\)s)"
+    r"|\bIN\s*(?:%s|%\(\w+\)s|\())",
+    re.IGNORECASE | re.DOTALL,
+)
+
+_reported_id_keyed: set = set()
+
+
+def _is_id_keyed_dml(query: Any) -> bool:
+    """True if ``query`` is an UPDATE/DELETE keyed on a bare surrogate ``id``."""
+    if not isinstance(query, str):
+        # psycopg2.sql.Composed and friends — render for inspection only.
+        try:
+            query = str(query)
+        except Exception:
+            return False
+    return bool(_ID_KEYED_DML_RE.match(query))
+
+
 # ── Dual-write wrappers ───────────────────────────────────────────────────────
 
 
@@ -166,6 +239,11 @@ class _DualCursor:
 
     Reads (fetch*) only return results from the primary.
     Mirror failures are logged but never raised.
+
+    **id-keyed writes are not fanned out.**  See :data:`_ID_KEYED_DML_RE`: an
+    ``UPDATE/DELETE … WHERE id = %s`` addresses a different row on the mirror,
+    so the mirror leg is skipped (loudly) rather than executed.  Callers that
+    need such a write to reach both hosts must key it on a natural key instead.
     """
 
     def __init__(self, primary: Any, mirror: Any, mirror_host: str) -> None:
@@ -175,11 +253,31 @@ class _DualCursor:
 
     # ── Writes: execute on both ────────────────────────────────────────────
 
+    def _refuse_id_keyed(self, query: Any) -> bool:
+        """Log + count an id-keyed write; True when the mirror must be skipped."""
+        if not _is_id_keyed_dml(query):
+            return False
+        MirrorMetrics.incr("id_keyed_writes_not_mirrored")
+        key = " ".join(str(query).split())[:160]
+        if key not in _reported_id_keyed:
+            _reported_id_keyed.add(key)
+            logger.error(
+                "Mirror %s: refusing to fan out an id-keyed write (surrogate ids "
+                "differ per host — it would hit an unrelated row). The mirror will "
+                "DIVERGE for this statement; rewrite it on a natural key. SQL: %s",
+                self._mirror_host,
+                key,
+            )
+        return True
+
     def execute(self, query: Any, params: Any = None) -> None:
         self._primary.execute(query, params)
+        if self._refuse_id_keyed(query):
+            return
         try:
             self._mirror.execute(query, params)
         except Exception as exc:
+            MirrorMetrics.incr("execute_failures")
             logger.warning("Mirror %s execute failed: %s", self._mirror_host, exc)
             try:
                 self._mirror.connection.rollback()
@@ -188,9 +286,12 @@ class _DualCursor:
 
     def executemany(self, query: Any, params_seq: Any) -> None:
         self._primary.executemany(query, params_seq)
+        if self._refuse_id_keyed(query):
+            return
         try:
             self._mirror.executemany(query, params_seq)
         except Exception as exc:
+            MirrorMetrics.incr("executemany_failures")
             logger.warning("Mirror %s executemany failed: %s", self._mirror_host, exc)
             try:
                 self._mirror.connection.rollback()
@@ -248,6 +349,9 @@ class _DualConnection:
     logged but never propagated — the primary is always authoritative.
     """
 
+    #: Attributes stored on the wrapper itself; everything else is delegated.
+    _OWN_ATTRS = frozenset({"_primary", "_mirror", "_mirror_host"})
+
     def __init__(self, primary: Any, mirror: Any, mirror_host: str) -> None:
         self._primary = primary
         self._mirror = mirror
@@ -258,6 +362,7 @@ class _DualConnection:
         try:
             mirror_cur = self._mirror.cursor(*args, **kwargs)
         except Exception as exc:
+            MirrorMetrics.incr("cursor_failures")
             logger.warning(
                 "Mirror %s cursor failed, degrading to primary-only: %s",
                 self._mirror_host,
@@ -271,6 +376,7 @@ class _DualConnection:
         try:
             self._mirror.commit()
         except Exception as exc:
+            MirrorMetrics.incr("commit_failures")
             logger.warning("Mirror %s commit failed: %s", self._mirror_host, exc)
 
     def rollback(self) -> None:
@@ -290,6 +396,28 @@ class _DualConnection:
     # Delegate anything else (autocommit, notices, etc.) to primary.
     def __getattr__(self, name: str) -> Any:
         return getattr(self._primary, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Delegate attribute *writes* to both legs.
+
+        Without this, ``conn.autocommit = True`` silently landed in the
+        wrapper's ``__dict__`` and the real psycopg2 connections stayed in
+        their default mode — so every session-level ``SET`` the caller thought
+        it had applied (``statement_timeout``, ``lock_timeout``) sat in an
+        uncommitted implicit transaction.  A no-op safety setting is worse than
+        no safety setting, because it reads as protection.
+        """
+        if name in _DualConnection._OWN_ATTRS:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self._primary, name, value)
+        try:
+            setattr(self._mirror, name, value)
+        except Exception as exc:
+            MirrorMetrics.incr("setattr_failures")
+            logger.warning(
+                "Mirror %s: setting %s failed: %s", self._mirror_host, name, exc
+            )
 
 
 # ── Factory ────────────────────────────────────────────────────────────────────
@@ -337,7 +465,7 @@ class DatabaseConnectionFactory:
         """
         cfg = _load_config_file()
 
-        return {
+        params = {
             "host": os.getenv("POSTGRES_HOST", cfg.get("host", "localhost")),
             "port": os.getenv("POSTGRES_PORT", cfg.get("port", "5432")),
             "database": database
@@ -358,6 +486,37 @@ class DatabaseConnectionFactory:
                 "POSTGRES_CONNECT_TIMEOUT", cfg.get("connect_timeout", "10")
             ),
         }
+
+        # Server-side ceilings on EVERY app connection. Without them a single
+        # runaway plan pins the server indefinitely — exactly the 2026-05-27
+        # cartesian-join incident, where IT had to kill the query by hand.
+        # The defaults are deliberately generous (a materialized-view refresh
+        # over 8.5M catalog rows is legitimately slow); they exist to bound
+        # "forever", not to police normal work. Set either to 0 to disable.
+        options = cls._timeout_options(cfg)
+        if options:
+            params["options"] = options
+
+        return params
+
+    @staticmethod
+    def _timeout_options(cfg: Dict[str, str]) -> str:
+        """Build the libpq ``options`` string for statement/lock timeouts."""
+        statement_timeout = os.getenv(
+            "POSTGRES_STATEMENT_TIMEOUT", cfg.get("statement_timeout", "600s")
+        )
+        lock_timeout = os.getenv(
+            "POSTGRES_LOCK_TIMEOUT", cfg.get("lock_timeout", "30s")
+        )
+        parts = []
+        for name, value in (
+            ("statement_timeout", statement_timeout),
+            ("lock_timeout", lock_timeout),
+        ):
+            value = (value or "").strip()
+            if value and value not in ("0", "0s", "off"):
+                parts.append(f"-c {name}={value}")
+        return " ".join(parts)
 
     @classmethod
     def get_connection_params_for_host(
@@ -464,6 +623,7 @@ class DatabaseConnectionFactory:
             return conn
         except Exception as exc:
             cls._mirror_failed_until = _time.monotonic() + 3600  # retry after 1 hour
+            MirrorMetrics.incr("connect_failures")
             logger.warning(
                 "Mirror connection to %s failed (will retry after 1h): %s",
                 mirror_host,
@@ -516,6 +676,7 @@ class DatabaseConnectionFactory:
                         logger.info("Mirror pool established -> %s", mirror_host)
                     except Exception as exc:
                         cls._mirror_failed_until = _time.monotonic() + 3600
+                        MirrorMetrics.incr("pool_failures")
                         logger.warning(
                             "Mirror pool to %s failed (will retry after 1h): %s",
                             mirror_host,
@@ -562,6 +723,7 @@ class DatabaseConnectionFactory:
         cls,
         database: Optional[str] = None,
         connection_string: Optional[str] = None,
+        single_host: bool = False,
     ) -> Connection:
         """Get a new database connection.
 
@@ -571,6 +733,10 @@ class DatabaseConnectionFactory:
         Args:
             database: Override database name.
             connection_string: Full connection string (overrides env vars).
+            single_host: Never wrap in a _DualConnection — return a plain
+                connection to the primary only.  Required for destructive DDL
+                (``receivers db``), id-keyed writes, read-only sessions, and
+                anything that must be transactional on exactly one host.
 
         Returns:
             psycopg2 connection object (or _DualConnection wrapper).
@@ -587,6 +753,9 @@ class DatabaseConnectionFactory:
         params = cls.get_connection_params(database)
         primary = psycopg2.connect(**params)
 
+        if single_host:
+            return primary
+
         mirror = cls._get_mirror_connection(database)
         if mirror:
             cfg = _load_config_file()
@@ -600,6 +769,7 @@ class DatabaseConnectionFactory:
         cls,
         database: Optional[str] = None,
         connection_string: Optional[str] = None,
+        single_host: bool = False,
     ) -> Generator[Connection, None, None]:
         """Context manager for safe connection lifecycle.
 
@@ -615,6 +785,8 @@ class DatabaseConnectionFactory:
         Args:
             database: Override database name.
             connection_string: Full connection string (overrides env vars).
+            single_host: Never wrap in a _DualConnection (see
+                :meth:`get_connection`).  The pooled primary is still used.
 
         Yields:
             psycopg2 connection object (or _DualConnection wrapper).
@@ -635,7 +807,7 @@ class DatabaseConnectionFactory:
                 return
 
             primary_pool = cls._primary_pool(database)
-            mirror_pool = cls._mirror_pool(database)
+            mirror_pool = None if single_host else cls._mirror_pool(database)
             primary = None
             mirror = None
             poisoned = False
@@ -645,6 +817,7 @@ class DatabaseConnectionFactory:
                     try:
                         mirror = cls._checkout(mirror_pool, ping=True)
                     except Exception as exc:
+                        MirrorMetrics.incr("checkout_failures")
                         logger.warning(
                             "Mirror checkout failed, degrading to primary-only: %s",
                             exc,

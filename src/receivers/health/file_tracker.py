@@ -2174,15 +2174,33 @@ class GapDetector:
 
                             row = cur.fetchone()
                             if row is not None:
-                                # File was marked as archived/downloaded but is now missing
-                                cur.execute(
-                                    """UPDATE file_tracking SET
+                                # File was marked as archived/downloaded but is now missing.
+                                # Keyed on the natural key, NOT the id just read:
+                                # this connection may fan out to the pgdev mirror,
+                                # where that id belongs to an unrelated file — an
+                                # id-keyed UPDATE would mark the WRONG file removed.
+                                update_sql = """UPDATE file_tracking SET
                                         status = 'removed',
                                         last_error = 'File removed from archive',
                                         updated_at = NOW()
-                                    WHERE id = %s""",
-                                    (row[0],),
-                                )
+                                    WHERE sid = %s AND session_type = %s
+                                      AND file_date = %s AND file_hour {hour_pred}
+                                      AND status IN ('archived', 'downloaded')"""
+                                if file_hour is None:
+                                    cur.execute(
+                                        update_sql.format(hour_pred="IS NULL"),
+                                        (station_id, session_type, file_date),
+                                    )
+                                else:
+                                    cur.execute(
+                                        update_sql.format(hour_pred="= %s"),
+                                        (
+                                            station_id,
+                                            session_type,
+                                            file_date,
+                                            file_hour,
+                                        ),
+                                    )
                                 files_removed += 1
                                 logger.warning(
                                     f"File removed from archive: {station_id}/{session_type}/"
@@ -2470,7 +2488,7 @@ class GapDetector:
                             files_found += 1
 
                             # Upsert to file_tracking
-                            tracking_id = cur.execute(
+                            cur.execute(
                                 """SELECT upsert_file_tracking(%s, %s, %s, %s::smallint, %s, 'archived', %s)""",
                                 (
                                     station_id,
@@ -2485,12 +2503,25 @@ class GapDetector:
                             tracking_id = result[0] if result else None
                             files_added += 1
 
-                            # Set format_id if provided
+                            # Set format_id if provided. Keyed on the natural key,
+                            # NOT the id upsert_file_tracking returned: that id is
+                            # the PRIMARY's, and on a dual (mirror) connection it
+                            # addresses an unrelated row on the mirror.
                             if format_id and tracking_id:
                                 cur.execute(
                                     """UPDATE file_tracking SET format_id = %s
-                                    WHERE id = %s AND format_id IS DISTINCT FROM %s""",
-                                    (format_id, tracking_id, format_id),
+                                    WHERE sid = %s AND session_type = %s
+                                      AND file_date = %s
+                                      AND file_hour IS NOT DISTINCT FROM %s::smallint
+                                      AND format_id IS DISTINCT FROM %s""",
+                                    (
+                                        format_id,
+                                        station_id,
+                                        session_type,
+                                        file_date,
+                                        file_hour,
+                                        format_id,
+                                    ),
                                 )
 
                         except (ValueError, IndexError):

@@ -34,6 +34,33 @@ LOCK_TIMEOUT = "5s"
 _ROWS_RE = re.compile(r"rows=(\d+)")
 _COST_RE = re.compile(r"cost=[\d.]+\.\.([\d.]+)")
 
+# Strip string literals, dollar-quoted bodies and comments before looking for a
+# statement separator, so a `;` *inside* a literal doesn't trip the check.
+_SQL_LITERALS_RE = re.compile(
+    r"'(?:[^']|'')*'"  # single-quoted string (with '' escape)
+    r'|"(?:[^"]|"")*"'  # quoted identifier
+    r"|\$(\w*)\$.*?\$\1\$"  # dollar-quoted body
+    r"|--[^\n]*"  # line comment
+    r"|/\*.*?\*/",  # block comment
+    re.DOTALL,
+)
+
+
+def strip_sql_noise(sql: str) -> str:
+    """Blank out literals/comments so structural checks see only SQL syntax."""
+    return _SQL_LITERALS_RE.sub(" ", sql)
+
+
+def is_multi_statement(sql: str) -> bool:
+    """True if ``sql`` contains more than one statement.
+
+    The EXPLAIN gate only ever plans the FIRST statement, so
+    ``SELECT 1; DELETE FROM stations`` used to sail through the gate and then
+    execute both — psycopg2 happily runs a multi-statement string. Reject it
+    outright; a caller with a genuine batch should use psql deliberately.
+    """
+    return ";" in strip_sql_noise(sql).rstrip().rstrip(";").rstrip()
+
 
 def parse_explain_estimates(explain_text: str) -> tuple[int, float]:
     """Return ``(max_rows_across_all_nodes, top_of_plan_cost)``.
@@ -114,6 +141,16 @@ def cmd_health_query(args: argparse.Namespace) -> int:
         print("receivers health-query: empty SQL", file=sys.stderr)
         return 2
 
+    if is_multi_statement(sql_trimmed):
+        print(
+            "receivers health-query: refusing multi-statement SQL — the EXPLAIN "
+            "gate only plans the first statement, so anything after the ';' "
+            "would run ungated. Run one statement at a time.",
+            file=sys.stderr,
+        )
+        logger.warning("health-query refused multi-statement SQL")
+        return 2
+
     try:
         max_rows = _coerce_ceiling(args.max_rows)
         max_cost = _coerce_ceiling(args.max_cost)
@@ -124,19 +161,29 @@ def cmd_health_query(args: argparse.Namespace) -> int:
     from ..db.connection import get_connection
 
     try:
-        conn = get_connection(host_override=args.host)
+        # single_host: a query tool must never fan its statements out to the
+        # pgdev mirror. It also keeps `autocommit`/SET semantics honest — on a
+        # dual connection the attribute assignment below used to be swallowed
+        # by the wrapper, leaving both timeouts uncommitted and unenforced.
+        conn = get_connection(host_override=args.host, single_host=True)
     except Exception as e:
         print(f"receivers health-query: cannot connect: {e}", file=sys.stderr)
         return 1
 
     # Autocommit lets the session-level SETs apply cleanly without an implicit
-    # transaction wrapping every statement; we're read-only here anyway.
+    # transaction wrapping every statement.
     conn.autocommit = True
 
     try:
         with conn.cursor() as cur:
             cur.execute(f"SET statement_timeout = '{STATEMENT_TIMEOUT}'")
             cur.execute(f"SET lock_timeout = '{LOCK_TIMEOUT}'")
+            if not args.write:
+                # Read-only by default: the tool exists to *inspect* gps_health.
+                # A typo'd UPDATE/DELETE is refused by the server, not by a
+                # regex we would have to keep ahead of. --write opts out.
+                cur.execute("SET default_transaction_read_only = on")
+                cur.execute("SET transaction_read_only = on")
 
             if not args.no_explain:
                 try:
@@ -289,6 +336,14 @@ def create_health_query_parser(subparsers) -> argparse.ArgumentParser:
     parser.add_argument(
         "--host",
         help="PostgreSQL host (default: from receivers config).",
+    )
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help=(
+            "Allow writes. Off by default: the session is set "
+            "read-only so a mistyped UPDATE/DELETE is refused by the server."
+        ),
     )
     parser.set_defaults(func=cmd_health_query)
     return parser

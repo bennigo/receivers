@@ -202,6 +202,11 @@ def record_detection(
                     ):
                         return int(existing_id)
 
+                    # Keyed on the natural key (station_id, cfg_key, still-open),
+                    # NOT ``existing_id``: this connection may fan out to the
+                    # pgdev mirror, whose serial ids are assigned independently —
+                    # an id-keyed UPDATE would resolve an unrelated discrepancy
+                    # there. Same predicate as ``record_resolution``.
                     cur.execute(
                         """
                         UPDATE cfg_discrepancy
@@ -209,9 +214,11 @@ def record_detection(
                             resolved_by = %s,
                             resolved_action = %s,
                             resolution_note = 'Detection values changed'
-                        WHERE id = %s
+                        WHERE station_id = %s
+                          AND cfg_key = %s
+                          AND resolved_at IS NULL
                         """,
-                        (detected_by, ACTION_SUPERSEDED, existing_id),
+                        (detected_by, ACTION_SUPERSEDED, station_id, cfg_key),
                     )
 
                 cur.execute(
