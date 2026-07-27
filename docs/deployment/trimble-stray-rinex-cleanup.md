@@ -308,3 +308,64 @@ In `trimble_native_converter.py`:
 * Cleanup is still needed for the ~4,339 existing strays, but it is no longer racing a
   producer; it should simply follow the code fix so the strays do not come back.
 * Order becomes: **fix `trimble_native_converter.py` → deploy → clean strays → backfill.**
+
+---
+
+## Outcome (2026-07-27) — fixed, and the cleanup is mostly self-healing
+
+### The fix
+
+`b287633` runs the trm2rinex container with `--user $(uid):$(gid)` instead of the image's
+baked-in `User: user` (uid 1000, gid 100). Wine refuses a `WINEPREFIX` it does not own, so
+the container first copies the image's prefix into a HOME it owns — measured at **0.16 s**
+(copy-on-write in the container overlay, not 120 MB of real I/O), and per-run isolation
+means parallel conversions cannot race on a shared prefix.
+
+Verified on rek-d01 (where `gpsops` is uid 436213430, so the result is unambiguous):
+
+```
+✅ STAN202607260000a.T02.gz -> STAN2070.26D.Z (23.7s)
+-rw-r--r-- 1 gpsops starfsmenn 3208475 STAN2070.26D.Z      # CRINEX 3.0 / RINEX 3.04
+```
+
+### It is self-healing — confirmed empirically
+
+A conversion now succeeds **even when the old uid-1000 stray is still present**: the
+successful chain renames/compresses it away. ALHV still had
+`ALHV202607260000a.26o` (firstuser-owned) on the local archive; converting that day
+produced `ALHV2070.26D.Z` (gpsops-owned) and the stray was **gone**.
+
+**So the backfill IS the cleanup** for the local archive: re-converting a day consumes
+that day's stray. No bulk local deletion is required.
+
+### ⚠️ Archive topology — `archive-rm` does NOT touch the local archive
+
+Discovered the hard way; get this right before planning any deletion:
+
+| Path | What it actually is |
+|---|---|
+| `rek-d01:/mnt/data/gpsdata` | **local LVM disk** on rek-d01 (1 TB, 84% used) — the live working archive the scheduler reads/writes |
+| `rek-d01:/mnt/rawgpsdata` | **read-only NFS mount** of `ananas.vedur.is:/gps/gpsdata` (16 TB) — the long-term archive |
+| `rawdata.vedur.is` | a **separate host** (10.170.100.48, not rek-d01); `~gpsops/gpsdata` → `/mnt/gps/gpsdata` = the same ananas storage |
+
+`receivers archive-rm` operates **via the rawdata gateway**, i.e. on the **long-term
+(ananas) archive only**. It cannot remove anything from rek-d01's local `/mnt/data/gpsdata`
+— which is precisely the copy that was blocking conversions.
+
+### What was actually done
+
+* **4,346 strays deleted from the long-term (ananas) archive** via `archive-rm`
+  (`--max-size 60000000 --yes --catalog-prod`). Manifest for rollback:
+  `/mnt/data/gpsops_scratch/stray-cleanup-20260727/strays-manifest.tsv`.
+* **archive_catalog pruned 12,606 → 8,409** rows, fanned to rek-d01 **and** pgdev
+  (`--catalog-prod` — a default-catalog run prunes localhost only and diverges the mirror).
+* **The local archive still holds all 4,346 strays** — harmless now, and consumed
+  day-by-day as the backfill re-converts.
+
+### Remaining
+
+1. **Backfill** the missing days per station (this also clears the local strays).
+2. The 8,409 leftover catalog rows are mostly pre-2026 entries for files long gone from
+   ananas; prune separately, `--catalog-prod`.
+3. Cosmetic: `database.cfg` on rek-d01 does not declare `rek-d01.vedur.is`, so every
+   `--catalog-prod` run logs a credential-fallback WARNING.
