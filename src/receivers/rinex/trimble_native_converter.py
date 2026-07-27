@@ -22,6 +22,7 @@ Disadvantages:
 """
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -200,12 +201,12 @@ class TrimbleNativeConverter(RawToRinexConverter):
                 working_file = temp_dir / raw_file.name
                 shutil.copy(raw_file, working_file)
 
-            # Create output subdirectory — world-writable so the Docker container
-            # user (Wine/firstuser) can write output files. chmod() after mkdir()
-            # because mkdir(mode=...) is subject to the process umask.
+            # Output subdirectory. The container runs as OUR uid:gid (see the
+            # --user flag below), so 0755 is enough — it no longer has to be
+            # world-writable for a foreign container user to write into it.
             docker_out = temp_dir / "out"
             docker_out.mkdir()
-            docker_out.chmod(0o777)
+            docker_out.chmod(0o755)
 
             # Determine RINEX version string
             version_map = {
@@ -228,15 +229,46 @@ class TrimbleNativeConverter(RawToRinexConverter):
             )
             wine_path = "/opt/wine/bin/wine"
 
+            # Run the container as the INVOKING user (gpsops in production), not
+            # the image's baked-in `user` (uid 1000 / gid 100).
+            #
+            # The image default made every output file land in the archive owned
+            # by uid 1000 — which on rek-d01 is an unrelated account (`firstuser`),
+            # not gpsops. A leftover intermediate then became UNOVERWRITABLE by the
+            # scheduler, so the next run died with `[Errno 13] Permission denied`
+            # and that station's daily RINEX stopped for good while raw downloads
+            # kept succeeding. Owning our own output makes such a leftover merely
+            # stale instead of fatal — the failure becomes self-healing.
+            #
+            # Wine refuses a WINEPREFIX it does not own ("is not owned by you"),
+            # and the prefix baked into the image (/home/user/.wine, 120 MB) holds
+            # the installed convertToRinex. So copy it to a HOME we own inside the
+            # container's own overlay first. Measured at ~0.16 s — it is a
+            # copy-on-write overlay copy, not 120 MB of real I/O — and it keeps
+            # each conversion isolated, so parallel conversions cannot race on a
+            # shared prefix.
+            prefix_setup = (
+                'set -e; cp -a /home/user/.wine "$HOME/.wine"; '
+                'export WINEPREFIX="$HOME/.wine"; exec "$@"'
+            )
+
             cmd = [
                 "docker",
                 "run",
                 "--rm",
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
+                "-e",
+                "HOME=/tmp",  # container overlay: writable by any uid, discarded on --rm
                 "-v",
                 f"{temp_dir}:/data",
                 "--entrypoint",
                 "",
                 self.docker_image,
+                "bash",
+                "-c",
+                prefix_setup,
+                "_",  # becomes $0; the real argv follows as "$@"
                 wine_path,
                 convert_exe,
                 f"Z:\\data\\{working_file.name}",
