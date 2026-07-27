@@ -21,15 +21,9 @@ logger = logging.getLogger("receivers.cli.archive_sync")
 
 def _get_conn(host: Optional[str], required: bool):
     """Open a gps_health connection; tolerate absence only when not required."""
-    try:
-        from ..db.connection import get_connection
+    from ..db.connection import optional_connection
 
-        return get_connection(host_override=host)
-    except Exception as exc:  # noqa: BLE001 - dev laptops may lack gps_health
-        if required:
-            raise
-        logger.warning("no gps_health connection (%s) — dry-run without indexing", exc)
-        return None
+    return optional_connection(host, required=required, log=logger)
 
 
 def cmd_archive_sync(args: argparse.Namespace) -> int:

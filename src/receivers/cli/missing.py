@@ -49,9 +49,9 @@ _WORKLISTS = {
 
 
 def _get_conn(host):
-    from ..db.connection import get_connection
+    from ..db.connection import optional_connection
 
-    return get_connection(host_override=host)
+    return optional_connection(host, required=True, log=logger)
 
 
 def _refresh(conn) -> None:

@@ -355,6 +355,35 @@ def _heartbeat_job() -> None:
         )
 
 
+_MIRROR_METRICS_LAST: Dict[str, int] = {}
+
+
+def _mirror_metrics_job() -> None:
+    """Log the dual-write (pgdev mirror) failure counters once an hour.
+
+    The counters exist so mirror trouble is *observed* rather than buried in a
+    per-event ``logger.warning`` — the rek-d01/pgdev catalog divergence went
+    unnoticed for months because nothing aggregated those warnings. Logs only
+    when something changed since the last tick, so a healthy mirror is silent.
+    """
+    log = logging.getLogger("receivers.scheduler")
+    try:
+        from ..health.database_factory import MirrorMetrics
+
+        snap = MirrorMetrics.snapshot()
+        delta = {k: v - _MIRROR_METRICS_LAST.get(k, 0) for k, v in snap.items()}
+        delta = {k: v for k, v in delta.items() if v}
+        if delta:
+            log.warning(
+                "mirror dual-write issues in the last hour: %s (cumulative: %s)",
+                ", ".join(f"{k}={v}" for k, v in sorted(delta.items())),
+                ", ".join(f"{k}={v}" for k, v in sorted(snap.items())),
+            )
+        _MIRROR_METRICS_LAST.update(snap)
+    except Exception:  # noqa: BLE001 - reporting must never break the scheduler
+        log.debug("mirror metrics report failed", exc_info=True)
+
+
 def _write_connectivity_status(
     station_id: str, health_data: Dict[str, Any], logger: logging.Logger
 ) -> None:
@@ -2413,6 +2442,16 @@ class BulkDownloadScheduler:
             replace_existing=True,
         )
         self.logger.info("Scheduled liveness heartbeat (every 1 min)")
+
+        # Mirror dual-write counters — silent unless something actually failed.
+        self.scheduler.add_job(
+            func=_mirror_metrics_job,
+            trigger="interval",
+            hours=1,
+            id="mirror_metrics_report",
+            replace_existing=True,
+        )
+        self.logger.info("Scheduled mirror dual-write metrics report (hourly)")
 
     def _schedule_backfill(self) -> None:
         """DEPRECATED: Use _schedule_multi_session_backfill() instead."""

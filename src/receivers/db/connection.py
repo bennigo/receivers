@@ -16,11 +16,20 @@ logger = logging.getLogger(__name__)
 def get_connection(
     host_override: str | None = None,
     database: str | None = None,
+    single_host: bool = False,
 ) -> Any:
     """Get a database connection using centralized config.
 
     Uses DatabaseConnectionFactory for connection params with optional
     host override for pointing at different servers.
+
+    **Mirroring.** With no ``host_override`` and a configured ``mirror_host``,
+    the returned connection fans every write out to the mirror as well.  Pass
+    ``single_host=True`` for anything destructive, id-keyed, read-only, or that
+    must be transactional on exactly one server — a fanned ``DROP SCHEMA`` or
+    ``… WHERE id = %s`` on a mirror that holds different rows is a data-loss
+    bug, not a resilience feature.  ``host_override`` already implies a single
+    host (it opens a direct connection to that server).
 
     When ``host_override`` targets the configured ``mirror_host``, the
     connection uses that host's declared identity (``mirror_user`` + its
@@ -32,6 +41,7 @@ def get_connection(
     Args:
         host_override: Override the configured host (e.g., 'pgdev.vedur.is').
         database: Override the database name (default: gps_health).
+        single_host: Never return a dual-write connection (see above).
 
     Returns:
         psycopg2 connection object.
@@ -49,13 +59,58 @@ def get_connection(
             host_override, database=database or "gps_health"
         )
 
-    return DatabaseConnectionFactory.get_connection(database=database or "gps_health")
+    return DatabaseConnectionFactory.get_connection(
+        database=database or "gps_health", single_host=single_host
+    )
+
+
+def get_single_host_connection(
+    host_override: str | None = None,
+    database: str | None = None,
+) -> Any:
+    """Open a connection that is guaranteed never to fan out to the mirror.
+
+    Convenience wrapper over :func:`get_connection` for the destructive /
+    id-keyed / read-only call sites, so intent is visible at the call.
+    """
+    return get_connection(
+        host_override=host_override, database=database, single_host=True
+    )
+
+
+def optional_connection(
+    host_override: str | None = None,
+    *,
+    required: bool = True,
+    database: str | None = None,
+    single_host: bool = False,
+    log: logging.Logger | None = None,
+) -> Any:
+    """Open a gps_health connection, tolerating absence when not required.
+
+    The "a dev laptop may have no gps_health, and a dry run can proceed
+    without one" pattern, which ``cli/archive_sync.py`` and ``cli/missing.py``
+    each re-implemented.  Returns ``None`` (after a warning) instead of raising
+    when ``required`` is False.
+    """
+    try:
+        return get_connection(
+            host_override=host_override, database=database, single_host=single_host
+        )
+    except Exception as exc:  # noqa: BLE001 - dev laptops may lack gps_health
+        if required:
+            raise
+        (log or logger).warning(
+            "no gps_health connection (%s) — proceeding without indexing", exc
+        )
+        return None
 
 
 @contextmanager
 def managed_connection(
     host_override: str | None = None,
     database: str | None = None,
+    single_host: bool = False,
 ) -> Generator:
     """Context manager for safe connection lifecycle.
 
@@ -64,11 +119,14 @@ def managed_connection(
     Args:
         host_override: Override the configured host.
         database: Override the database name.
+        single_host: Never return a dual-write connection.
 
     Yields:
         psycopg2 connection object.
     """
-    conn = get_connection(host_override=host_override, database=database)
+    conn = get_connection(
+        host_override=host_override, database=database, single_host=single_host
+    )
     try:
         yield conn
         conn.commit()

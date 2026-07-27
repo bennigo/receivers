@@ -107,7 +107,9 @@ class Seeder:
         self.host_override = host_override
 
     def _get_conn(self):
-        return get_connection(host_override=self.host_override)
+        # Single-host: schema/seed writes must never fan out to the pgdev
+        # mirror (a mirrored DDL/seed is a silent cross-host mutation).
+        return get_connection(host_override=self.host_override, single_host=True)
 
     def seed_stations(self, dry_run: bool = False) -> dict[str, int]:
         """Seed stations from gps_parser ConfigParser.

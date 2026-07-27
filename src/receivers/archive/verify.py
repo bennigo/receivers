@@ -131,7 +131,7 @@ def verify_archive_catalog(
     # verification, newest data.
     select_sql = """
         SELECT id, station, session_type, file_category, file_date, file_path,
-               content_sha256
+               content_sha256, canonical_key
         FROM archive_catalog
         WHERE storage_location = %s
           AND content_sha256 IS NOT NULL
@@ -189,6 +189,7 @@ def verify_archive_catalog(
         file_date,
         file_path,
         cat_hash,
+        canonical_key,
     ) in rows:
         stats.checked += 1
 
@@ -245,10 +246,34 @@ def verify_archive_catalog(
 
         if actual == cat_hash:
             with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE archive_catalog SET last_verified_at = now() WHERE id = %s",
-                    (row_id,),
-                )
+                # Keyed on (storage_location, file_path), NOT the surrogate id:
+                # this connection may fan out to the pgdev mirror, whose ids
+                # are assigned independently — an id-keyed UPDATE would stamp
+                # last_verified_at on an unrelated row there.
+                # NULL session_type needs `IS NULL`, but `IS NOT DISTINCT FROM`
+                # is not btree-indexable — it demotes session_type from the
+                # archive_catalog_logical_key Index Cond to a Filter, which on
+                # 8.5M rows (all sharing storage_location='imo_archive') costs
+                # a near-full index scan per verified file. Pick the predicate.
+                if session_type is None:
+                    cur.execute(
+                        """UPDATE archive_catalog SET last_verified_at = now()
+                           WHERE storage_location = %s AND session_type IS NULL
+                             AND file_category = %s AND canonical_key = %s""",
+                        (storage_location, file_category, canonical_key),
+                    )
+                else:
+                    cur.execute(
+                        """UPDATE archive_catalog SET last_verified_at = now()
+                           WHERE storage_location = %s AND session_type = %s
+                             AND file_category = %s AND canonical_key = %s""",
+                        (
+                            storage_location,
+                            session_type,
+                            file_category,
+                            canonical_key,
+                        ),
+                    )
             conn.commit()
             stats.verified += 1
         else:

@@ -27,6 +27,57 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 DUMPS_DIR = PROJECT_ROOT / "dumps"
 
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+# ── Target resolution + safety ────────────────────────────────────────────────
+#
+# Every ``receivers db`` verb opens a SINGLE-HOST connection. These verbs are
+# schema-level and destructive (``DROP SCHEMA public CASCADE``, station purges);
+# on a host with ``mirror_host`` configured the default connection fans writes
+# out to the mirror, so ``receivers db setup`` on a laptop would have dropped
+# the schema on pgdev too — with no prompt, because the old guard only fired
+# when ``--host`` was passed explicitly.
+
+
+def resolve_db_host(host: str | None) -> str:
+    """Return the host a ``db`` verb will actually connect to.
+
+    ``--host`` when given, otherwise the resolved primary from database.cfg /
+    ``POSTGRES_HOST`` — never the CLI arg alone, which is ``None`` in exactly
+    the case that used to skip the confirmation prompt.
+    """
+    if host:
+        return host
+    try:
+        from ..health.database_factory import DatabaseConnectionFactory
+
+        return DatabaseConnectionFactory.get_connection_params()["host"]
+    except Exception:  # noqa: BLE001 - fall back to a name that forces a prompt
+        return "<unresolved>"
+
+
+def confirm_destructive(action: str, host: str | None, force: bool = False) -> bool:
+    """Prompt before a destructive ``db`` verb against a non-local host."""
+    target = resolve_db_host(host)
+    if target in LOCAL_HOSTS:
+        return True
+    if force:
+        logger.warning("%s on %s proceeding without prompt (--force)", action, target)
+        return True
+    confirm = input(f"Type 'gps_health' to confirm {action} on {target}: ")
+    if confirm != "gps_health":
+        print("Aborted.")
+        return False
+    return True
+
+
+def db_connection(host: str | None, database: str | None = None):
+    """Open the single-host connection every ``db`` verb must use."""
+    from ..db.connection import get_connection
+
+    return get_connection(host_override=host, database=database, single_host=True)
+
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
@@ -35,21 +86,16 @@ def cmd_db_setup(args: argparse.Namespace) -> int:
     """Drop schema, apply consolidated migration, seed all data."""
     host = getattr(args, "host", None)
 
-    # Safety check for remote hosts
-    if host and host not in ("localhost", "127.0.0.1"):
-        confirm = input(f"Type 'gps_health' to confirm DROP + SETUP on {host}: ")
-        if confirm != "gps_health":
-            print("Aborted.")
-            return 1
+    if not confirm_destructive("DROP + SETUP", host):
+        return 1
 
     print("=== GPS Health Database Setup ===\n")
+    print(f"Target: {resolve_db_host(host)} (single host — mirror NOT touched)\n")
 
     # Step 1: Drop schema
     print("--- Dropping existing schema ---")
     try:
-        from ..db.connection import get_connection
-
-        conn = get_connection(host_override=host)
+        conn = db_connection(host)
         with conn.cursor() as cur:
             cur.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         conn.commit()
@@ -158,13 +204,12 @@ def cmd_db_status(args: argparse.Namespace) -> int:
     """Show database status: tables, rows, migration state."""
     host = getattr(args, "host", None)
 
-    from ..db.connection import get_connection
     from ..db.migrator import Migrator
 
     print("=== Database Status ===\n")
 
     try:
-        conn = get_connection(host_override=host)
+        conn = db_connection(host)
     except Exception as e:
         print(f"Cannot connect: {e}")
         return 1
@@ -330,15 +375,18 @@ def cmd_db_restore(args: argparse.Namespace) -> int:
 
 def cmd_db_drop_station(args: argparse.Namespace) -> int:
     """Remove a station and all its data from the database."""
-    from ..db.connection import get_connection
-
     station_id = args.station_id.upper()
     host = getattr(args, "host", None)
     dry_run = getattr(args, "dry_run", False)
     force = getattr(args, "force", False)
 
+    if not dry_run and not confirm_destructive(
+        f"DROP STATION {station_id}", host, force=force
+    ):
+        return 1
+
     try:
-        conn = get_connection(host_override=host)
+        conn = db_connection(host)
     except Exception as e:
         print(f"Cannot connect: {e}")
         return 1
@@ -426,25 +474,21 @@ def cmd_db_drop_station(args: argparse.Namespace) -> int:
 
 def cmd_db_list_suppressed(args: argparse.Namespace) -> int:
     """List stations suppressed because they were removed from stations.cfg."""
-    from ..db.connection import get_connection
-
     host = getattr(args, "host", None)
     try:
-        conn = get_connection(host_override=host)
+        conn = db_connection(host)
     except Exception as e:
         print(f"Cannot connect: {e}")
         return 1
 
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT sid, station_name, receiver_type, updated_at
                 FROM stations
                 WHERE station_status = 'suppressed'
                 ORDER BY updated_at DESC
-                """
-            )
+                """)
             rows = cur.fetchall()
 
         if not rows:

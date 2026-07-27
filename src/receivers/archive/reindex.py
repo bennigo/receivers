@@ -258,8 +258,20 @@ def open_catalog_conns(
             # host_override. An explicit ``override`` is always honoured as given.
             conn_host = host if explicit else (None if idx == 0 else host)
             label = host or "localhost"
+            # Element 0 goes through the DEFAULT connection, which fans writes
+            # out to ``mirror_host`` when one is configured. With a multi-host
+            # catalog set that mirror IS one of the later elements, so the row
+            # would be written to it TWICE (once implicitly, once explicitly) —
+            # and a mirror leg that silently succeeds would mask the loud
+            # "secondary unreachable" warning below. Pin element 0 to the
+            # primary and let the explicit fan-out own every other host.
+            # With a single-element set (a laptop, no ``catalog_hosts``) the
+            # implicit mirror is the ONLY fan-out there is — leave it alone.
+            single = len(hosts) > 1 and conn_host is None
             try:
-                conns.append(get_connection(host_override=conn_host))
+                conns.append(
+                    get_connection(host_override=conn_host, single_host=single)
+                )
             except Exception as exc:  # noqa: BLE001
                 if idx == 0:
                     # Primary (operational) host: a caller that can proceed

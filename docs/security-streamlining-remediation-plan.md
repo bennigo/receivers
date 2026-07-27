@@ -149,8 +149,67 @@ Highest risk, biggest files. Model: **sonnet**, careful review each.
   transcript; the actionable set is fully captured above.
 
 ## Status tracker
-- [ ] Group 1 (S1,S2,S3,S7,T4,Phase0-cleanup)
+- [x] **Group 1 (S1,S2,S3,S7,T4,Phase0-cleanup)** — landed 2026-07-27, see below
 - [ ] Group 2 (S4,S5,S6,S8,S9)
 - [ ] Group 3 (T11,T2,T9,T1)
 - [ ] Group 4 (T7,T8,T10)
 - [ ] Group 5 (T3,T5,T6,T12)
+
+### Group 1 — what landed (2026-07-27)
+
+**Design decision that shaped everything: dual-write stays the DEFAULT.**
+`mirror_host = pgdev.vedur.is` is live on rek-d01 (`gps-config-data/environments/
+rek-d01.vedur.is.env:51`), so production health writes depend on the implicit
+fan-out. Flipping the global default to single-host would have silently stopped
+mirroring — a functional regression dressed as a security fix. Instead
+`single_host=True` is an explicit opt-in at the dangerous call sites.
+
+| Item | Change |
+|------|--------|
+| S1 | `single_host=` on `DatabaseConnectionFactory.get_connection()`/`connection()` + `db.connection.get_connection()`; every `db` verb, `Migrator`, `Seeder` use it. Confirmation now keys off the **resolved** host (`resolve_db_host`), not the CLI arg — the dangerous case was `--host` *omitted*, which skipped the prompt entirely. `drop-station` gained a confirm. |
+| S2 | Natural-key rewrites: `discrepancy_log` (station_id+cfg_key+open), `file_tracker` ×2 (sid+session+date+hour), `verify.py` (the `archive_catalog_logical_key` UNIQUE — **not** `file_path`, which has no index). Plus a structural guard: `_DualCursor` refuses to fan out any `UPDATE/DELETE … WHERE id = %s` and counts it. |
+| S3 | `health-query` is single-host, rejects multi-statement SQL (literal/comment aware), and sets `default_transaction_read_only` with a `--write` opt-out. |
+| S7 | `statement_timeout` (600s) + `lock_timeout` (30s) via libpq `options` on every connection; config- and env-overridable, `0` disables. Also fixed: `connect_timeout` was read with `cfg.get()` but never loaded from database.cfg (missing from the key list) — the documented setting was inert. |
+| T4 | `optional_connection()` in `db/connection.py` replaces the duplicated `_get_conn` in `cli/archive_sync.py` and `cli/missing.py`. |
+| Phase-0 | `open_catalog_conns` element 0 is single-host **only when the resolved set has >1 host** — with a single-element set (laptop, no `catalog_hosts`) the implicit mirror is the only fan-out there is, so it is left alone. |
+
+**Bug found while fixing S3, worth knowing:** `_DualConnection` defined `__getattr__`
+but not `__setattr__`, so `conn.autocommit = True` landed in the wrapper's `__dict__`
+and the real psycopg2 connections stayed transactional. Every session-level `SET`
+health-query "applied" (`statement_timeout`, `lock_timeout`) sat in an uncommitted
+implicit transaction — the whole timeout defense was a no-op whenever `mirror_host`
+was set. Fixed by delegating attribute writes to both legs.
+
+**Observability:** `MirrorMetrics` counters (connect/pool/checkout/cursor/execute/
+executemany/setattr failures + `id_keyed_writes_not_mirrored`) replace bare
+`logger.warning`s — the divergence went unnoticed for months precisely because
+nothing counted.
+
+**Verification:** `tests/test_connection_safety.py` (26 tests). Empirically, with
+`mirror_host` pointed at an unroutable host, `receivers db status` took 10.7s on
+`main` (it was reaching for the mirror) and 0.68s after (it isn't). `health-query`
+refuses `"SELECT 1; DROP TABLE …"` and the server refuses `DELETE`/`CREATE` unless
+`--write`. Pre-existing unrelated failure:
+`test_archive_sync.py::TestEndToEndLocal::test_raw_immutable_rinex_updates`
+(fails on `main` too). mypy output unchanged from baseline.
+
+**Index-plan trap the natural-key rewrites walked into (fixed before merge).**
+`IS NOT DISTINCT FROM` is not a btree-indexable operator, and the unique indexes
+on the file_tracking grain are *partial* (`WHERE file_hour IS NULL` / `IS NOT NULL`).
+Written the obvious way, the S2 rewrites would have demoted the key column from
+Index Cond to Filter — trading a PK lookup for a near-full index scan, per row,
+on 8.5M rows. Measured locally: cost 21.71 vs 8.44 on `archive_catalog`. Both
+sites now pick `IS NULL` vs `= %s` in Python. `pg_indexes` confirms
+`(sid, session_type, file_date, file_hour)` is unique, so the natural-key
+UPDATEs remain single-row.
+
+**Migrations are exempt from the new timeouts.** `Migrator._get_conn` issues
+`SET statement_timeout = 0; SET lock_timeout = 0`. Deploy-time DDL on a live
+8.5M-row table legitimately runs long and legitimately waits for ACCESS
+EXCLUSIVE while the scheduler writes; aborting a migration mid-deploy is worse
+than the slow query the ceiling bounds. The **seeder is not exempt** (short
+row-level upserts) — if a `db seed` ever times out on lock contention, that is
+the signal, not a bug to paper over.
+
+**NOT deployed** to rek-d01 — needs a `git pull` + scheduler restart as gpsops.
+Worth a human watching the first `db migrate` after this lands (timeout change).
