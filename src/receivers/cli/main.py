@@ -82,7 +82,9 @@ def _validate_station_for_download(
     """
     station_config = get_station_config(station_id)
     if station_config is None:
-        logger.warning(f"⚠️  Station {station_id} not found in configuration - SKIPPING")
+        logger.warning(
+            f"⚠️  Station {station_id} not found in configuration - SKIPPING"
+        )
         return None
 
     try:
@@ -892,7 +894,9 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             voltage = power.get("voltage")
             if voltage is not None:
                 status = power.get("status", "ok")
-                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                emoji = (
+                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                )
                 metric_lines.append(f"Voltage: {emoji} {voltage:.2f} V")
 
         # Temperature
@@ -901,7 +905,9 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             value = temp.get("value")
             if value is not None:
                 status = temp.get("status", "ok")
-                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                emoji = (
+                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                )
                 metric_lines.append(f"Temp: {emoji} {value}°C")
 
         # CPU load
@@ -910,7 +916,9 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             value = cpu.get("value", cpu.get("percent"))
             if value is not None:
                 status = cpu.get("status", "ok")
-                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                emoji = (
+                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                )
                 metric_lines.append(f"CPU: {emoji} {value}%")
 
         # Disk usage
@@ -919,7 +927,9 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             value = disk.get("usage_percent")
             if value is not None:
                 status = disk.get("status", "ok")
-                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                emoji = (
+                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                )
                 metric_lines.append(f"Disk: {emoji} {value:.0f}%")
 
         if metric_lines:
@@ -931,7 +941,9 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             total = sats.get("total")
             if total is not None:
                 status = sats.get("status", "ok")
-                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                emoji = (
+                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                )
                 by_const = sats.get("by_constellation", {})
                 const_str = (
                     ", ".join(f"{k}:{v}" for k, v in by_const.items())
@@ -949,7 +961,9 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             fix_mode = pos.get("fix_mode") or pos.get("fix_type")
             if fix_mode:
                 status = pos.get("status", "ok")
-                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                emoji = (
+                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                )
                 sats_used = pos.get("satellites_used", "")
                 lat = pos.get("latitude")
                 lon = pos.get("longitude")
@@ -1055,7 +1069,9 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
                     status = "warning"
                 else:
                     status = "ok"
-                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                emoji = (
+                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                )
                 label = session_labels.get(session, session)
                 file_parts.append(f"{label}:{emoji}")
         if file_parts:
@@ -1785,7 +1801,9 @@ def cmd_health_single(args, station_id: str, logger: logging.Logger) -> int:
                 tcp = connection["tcp"]
                 status = tcp.get("status", "unknown")
                 host = tcp.get("host", "")
-                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                emoji = (
+                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
+                )
                 print(f"  tcp: {emoji} {status} ({host})")
 
             # Show port status (always show all ports for consistency, N/A if not configured)

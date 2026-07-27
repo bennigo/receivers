@@ -406,7 +406,9 @@ class PolaRX5(BaseReceiver):
         directory and/or a different filename pattern.
         """
         session_dir = self.session_map[session][1]
-        return f"{self.base_path}{session_dir}/%y%j/{self.station_id}#Rin2_{compression}"
+        return (
+            f"{self.base_path}{session_dir}/%y%j/{self.station_id}#Rin2_{compression}"
+        )
 
     def download_data(
         self,
@@ -720,9 +722,9 @@ class PolaRX5(BaseReceiver):
                         "success": False,
                         "duration": time.time() - start_time,
                         "error_type": "configuration_error",
-                        "error_category": e.category.value
-                        if hasattr(e, "category")
-                        else "unknown",
+                        "error_category": (
+                            e.category.value if hasattr(e, "category") else "unknown"
+                        ),
                         "validation_needed": True,
                     }
                 )
@@ -768,9 +770,9 @@ class PolaRX5(BaseReceiver):
                 "success": sync_success and len(downloaded_files_dict) > 0,
                 "duration": final_duration,
                 "bytes_downloaded": total_bytes,
-                "avg_speed": total_bytes / final_duration
-                if final_duration > 0
-                else 0.0,
+                "avg_speed": (
+                    total_bytes / final_duration if final_duration > 0 else 0.0
+                ),
                 "connection_time": getattr(self, "_last_connection_time", 0.0),
             }
         )
@@ -2808,9 +2810,11 @@ class PolaRX5(BaseReceiver):
                         "host": host,
                         "accessible": True,
                         "response_time_ms": ping_result.response_time_ms,
-                        "packet_loss": ping_result.details.get("packet_loss", 0)
-                        if ping_result.details
-                        else 0,
+                        "packet_loss": (
+                            ping_result.details.get("packet_loss", 0)
+                            if ping_result.details
+                            else 0
+                        ),
                     }
                     self.logger.debug(
                         f"Router ping successful: {host} ({ping_result.response_time_ms:.1f}ms)"
