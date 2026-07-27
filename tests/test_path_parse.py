@@ -54,6 +54,33 @@ def test_long_name_septentrio_unaffected_by_year_anchor():
     assert parsed.file_hour == 5
 
 
+def test_daily_zero_short_name_is_dated_no_hour():
+    """RINEX-2 daily file ``NYLAddd0.YYd`` (seq char '0') must date, hour=None.
+
+    Regression for the daily-'0' parser gap: the short-name regex only matched
+    ``[a-x]``, so daily files parsed to None -> file_date NULL in the catalog.
+    """
+    root = "/mnt/rawgpsdata"
+    path = f"{root}/2021/mar/NYLA/15s_24hr/rinex/NYLA0600.21D.Z"
+
+    parsed = parse_archive_path(path, root)
+
+    assert parsed is not None
+    assert parsed.file_date == date(2021, 3, 1)  # DOY 060 of 2021
+    assert parsed.file_hour is None  # '0' = daily file, no hour
+    assert parsed.session_type == "15s_24hr"
+
+
+def test_daily_zero_leap_year():
+    """'0' daily on a leap DOY resolves to the leap date (2024 DOY060 = Feb 29)."""
+    root = "/mnt/rawgpsdata"
+    path = f"{root}/2024/feb/NYLA/15s_24hr/rinex/NYLA0600.24D.Z"
+    parsed = parse_archive_path(path, root)
+    assert parsed is not None
+    assert parsed.file_date == date(2024, 2, 29)
+    assert parsed.file_hour is None
+
+
 # --- parse_date_from_filename: unit-level, default_year / session_type ---
 
 
