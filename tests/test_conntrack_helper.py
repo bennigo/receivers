@@ -361,6 +361,13 @@ def test_known_hosts_path_precedence(tmp_path, monkeypatch):
     assert resolve_known_hosts_path(None, str(cfg)) == tmp_path / "from_cfg"
     assert resolve_known_hosts_path(None, str(empty_cfg)) == tmp_path / "from_env"
 
+    # configparser.get(..., fallback=…) still raises NoSectionError when the
+    # whole section is missing — which is the normal shape of a laptop
+    # receivers.cfg, so the fall-through has to survive it.
+    no_section = tmp_path / "no_teltonika.cfg"
+    no_section.write_text("[archive_paths]\ndata_prepath = /data\n")
+    assert resolve_known_hosts_path(None, str(no_section)) == tmp_path / "from_env"
+
     monkeypatch.delenv("RECEIVERS_ROUTER_KNOWN_HOSTS")
     # Default is XDG *data*, never ~/.cache: a cache wipe would silently reset
     # trust-on-first-use for the whole fleet.
