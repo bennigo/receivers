@@ -41,7 +41,22 @@ class Migrator:
     def _get_conn(self):
         # Single-host: schema/seed writes must never fan out to the pgdev
         # mirror (a mirrored DDL/seed is a silent cross-host mutation).
-        return get_connection(host_override=self.host_override, single_host=True)
+        conn = get_connection(host_override=self.host_override, single_host=True)
+        # Migrations are exempt from the app-wide statement/lock timeouts
+        # (database_factory adds statement_timeout=600s, lock_timeout=30s to
+        # every connection). DDL on a live 8.5M-row table legitimately runs
+        # long and legitimately waits for ACCESS EXCLUSIVE while the scheduler
+        # writes — a timeout there aborts the migration MID-DEPLOY, which is a
+        # far worse failure than the slow query the ceiling exists to bound.
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET statement_timeout = 0")
+                cur.execute("SET lock_timeout = 0")
+            conn.commit()
+        except Exception as exc:  # noqa: BLE001 - non-fatal; keep the defaults
+            logger.warning("could not clear migration timeouts: %s", exc)
+            conn.rollback()
+        return conn
 
     def _has_migrations_table(self, conn) -> bool:
         """Check if schema_migrations table exists."""

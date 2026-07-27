@@ -193,4 +193,23 @@ refuses `"SELECT 1; DROP TABLE …"` and the server refuses `DELETE`/`CREATE` un
 `test_archive_sync.py::TestEndToEndLocal::test_raw_immutable_rinex_updates`
 (fails on `main` too). mypy output unchanged from baseline.
 
+**Index-plan trap the natural-key rewrites walked into (fixed before merge).**
+`IS NOT DISTINCT FROM` is not a btree-indexable operator, and the unique indexes
+on the file_tracking grain are *partial* (`WHERE file_hour IS NULL` / `IS NOT NULL`).
+Written the obvious way, the S2 rewrites would have demoted the key column from
+Index Cond to Filter — trading a PK lookup for a near-full index scan, per row,
+on 8.5M rows. Measured locally: cost 21.71 vs 8.44 on `archive_catalog`. Both
+sites now pick `IS NULL` vs `= %s` in Python. `pg_indexes` confirms
+`(sid, session_type, file_date, file_hour)` is unique, so the natural-key
+UPDATEs remain single-row.
+
+**Migrations are exempt from the new timeouts.** `Migrator._get_conn` issues
+`SET statement_timeout = 0; SET lock_timeout = 0`. Deploy-time DDL on a live
+8.5M-row table legitimately runs long and legitimately waits for ACCESS
+EXCLUSIVE while the scheduler writes; aborting a migration mid-deploy is worse
+than the slow query the ceiling bounds. The **seeder is not exempt** (short
+row-level upserts) — if a `db seed` ever times out on lock contention, that is
+the signal, not a bug to paper over.
+
 **NOT deployed** to rek-d01 — needs a `git pull` + scheduler restart as gpsops.
+Worth a human watching the first `db migrate` after this lands (timeout change).

@@ -2508,21 +2508,39 @@ class GapDetector:
                             # the PRIMARY's, and on a dual (mirror) connection it
                             # addresses an unrelated row on the mirror.
                             if format_id and tracking_id:
-                                cur.execute(
-                                    """UPDATE file_tracking SET format_id = %s
+                                # The unique indexes on this grain are PARTIAL
+                                # (idx_file_tracking_daily WHERE file_hour IS
+                                # NULL / _hourly WHERE NOT NULL), so the hour
+                                # predicate must be spelled `IS NULL` or `= %s`
+                                # — `IS NOT DISTINCT FROM` matches neither and
+                                # would fall back to a scan.
+                                fmt_sql = """UPDATE file_tracking SET format_id = %s
                                     WHERE sid = %s AND session_type = %s
-                                      AND file_date = %s
-                                      AND file_hour IS NOT DISTINCT FROM %s::smallint
-                                      AND format_id IS DISTINCT FROM %s""",
-                                    (
-                                        format_id,
-                                        station_id,
-                                        session_type,
-                                        file_date,
-                                        file_hour,
-                                        format_id,
-                                    ),
-                                )
+                                      AND file_date = %s AND file_hour {hour_pred}
+                                      AND format_id IS DISTINCT FROM %s"""
+                                if file_hour is None:
+                                    cur.execute(
+                                        fmt_sql.format(hour_pred="IS NULL"),
+                                        (
+                                            format_id,
+                                            station_id,
+                                            session_type,
+                                            file_date,
+                                            format_id,
+                                        ),
+                                    )
+                                else:
+                                    cur.execute(
+                                        fmt_sql.format(hour_pred="= %s"),
+                                        (
+                                            format_id,
+                                            station_id,
+                                            session_type,
+                                            file_date,
+                                            file_hour,
+                                            format_id,
+                                        ),
+                                    )
 
                         except (ValueError, IndexError):
                             continue  # skip unparseable filenames

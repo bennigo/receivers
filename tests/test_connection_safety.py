@@ -345,6 +345,18 @@ class TestTimeoutOptions:
 
         assert "statement_timeout=5min" in params["options"]
 
+    def test_migrations_are_exempt(self):
+        """DDL on a live 8.5M-row table must not abort at the app-wide ceiling."""
+        from receivers.db.migrator import Migrator
+
+        conn = MagicMock()
+        with patch("receivers.db.migrator.get_connection", return_value=conn):
+            assert Migrator()._get_conn() is conn
+
+        executed = [c.args[0] for c in conn.cursor().__enter__().execute.call_args_list]
+        assert "SET statement_timeout = 0" in executed
+        assert "SET lock_timeout = 0" in executed
+
     def test_zero_disables(self):
         with (
             patch(
@@ -356,3 +368,64 @@ class TestTimeoutOptions:
             params = DatabaseConnectionFactory.get_connection_params()
 
         assert "options" not in params
+
+
+# ── Natural-key predicates must stay index-able ───────────────────────────────
+
+
+class TestNaturalKeyPredicates:
+    """The S2 rewrites must not trade a PK lookup for a scan.
+
+    ``IS NOT DISTINCT FROM`` is not a btree-indexable operator, and the unique
+    indexes on the file_tracking grain are PARTIAL (``WHERE file_hour IS NULL``
+    / ``IS NOT NULL``). Both cases need the predicate spelled out as ``IS NULL``
+    or ``= %s``, chosen in Python — otherwise the planner demotes the column
+    from Index Cond to Filter and the rewrite costs a near-full index scan per
+    row on an 8.5M-row table.
+    """
+
+    def test_verify_last_verified_update_is_indexable(self):
+        import inspect
+
+        from receivers.archive.verify import verify_archive_catalog
+
+        src = inspect.getsource(verify_archive_catalog)
+        assert "session_type IS NOT DISTINCT FROM" not in src
+        assert "session_type IS NULL" in src
+        assert "session_type = %s" in src
+
+    def test_scan_rinex_format_update_is_indexable(self):
+        import inspect
+
+        from receivers.health.file_tracker import GapDetector
+
+        src = inspect.getsource(GapDetector.scan_rinex_files)
+        assert "file_hour IS NOT DISTINCT FROM" not in src
+        # Conditional predicate: "IS NULL" or "= %s", chosen in Python.
+        assert 'hour_pred="IS NULL"' in src
+        assert 'hour_pred="= %s"' in src
+
+
+class TestMirrorMetricsReporting:
+    """The counters need a reader, or they are as invisible as the warnings."""
+
+    def test_reports_only_deltas(self, caplog):
+        import logging as _logging
+
+        from receivers.scheduling import bulk_scheduler
+
+        bulk_scheduler._MIRROR_METRICS_LAST.clear()
+        MirrorMetrics.reset()
+
+        with caplog.at_level(_logging.WARNING, logger="receivers.scheduler"):
+            bulk_scheduler._mirror_metrics_job()
+            assert "mirror dual-write" not in caplog.text  # healthy → silent
+
+            MirrorMetrics.incr("execute_failures", 3)
+            caplog.clear()
+            bulk_scheduler._mirror_metrics_job()
+            assert "execute_failures=3" in caplog.text
+
+            caplog.clear()
+            bulk_scheduler._mirror_metrics_job()
+            assert "mirror dual-write" not in caplog.text  # no new failures
