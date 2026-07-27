@@ -18,7 +18,7 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 from ..base.exceptions import ConfigurationError, ConnectionError, DownloadError
 from ..base.receiver import BaseReceiver
@@ -26,7 +26,6 @@ from ..base.receiver import BaseReceiver
 # Phase 1 utilities (feature-flagged)
 from ..utils.archive_validator import ArchiveValidator
 from ..utils.download_tracker import DownloadTracker
-from ..utils.file_archiver import ArchiveMode, FileArchiver
 from ..utils.performance_recorder import (
     create_performance_metrics,
     record_performance_metrics,
@@ -306,7 +305,6 @@ class LeicaG10(BaseReceiver):
                             )
 
                 stats = archiver.get_statistics()
-                stats["successful"]
                 self.logger.info(
                     f"Archived {stats['successful']}/{len(files_in_tmp_dict)} files from tmp to archive"
                 )
@@ -665,39 +663,6 @@ class LeicaG10(BaseReceiver):
                 "duration": duration,
             }
 
-    def _validate_archived_file(self, file_path: Path) -> bool:
-        """Basic sanity checks for archived files.
-
-        Args:
-            file_path: Path to archived file
-
-        Returns:
-            True if file passes basic sanity checks, False otherwise
-        """
-        try:
-            # Check 1: File must not be zero or tiny (less than 1KB is suspicious)
-            file_size = file_path.stat().st_size
-            if file_size < 1024:  # 1KB minimum
-                self.logger.debug(f"File too small ({file_size} bytes): {file_path}")
-                return False
-
-            # Check 2: If it's a .gz file, verify it has gzip magic header
-            if str(file_path).endswith(".gz"):
-                with open(file_path, "rb") as f:
-                    # Read first 2 bytes for gzip magic number
-                    magic = f.read(2)
-                    if magic != b"\x1f\x8b":  # gzip magic bytes
-                        self.logger.debug(
-                            f"File doesn't have gzip magic header: {file_path}"
-                        )
-                        return False
-
-            # Basic checks passed
-            return True
-        except OSError as e:
-            self.logger.debug(f"Error validating archived file {file_path}: {e}")
-            return False
-
     def _generate_file_list(
         self, start: datetime, end: datetime, session: str, **kwargs
     ) -> Tuple[Dict[str, str], Dict[str, str]]:
@@ -870,115 +835,6 @@ class LeicaG10(BaseReceiver):
         except Exception as e:
             self.logger.error(f"❌ Unzip error for {zip_path.name}: {e}")
             return None
-
-    def _process_zip_files(self, downloaded_files: List[str]) -> List[str]:
-        """Process downloaded .zip files by unzipping them.
-
-        Args:
-            downloaded_files: List of downloaded .zip file paths
-
-        Returns:
-            List of unzipped file paths
-        """
-        processed_files = []
-
-        for zip_file_path in downloaded_files:
-            zip_path = Path(zip_file_path)
-            if not zip_path.exists():
-                self.logger.warning(f"Downloaded file not found: {zip_file_path}")
-                continue
-
-            if not str(zip_path).endswith(".zip"):
-                self.logger.warning(f"File is not a zip file: {zip_file_path}")
-                processed_files.append(zip_file_path)  # Add as-is
-                continue
-
-            # Unzip the file
-            try:
-                self.logger.info(f"📦 Unzipping: {zip_path.name}")
-
-                # Run unzip command in the same directory
-                result = subprocess.run(
-                    ["unzip", "-o", str(zip_path)],
-                    cwd=zip_path.parent,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-
-                if result.returncode == 0:
-                    # Find the unzipped .m00 file
-                    base_name = zip_path.stem  # Remove .zip extension
-                    m00_file = zip_path.parent / base_name
-
-                    if m00_file.exists():
-                        self.logger.info(f"✅ Unzipped: {base_name}")
-                        processed_files.append(str(m00_file))
-
-                        # Remove the zip file to save space
-                        zip_path.unlink()
-                        self.logger.debug(f"🧹 Removed zip file: {zip_path.name}")
-                    else:
-                        self.logger.error(f"❌ Unzipped file not found: {base_name}")
-                else:
-                    self.logger.error(
-                        f"❌ Unzip failed for {zip_path.name}: {result.stderr}"
-                    )
-
-            except subprocess.TimeoutExpired:
-                self.logger.error(f"❌ Unzip timeout for {zip_path.name}")
-            except Exception as e:
-                self.logger.error(f"❌ Unzip error for {zip_path.name}: {e}")
-
-        return processed_files
-
-    def _archive_files(
-        self, downloaded_files: List[str], archive_files_dict: Dict[str, str]
-    ):
-        """Archive downloaded files to final locations with compression.
-
-        Args:
-            downloaded_files: List of downloaded file paths (.m00 files)
-            archive_files_dict: Dictionary mapping filename to archive path
-        """
-        self.logger.debug("Using Phase 1 FileArchiver (IMMEDIATE mode)")
-        archived_count = 0
-
-        for file_path in downloaded_files:
-            try:
-                file_path_obj = Path(file_path)
-                filename = file_path_obj.name
-
-                if not file_path_obj.exists():
-                    self.logger.warning(f"Cannot archive - file not found: {file_path}")
-                    continue
-
-                if filename in archive_files_dict:
-                    archive_path = Path(archive_files_dict[filename])
-
-                    # Archive file immediately (one at a time for fault tolerance)
-                    with FileArchiver(
-                        mode=ArchiveMode.IMMEDIATE, logger=self.logger
-                    ) as archiver:
-                        success = archiver.archive_file(
-                            file_path_obj,
-                            archive_path,
-                            compress=True,
-                            remove_tmp=True,
-                        )
-
-                    if success:
-                        archived_count += 1
-                    else:
-                        self.logger.error(f"❌ Failed to archive {filename}")
-
-            except Exception as e:
-                self.logger.error(f"❌ Failed to archive {filename}: {e}")
-
-        self.logger.info(
-            f"Archiving complete: {archived_count}/{len(downloaded_files)} files archived"
-        )
-        return archived_count
 
     def get_file_extension(self) -> str:
         """Get file extension for Leica G10 files.

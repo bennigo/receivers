@@ -5039,16 +5039,6 @@ def cmd_rec_upgrade_firmware(args) -> int:
     return 0 if overall_ok else 1
 
 
-def _check_port_simple(host: str, port: int, timeout: float = 3.0) -> bool:
-    import socket as _socket
-
-    try:
-        with _socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
 def _push_reindex(
     args,
     files: list[str],

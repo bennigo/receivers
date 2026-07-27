@@ -313,18 +313,6 @@ def _pick_station_by_gap_count(
         return []
 
 
-def _backfill_next_station() -> None:
-    """Pick the next station needing backfill and process one day.
-
-    This is the legacy APScheduler job entry point (status_1hr only).
-    Kept for backward compatibility.  New code should use
-    _backfill_next_station_for_session().
-
-    Module-level function for APScheduler serialization.
-    """
-    _backfill_next_station_for_session("status_1hr")
-
-
 def _backfill_station_day_generic(
     station_id: str,
     process_date: date,
