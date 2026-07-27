@@ -3,14 +3,12 @@
 import binascii
 import logging
 import os
-import re
 import time
 from datetime import UTC, datetime, timedelta, timezone
 from ftplib import FTP
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
-import gtimes.timefunc as gt
 from gtimes.timefunc import currDatetime
 
 try:
@@ -444,7 +442,6 @@ class PolaRX5(BaseReceiver):
         # Extract legacy parameters from kwargs for backward compatibility
         loglevel = kwargs.get("loglevel", logging.WARNING)
         ffrequency = kwargs.get("ffrequency", "1D")
-        kwargs.get("afrequency", "15s")
         compression = kwargs.get("compression", ".gz")
         immediate_archive = kwargs.get("immediate_archive", True)
         predir = kwargs.get("predir", "/DSK2/SSN/")
@@ -510,7 +507,7 @@ class PolaRX5(BaseReceiver):
                 "duration": time.time() - start_time,
             }
 
-        start, end = self._process_time_parameters(start, end, session, ffrequency)
+        start, end = self._process_time_parameters(start, end, session)
 
         # Initialize performance metrics
         performance_metrics = {
@@ -954,52 +951,10 @@ class PolaRX5(BaseReceiver):
         except Exception as e:
             self.logger.debug(f"Could not register archived files: {e}")
 
-    def _process_time_parameters(self, start, end, session, ffrequency):
+    def _process_time_parameters(self, start, end, session):
         """Process and validate time parameters using Phase 1 TimeParameterProcessor."""
         self.logger.debug("Using Phase 1 TimeParameterProcessor")
         return self.time_processor.process_time_parameters(start, end, session)
-
-    def make_file_name(self, day, session="15s_24hr", compression=".gz"):
-        """Generate Septentrio file name using getSeptentrio3 logic.
-
-        Args:
-            day: datetime object for the file date
-            session: session type (15s_24hr, 1Hz_1hr)
-            compression: compression suffix (.gz)
-
-        Returns:
-            str: formatted filename (e.g., ELDC202509040000a.sbf.gz)
-        """
-
-        # Session type detection
-        daysession = re.compile(r"24h", re.IGNORECASE)
-        hoursession = re.compile(r"1h", re.IGNORECASE)
-
-        if daysession.search(session):
-            filedate = day.strftime("%Y%m%d0000a")  # Daily files end with 'a'
-        elif hoursession.search(session):
-            filedate = day.strftime("%Y%m%d%H00b")  # Hourly files end with 'b'
-        else:
-            # Default to daily format
-            filedate = day.strftime("%Y%m%d0000a")
-
-        # Septentrio PolaRX5 uses .sbf format
-        file_name = f"{self.station_id}{filedate}.sbf{compression}"
-
-        return file_name
-
-    def _get_remote_file_path(self, date_key, session):
-        """Get remote file path for a given date and session."""
-        if session not in self.session_map:
-            raise ConfigurationError(f"Unknown session type: {session}")
-
-        session_letter, session_path = self.session_map[session]
-
-        # Build remote path like getSeptentrio3
-        gps_week = gt.date2gpsWeek(date_key)[0]
-        remote_path = f"{self.base_path}{session_path}/{gps_week:05d}/"
-
-        return remote_path
 
     def _sync_missing_files(
         self,
@@ -2807,20 +2762,6 @@ class PolaRX5(BaseReceiver):
             f"Archiving complete: {stats['successful']}/{stats['total_files']} files archived"
         )
         return stats["successful"]
-
-    def _cleanup_empty_tmp_directories(self):
-        """Remove empty station directories from tmp download area."""
-        try:
-            tmp_base = Path(self.receivers_config.get_tmp_dir())
-            if tmp_base.exists():
-                for station_dir in tmp_base.iterdir():
-                    if station_dir.is_dir() and not any(station_dir.iterdir()):
-                        station_dir.rmdir()
-                        self.logger.info(
-                            f"🧹 Removed empty tmp directory: {station_dir}"
-                        )
-        except Exception as e:
-            self.logger.warning(f"⚠️  Failed to clean up tmp directories: {e}")
 
     def get_health_status(self) -> Dict[str, Any]:
         """Get health status of PolaRX5 receiver.

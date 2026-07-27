@@ -9,7 +9,7 @@ import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, Tuple, Union
 
 import gtimes.timefunc as gt
 
@@ -19,7 +19,6 @@ from ..base.receiver import BaseReceiver
 # Phase 1 utilities (feature-flagged)
 from ..utils.archive_validator import ArchiveValidator
 from ..utils.download_tracker import DownloadTracker
-from ..utils.file_archiver import ArchiveMode, FileArchiver
 from ..utils.performance_recorder import (
     create_performance_metrics,
     record_performance_metrics,
@@ -430,7 +429,6 @@ class NetRS(BaseReceiver):
                             )
 
                 stats = archiver.get_statistics()
-                stats["successful"]
                 self.logger.info(
                     f"Archived {stats['successful']}/{len(files_in_tmp_dict)} files from tmp to archive"
                 )
@@ -738,40 +736,6 @@ class NetRS(BaseReceiver):
         self.logger.debug("Using Phase 1 TimeParameterProcessor")
         return self.time_processor.process_time_parameters(start, end, session)
 
-    def _validate_archived_file(self, file_path: Path) -> bool:
-        """Basic sanity checks for archived files.
-
-        Args:
-            file_path: Path to archived file
-
-        Returns:
-            True if file passes basic sanity checks, False otherwise
-        """
-        try:
-            # Check 1: File must not be zero or tiny (less than 1KB is suspicious)
-            file_size = file_path.stat().st_size
-            if file_size < 1024:  # 1KB minimum
-                self.logger.debug(f"File too small ({file_size} bytes): {file_path}")
-                return False
-
-            # Check 2: If it's a .gz file, verify it has gzip magic header
-            if str(file_path).endswith(".gz"):
-                with open(file_path, "rb") as f:
-                    # Read first 2 bytes for gzip magic number
-                    magic = f.read(2)
-                    if magic != b"\x1f\x8b":  # gzip magic bytes
-                        self.logger.debug(
-                            f"File doesn't have gzip magic header: {file_path}"
-                        )
-                        return False
-
-            # Basic checks passed
-            return True
-
-        except OSError as e:
-            self.logger.debug(f"Error validating archived file {file_path}: {e}")
-            return False
-
     def _resolve_base_path(self) -> str:
         """Storage root for remote paths.
 
@@ -877,54 +841,6 @@ class NetRS(BaseReceiver):
                 archive_files_dict[filename] = archive_file_list[i]
 
         return files_dict, archive_files_dict
-
-    def _archive_files(
-        self, downloaded_files: List[str], archive_files_dict: Dict[str, str]
-    ):
-        """Archive downloaded files to final locations with compression.
-
-        Args:
-            downloaded_files: List of downloaded file paths
-            archive_files_dict: Dictionary mapping filename to archive path
-        """
-        self.logger.debug("Using Phase 1 FileArchiver (IMMEDIATE mode)")
-        archived_count = 0
-
-        for file_path in downloaded_files:
-            try:
-                file_path_obj = Path(file_path)
-                filename = file_path_obj.name
-
-                if not file_path_obj.exists():
-                    self.logger.warning(f"Cannot archive - file not found: {file_path}")
-                    continue
-
-                if filename in archive_files_dict:
-                    archive_path = Path(archive_files_dict[filename])
-
-                    # Archive file immediately (one at a time for fault tolerance)
-                    with FileArchiver(
-                        mode=ArchiveMode.IMMEDIATE, logger=self.logger
-                    ) as archiver:
-                        success = archiver.archive_file(
-                            file_path_obj,
-                            archive_path,
-                            compress=True,
-                            remove_tmp=True,
-                        )
-
-                    if success:
-                        archived_count += 1
-                    else:
-                        self.logger.error(f"❌ Failed to archive {filename}")
-
-            except Exception as e:
-                self.logger.error(f"❌ Failed to archive {filename}: {e}")
-
-        self.logger.info(
-            f"Archiving complete: {archived_count}/{len(downloaded_files)} files archived"
-        )
-        return archived_count
 
     def get_file_extension(self) -> str:
         """Get file extension for NetRS files.
