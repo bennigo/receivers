@@ -184,21 +184,46 @@ class TrimbleConverter(RawToRinexConverter):
             # Step 0: Decompress if needed
             working_file = self._decompress_if_needed(raw_file)
 
-            # Step 1: Extract with runpkr00 (produces binary .dat)
-            dat_file = self._run_runpkr00(working_file, output_dir)
+            # Steps 1-3 run in a PRIVATE STAGING DIRECTORY, never in output_dir.
+            #
+            # These steps emit intermediates (.tgd from runpkr00, RINEX-2 .NNo
+            # from teqc) alongside their output. Writing those into output_dir
+            # meant every intermediate landed in the *archive* rinex/ directory,
+            # and any that survived a failure stayed there forever. Worse, the
+            # leftovers made the failure permanent: a stale intermediate owned by
+            # a different uid (the archive is shared over NFS, and uid 1000 on
+            # any client maps to a non-gpsops owner) cannot be overwritten by the
+            # scheduler, so every subsequent run for that station died with
+            # EACCES while raw downloads kept succeeding — silent loss of daily
+            # RINEX. See the 2026-07 Trimble-fleet incident.
+            #
+            # TemporaryDirectory also guarantees cleanup on the exception path,
+            # which the old explicit-cleanup approach only did best-effort.
+            with tempfile.TemporaryDirectory(prefix="trimble_stage_") as staging:
+                stage_dir = Path(staging)
 
-            # Step 2: Convert binary .dat to RINEX 2 with teqc
-            rinex2_file = self._run_teqc(dat_file, output_dir, observation_date)
+                # Step 1: Extract with runpkr00 (produces binary .dat)
+                dat_file = self._run_runpkr00(working_file, stage_dir)
 
-            # Step 3: Convert to final RINEX version
-            if self.rinex_version.value >= 3:
-                # Use GFZRNX for RINEX 3 conversion
-                rinex_file = self._run_gfzrnx(rinex2_file, output_dir, observation_date)
-            else:
-                # RINEX 2: already have the file
-                rinex_file = rinex2_file
+                # Step 2: Convert binary .dat to RINEX 2 with teqc
+                rinex2_file = self._run_teqc(dat_file, stage_dir, observation_date)
 
-            # Clean up intermediate files
+                # Step 3: Convert to final RINEX version
+                if self.rinex_version.value >= 3:
+                    # Use GFZRNX for RINEX 3 conversion
+                    staged_result = self._run_gfzrnx(
+                        rinex2_file, stage_dir, observation_date
+                    )
+                else:
+                    # RINEX 2: already have the file
+                    staged_result = rinex2_file
+
+                # Publish ONLY the final artifact into the archive.
+                output_dir.mkdir(parents=True, exist_ok=True)
+                rinex_file = output_dir / staged_result.name
+                shutil.move(str(staged_result), str(rinex_file))
+
+            # Clean up any other intermediates (e.g. the decompressed input)
             if not self.keep_intermediate:
                 self._cleanup_temp_files()
 
