@@ -17,6 +17,16 @@ scheduler's conversion fails with
 
 while raw `.T02.gz` downloads keep succeeding — daily RINEX stops silently, per station.
 
+> **CORRECTION (2026-07-27, after this runbook was first drafted).** The section below
+> claiming an *external* producer is **WRONG** and is kept only so the reasoning is
+> traceable. `firstuser` (uid 1000) is **the Docker container user**: our own
+> `trimble_native_converter.py` runs Trimble's `convertToRinex.exe` under Wine in Docker
+> and its own comment reads *"world-writable so the Docker container user
+> (Wine/firstuser) can write output files."* The `cnvtToRINEX` header is therefore our
+> pipeline's own output. **Precondition A below is void — there is no rogue host to hunt,
+> and the ~1,500/day rate is just the fleet's daily conversions.** The real defect and fix
+> are in "Actual root cause" at the end of this document.
+
 ### Two distinct producers — do not conflate them
 
 | Strays | Owner | Produced by | Fixed? |
@@ -254,3 +264,47 @@ WHERE session_type LIKE '%_rinex' GROUP BY sid, session_type ORDER BY 3;
 3. Consider a guard: have the integrity checker's identity probe flag a raw-named file in
    a `rinex/` directory as a finding, so this cannot silently recur. It already detects
    stray/stacked RINEX — this is a natural third case.
+
+---
+
+## Actual root cause (supersedes the "external producer" analysis above)
+
+`src/receivers/rinex/trimble_native_converter.py::_run_conversion` (~line 268):
+
+```python
+rinex_file = self._find_output_file(docker_out, observation_date)
+final_file = output_dir / rinex_file.name   # output_dir IS the archive rinex/ dir
+shutil.move(rinex_file, final_file)         # raw-derived name, e.g. STAN202607260000a.26o
+self._normalize_epoch_lines(final_file)     # edited in place, inside the archive
+```
+
+NetR9 `.T02` conversion runs Trimble's `convertToRinex.exe` under Wine in Docker. Two
+consequences:
+
+1. `docker_out` lives under `~/.cache/...` (home fs) while the archive is NFS — different
+   filesystems, so `shutil.move` degrades to copy+delete and the resulting archive file
+   **keeps the container's uid 1000** (`firstuser`).
+2. The raw-named, uncompressed `.26o` is *deliberately* staged in the archive before
+   Hatanaka compression. If the downstream compress/cleanup does not complete, it stays —
+   and the next run must `open()` that uid-1000 path for write as `gpsops`:
+   **`[Errno 13] Permission denied`**. Daily RINEX then stops silently for that station
+   while raw downloads keep succeeding.
+
+**Commit `5e3093a` does NOT fix this.** It moved staging to a tempdir in
+`trimble_converter.py` (the runpkr00 → teqc → gfzrnx path), which `.T02` does not use.
+Verified: after deploying `5e3093a` to rek-d01, the identical EACCES still occurs.
+
+### The fix to write
+
+In `trimble_native_converter.py`:
+* Run `_normalize_epoch_lines` **and** the Hatanaka compression in the temp dir.
+* Move **only the final `.NND.Z`** into `output_dir`.
+* Create that final file as the running user (copy content into a fresh file) so container
+  ownership is never inherited.
+
+### Effect on this runbook
+
+* **Precondition A is void** — nothing external to stop.
+* Cleanup is still needed for the ~4,339 existing strays, but it is no longer racing a
+  producer; it should simply follow the code fix so the strays do not come back.
+* Order becomes: **fix `trimble_native_converter.py` → deploy → clean strays → backfill.**
