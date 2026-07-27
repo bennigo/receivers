@@ -211,5 +211,28 @@ than the slow query the ceiling bounds. The **seeder is not exempt** (short
 row-level upserts) — if a `db seed` ever times out on lock contention, that is
 the signal, not a bug to paper over.
 
-**NOT deployed** to rek-d01 — needs a `git pull` + scheduler restart as gpsops.
-Worth a human watching the first `db migrate` after this lands (timeout change).
+**DEPLOYED to rek-d01 2026-07-27 10:26 UTC** (main `fb71719`, pushed to both remotes;
+scheduler restarted as gpsops, `NRestarts=0`). Pre-deploy pipeline verification on the
+laptop, all green:
+
+| Pipeline stage | Result |
+|---|---|
+| Live receiver status/health (ELDC, THOB) | healthy, DB writes fine |
+| Download → archive (THOB 15s_24hr, real FTP) | 4,885,140 B → `…/15s_24hr/raw/THOB202607260000a.sbf.gz` |
+| `file_tracking` + `archive_catalog` writes | row written; catalog 10763 → 10764 (the fan-out path that changed) |
+| RINEX conversion (sbf2rin + header corrections) | `THOB2070.26D.gz`, 1 converted / 0 failed |
+| EPOS dissemination (`--dry-run`) | `pushed=2 cached=0 skipped=0 failed=0` |
+| Dual-write path (mirror leg = 2nd real conn) | fan-out OK; autocommit reaches both legs; id-keyed UPDATE correctly hit primary only |
+
+Post-deploy on rek-d01: `health-query` refuses multi-statement and refuses `CREATE TABLE`
+(read-only); normal reads work; fleet health checks running; **mirroring intact** —
+`block_receiver_status` newest ts identical on rek-d01 and pgdev (281 vs 280 rows in the
+last 10 min = one in-flight write). No mirror failures, no id-keyed guard hits, no
+DB-layer errors in the log; only ordinary unreachable-station HTTP timeouts.
+
+**Still unexercised in production:** `db migrate` (the timeout-exemption path). The next
+migration is the first real test — worth a human watching it.
+
+**New operational knob:** `lock_timeout=30s` now applies to every app connection. Row-level
+contention in the scheduler should stay far below that, but if a legitimate write ever
+aborts on lock timeout, that is where to look (`POSTGRES_LOCK_TIMEOUT=0` disables).
