@@ -10,26 +10,38 @@
 #   - database.cfg is NEVER synced — it contains server-local credentials
 #   - cmp before cp — only touches files that actually changed (avoids
 #     spurious mtime bumps that would trigger unnecessary scheduler reloads)
+#
+# CONVERGENT, not event-driven: the file comparison below runs on EVERY tick,
+# whether or not the fetch brought in new commits. It used to `exit 0` as soon
+# as HEAD == upstream, so files were only ever deployed as a side effect of
+# *pulling* — and any drift that arose some other way (the clone pulled by hand
+# outside this script, an earlier cp that failed, someone editing the deployed
+# copy) was never reconciled. The timer then reported success every 10 minutes
+# forever while production stayed stale: on 2026-07-28 the deployed
+# stations.cfg was still the 2026-07-14 revision, two weeks behind a clone that
+# was perfectly up to date, which silently broke NAMC's downloads (its FTP auth
+# mode is chosen from receiver_firmware_version in stations.cfg).
 
 set -euo pipefail
 
 REPO=/home/bgo/git/gps-config-data
 CONFIG_DIR=/home/gpsops/.config/gpsconfig
 
-# Fail silently if git server unreachable — local config stays in effect
-git -C "$REPO" fetch --quiet 2>/dev/null || exit 0
+# Fail silently if git server unreachable — local config stays in effect.
+# Note we do NOT exit here on failure: a stale clone can still be reconciled
+# against the deployed copy, which is the whole point of being convergent.
+git -C "$REPO" fetch --quiet 2>/dev/null || true
 
 LOCAL=$(git -C "$REPO" rev-parse HEAD)
-REMOTE=$(git -C "$REPO" rev-parse '@{u}' 2>/dev/null) || exit 0
+REMOTE=$(git -C "$REPO" rev-parse '@{u}' 2>/dev/null || echo "$LOCAL")
 
-# Nothing new upstream
-[ "$LOCAL" = "$REMOTE" ] && exit 0
-
-# Fast-forward only — never merge; if diverged, log and bail without touching configs
-if ! git -C "$REPO" pull --ff-only --quiet; then
-    logger -t gps-config-sync \
-        "ERROR: pull failed (repo may have diverged) — skipping sync, local config unchanged"
-    exit 0
+# Only pull when there is something new. A pull failure is logged but must not
+# skip the reconcile — deploying the clone we already have is still correct.
+if [ "$LOCAL" != "$REMOTE" ]; then
+    if ! git -C "$REPO" pull --ff-only --quiet; then
+        logger -t gps-config-sync \
+            "ERROR: pull failed (repo may have diverged) — deploying current clone anyway"
+    fi
 fi
 
 NEW_REV=$(git -C "$REPO" rev-parse --short HEAD)
@@ -54,3 +66,12 @@ done
 if [ ${#CHANGED[@]} -gt 0 ]; then
     logger -t gps-config-sync "Synced to $NEW_REV: ${CHANGED[*]}"
 fi
+
+# Drift alarm: a file that exists in the repo but not in CONFIG_DIR means the
+# deploy never happened at all (fresh host, wrong CONFIG_DIR, permissions).
+# Silence there is indistinguishable from health, so say it out loud.
+for f in "${SYNC_FILES[@]}"; do
+    [ -f "$REPO/$f" ] || continue
+    [ -f "$CONFIG_DIR/$f" ] || logger -t gps-config-sync \
+        "WARNING: $f exists in the repo but not in $CONFIG_DIR — not deployed"
+done
