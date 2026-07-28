@@ -655,6 +655,7 @@ class RawToRinexConverter(ABC):
         start_time = time.time()
         raw_path = Path(raw_file)
         result = ConversionResult(raw_file=raw_path)
+        work_file: Optional[Path] = None
 
         try:
             # Validate input file
@@ -689,6 +690,9 @@ class RawToRinexConverter(ABC):
 
             # Run conversion
             rinex_file = self._run_conversion(raw_path, output_path, observation_date)
+            # Track the in-archive working file so an interrupted chain cannot
+            # strand it (see the cleanup in the finally block below).
+            work_file = rinex_file
 
             # Identity gate BEFORE header corrections: the raw-derived header
             # (first obs epoch + APPROX POSITION) must match the station/date
@@ -755,8 +759,53 @@ class RawToRinexConverter(ABC):
 
         finally:
             result.duration_seconds = time.time() - start_time
+            self._discard_stranded_work_file(work_file, result)
 
         return result
+
+    def _discard_stranded_work_file(
+        self, work_file: Optional[Path], result: "ConversionResult"
+    ) -> None:
+        """Remove the in-archive working file if the chain never finished with it.
+
+        ``_run_conversion`` lands its output in the ARCHIVE directory under the
+        converter's own name (e.g. ``STAN202607260000a.26o``), and the rest of
+        the chain — identity gate, header corrections, gfzrnx canonicalisation,
+        rename-to-convention, Hatanaka — rewrites it in place until
+        ``_apply_hatanaka_compression`` unlinks it and leaves only the final
+        ``.NND.Z``. That is correct on the happy path.
+
+        It is NOT correct when the chain stops early. Any refusal or crash
+        between those two points leaves a raw-named, uncompressed file sitting
+        in the archive's ``rinex/`` directory — ~15-20 MB beside a ~3 MB
+        product. Under the 2026-07 Trimble outage *every* conversion stopped
+        early (EACCES on the previous run's leftover), so ~6,000 of these
+        accumulated across 54 stations and blocked the daily RINEX for weeks.
+
+        Cleaning up here bounds the damage to zero files rather than one per
+        failed attempt. A hard kill still bypasses this — the complete answer is
+        to stage the whole chain outside the archive and publish only the final
+        artifact — but that is a change to every converter, not just this path.
+        """
+        if work_file is None:
+            return
+        # Success: the chain consumed/renamed the working file into the product.
+        if result.success:
+            return
+        try:
+            if work_file.exists() and work_file != result.rinex_file:
+                size = work_file.stat().st_size
+                work_file.unlink()
+                self.logger.warning(
+                    "Discarded stranded intermediate %s (%.1f MB) after a failed "
+                    "conversion — it would otherwise sit in the archive and, being "
+                    "unwritable by a later run under a different uid, block it",
+                    work_file.name,
+                    size / 1048576,
+                )
+        except OSError as exc:
+            # Never let cleanup mask the real conversion failure.
+            self.logger.debug("could not remove stranded %s: %s", work_file, exc)
 
     def convert_batch(
         self,
