@@ -457,15 +457,34 @@ class ReceiversConfig:
             receiver_type: Receiver type (e.g., 'polarx5', 'netr9')
 
         Returns:
-            List of supported session names
+            List of supported session names, in canonical casing.
+
+        Session names are derived from receivers.cfg option keys, and
+        ``configparser`` lower-cases every option name — so ``session_map_1Hz_1hr``
+        reads back as ``session_map_1hz_1hr`` and the session would come out as
+        ``1hz_1hr``. Everything else in the system (the CLI's ``--session``
+        choices, the scheduler, archive path templates) uses ``1Hz_1hr``, so an
+        exact-match check against the raw keys could never match and
+        ``receivers download <PolaRX5 station> --session 1Hz_1hr`` was rejected
+        as "not supported" for the entire Septentrio fleet. Map back through the
+        receiver registry, which holds the canonical spelling.
         """
+        from .receiver_registry import REGISTRY
+
+        canonical = {
+            session.lower(): session
+            for capability in REGISTRY.values()
+            for session in capability.sessions
+        }
+
         receiver_config = self.get_receiver_config(receiver_type)
         sessions = []
         for key in receiver_config:
             if key.startswith("session_map_"):
                 # Extract session name from key (e.g., "session_map_15s_24hr" -> "15s_24hr")
                 session_name = key[len("session_map_") :]
-                sessions.append(session_name)
+                # Unknown sessions (a cfg-only session type) pass through as-is.
+                sessions.append(canonical.get(session_name.lower(), session_name))
         return sessions
 
     def get_session_frequency(self, session: str) -> str:

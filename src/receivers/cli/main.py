@@ -117,7 +117,11 @@ def _validate_station_for_download(
         # receiver level and declares its real sessions per-station via
         # ``remote_sessions``) are passed through rather than rejected.
         supported = receivers_config.get_supported_sessions(receiver_type)
-        if supported and session not in supported:
+        # Case-insensitive: session names originate from configparser keys, which
+        # are lower-cased on read. get_supported_sessions() restores the canonical
+        # spelling for registry-known sessions, but a cfg-only session type would
+        # still come back lower-cased — don't reject a valid station over casing.
+        if supported and session.lower() not in {s.lower() for s in supported}:
             logger.info(
                 f"⏭️  Skipping {station_id}: {session} not supported for {receiver_type} "
                 f"(supported: {', '.join(supported)})"

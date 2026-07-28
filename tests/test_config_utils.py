@@ -178,3 +178,36 @@ def test_unknown_station_returns_none(fake_gps_config, caplog):
 
     cfg = get_station_config("ZZZZ", silent=True)
     assert cfg is None
+
+
+class TestSupportedSessionCasing:
+    """Session names must come back in canonical casing, not configparser's.
+
+    ``configparser`` lower-cases every option name, so ``session_map_1Hz_1hr``
+    in receivers.cfg reads back as ``session_map_1hz_1hr``. Everything else —
+    the CLI's ``--session`` choices, the scheduler, archive path templates —
+    uses ``1Hz_1hr``. Before the fix an exact-match check could never succeed,
+    so ``receivers download <PolaRX5 station> --session 1Hz_1hr`` was rejected
+    as "not supported" for the whole Septentrio fleet.
+    """
+
+    def test_sessions_use_canonical_casing(self):
+        from receivers.config.receivers_config import get_receivers_config
+
+        sessions = get_receivers_config().get_supported_sessions("polarx5")
+        assert "1Hz_1hr" in sessions
+        assert "1hz_1hr" not in sessions
+
+    def test_matches_the_cli_choices(self):
+        """What the gate accepts must be spelled the way argparse demands."""
+        from receivers.config.receivers_config import get_receivers_config
+
+        cli_choices = {"15s_24hr", "1Hz_1hr", "status_1hr"}
+        for receiver_type in ("polarx5", "netr9", "netrs"):
+            sessions = set(get_receivers_config().get_supported_sessions(receiver_type))
+            if not sessions:
+                continue
+            assert sessions <= cli_choices, (
+                f"{receiver_type} reports sessions the CLI would refuse: "
+                f"{sessions - cli_choices}"
+            )
