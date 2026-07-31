@@ -406,9 +406,11 @@ def test_move_device_infers_serial_from_from_station():
     w.find_device_by_serial.assert_called_once_with("gnss_receiver", "5545R50370")
 
 
-def test_move_device_raises_when_neither_serial_nor_from_given():
+def test_move_device_raises_when_no_selector_given():
+    """--id joined --serial/--from-station as a selector (it addresses a device
+    exactly, bypassing TOS's fuzzy serial search)."""
     w = MagicMock()
-    with pytest.raises(CfgOperationError, match="--serial or --from-station"):
+    with pytest.raises(CfgOperationError, match=r"--serial, --id or --from-station"):
         move_device(to="HRAC", writer=w, dry_run=True)
 
 
@@ -2473,3 +2475,269 @@ def test_archive_install_date_raises_on_empty_timeline(monkeypatch):
     w = _archive_writer(monkeypatch, open_receiver_id=None, cutoff=None)
     with pytest.raises(CfgOperationError, match="No archived RINEX"):
         archive_receiver_install_date("KRIV", writer=w)
+
+
+# ---------------------------------------------------------------------------
+# move-device generalised beyond gnss_receiver
+# ---------------------------------------------------------------------------
+
+
+def _generic_move_writer(subtype="antenna", eid=4527):
+    w = MagicMock()
+    w.dry_run = True
+    w.find_station_by_marker.return_value = None  # destination is a location
+    w.find_location_by_name.return_value = 4  # B9
+    w._request.return_value = {
+        "id_entity": eid,
+        "code_entity_subtype": subtype,
+        "attributes": [
+            {"code": "serial_number", "value": "262509", "date_to": None},
+            {"code": "model", "value": "TRM29659.00", "date_to": None},
+        ],
+    }
+    w.get_open_parent_join.return_value = None  # retired: no open parent
+    w.move_device.return_value = {"closed": None, "opened": {}}
+    return w
+
+
+def test_move_device_by_id_moves_a_retired_antenna_to_the_warehouse():
+    """The ISAK case: replace-antenna closed the join, so the old antenna is
+    parentless — and TOS's fuzzy serial search can't find it. --id + --subtype
+    is the exact route, and no verb should be hardcoded to receivers."""
+    w = _generic_move_writer()
+    res = move_device(
+        subtype="antenna",
+        id_entity=4527,
+        to="B9 - Kjallari - Jörð",
+        date="2026-07-30",
+        writer=w,
+        dry_run=True,
+    )
+    assert res.operation == "move"
+    w.move_device.assert_called_once_with(4527, 4, "2026-07-30T12:00:00")
+    # Serial back-filled from the entity for the summary line.
+    assert res.serial == "262509"
+
+
+def test_move_device_by_id_rejects_a_subtype_mismatch():
+    w = _generic_move_writer(subtype="gnss_receiver")
+    with pytest.raises(
+        CfgOperationError, match="is a 'gnss_receiver', not a 'antenna'"
+    ):
+        move_device(subtype="antenna", id_entity=4527, to="B9", writer=w, dry_run=True)
+    w.move_device.assert_not_called()
+
+
+def test_move_device_rejects_both_selectors():
+    w = _generic_move_writer()
+    with pytest.raises(CfgOperationError, match="exactly one of --serial or --id"):
+        move_device(
+            "262509", subtype="antenna", id_entity=4527, to="B9", writer=w, dry_run=True
+        )
+
+
+def test_missing_serial_error_points_at_the_id_escape_hatch():
+    """TOS's serial search can miss an existing device, so 'not found' must not
+    dead-end the operator."""
+    w = _generic_move_writer()
+    w.find_device_by_serial.return_value = None
+    with pytest.raises(CfgOperationError, match=r"--id <ID_ENTITY>"):
+        move_device("262509", subtype="antenna", to="B9", writer=w, dry_run=True)
+
+
+def test_non_receiver_move_to_location_does_not_clear_receiver_cfg(tmp_path):
+    """An antenna leaving a station must not NONE the station's receiver_* keys."""
+    w = _generic_move_writer()
+    w.get_open_parent_join.return_value = {"id": 99, "id_entity_parent": 4346}
+    res = move_device(
+        subtype="antenna",
+        id_entity=4527,
+        to="B9 - Kjallari - Jörð",
+        date="2026-07-30",
+        writer=w,
+        dry_run=False,
+        cfg_path=tmp_path / "stations.cfg",
+    )
+    assert res.cfg_changes == {}
+
+
+# ---------------------------------------------------------------------------
+# The radome follows the antenna
+# ---------------------------------------------------------------------------
+
+
+def _paired_writer(radome_time_to="2026-07-30T12:00:00", extra_radomes=0):
+    """Antenna 4527 + radome 5310 that shared an ISAK join closed at the same
+    instant — the shape replace-antenna leaves behind."""
+    RAD, STATION, B9 = 5310, 4346, 4
+    w = MagicMock()
+    w.dry_run = True
+    w.find_station_by_marker.return_value = None
+    w.find_location_by_name.return_value = B9
+    w.get_open_parent_join.return_value = None
+    w.move_device.return_value = {"closed": None, "opened": {}}
+
+    children = [
+        {"id_entity_child": RAD, "time_to": radome_time_to},
+        {"id_entity_child": 9999, "time_to": "1999-01-01T00:00:00"},  # old radome
+    ]
+    for i in range(extra_radomes):
+        children.append({"id_entity_child": 7000 + i, "time_to": radome_time_to})
+
+    def _hist(eid):
+        eid = int(eid)
+        if eid == STATION:
+            return {"children_connections": children}
+        subtype = "radome" if eid in (RAD, 9999) or eid >= 7000 else "antenna"
+        return {"code_entity_subtype": subtype, "attributes": []}
+
+    w.get_entity_history.side_effect = _hist
+
+    def _req(method, path, **kw):
+        if "parent_history" in path:
+            return [
+                {
+                    "id_entity_parent": STATION,
+                    "time_from": "2002-01-09T00:00:00",
+                    "time_to": "2026-07-30T12:00:00",
+                }
+            ]
+        eid = int(path.rstrip("/").rsplit("/", 1)[-1])
+        return {
+            "id_entity": eid,
+            "code_entity_subtype": _hist(eid)["code_entity_subtype"],
+            "attributes": [
+                {"code": "serial_number", "value": "262509", "date_to": None}
+            ],
+        }
+
+    w._request.side_effect = _req
+    return w
+
+
+def test_moving_an_antenna_takes_its_radome_along():
+    """They are screwed together — leaving the radome at the station it came
+    off is a false record."""
+    w = _paired_writer()
+    res = move_device(
+        subtype="antenna",
+        id_entity=4527,
+        to="B9 - Kjallari - Jörð",
+        date="2026-07-30",
+        writer=w,
+        dry_run=True,
+    )
+    assert res.tos_changes["companion_radome"]["id_entity"] == 5310
+    moved = {c.args[0] for c in w.move_device.call_args_list}
+    assert moved == {4527, 5310}
+
+
+def test_no_radome_moves_the_antenna_alone():
+    w = _paired_writer()
+    res = move_device(
+        subtype="antenna",
+        id_entity=4527,
+        to="B9 - Kjallari - Jörð",
+        date="2026-07-30",
+        with_radome=False,
+        writer=w,
+        dry_run=True,
+    )
+    assert "companion_radome" not in res.tos_changes
+    assert {c.args[0] for c in w.move_device.call_args_list} == {4527}
+
+
+def test_ambiguous_radome_pairing_is_left_alone():
+    """Two radomes closed at the same instant — guessing which travelled with
+    the antenna would write an unfalsifiable location claim."""
+    w = _paired_writer(extra_radomes=1)
+    res = move_device(
+        subtype="antenna", id_entity=4527, to="B9", date="2026-07-30", writer=w
+    )
+    assert "companion_radome" not in res.tos_changes
+    assert {c.args[0] for c in w.move_device.call_args_list} == {4527}
+
+
+def test_radome_with_a_different_join_period_is_not_a_companion():
+    w = _paired_writer(radome_time_to="2019-01-01T00:00:00")
+    res = move_device(
+        subtype="antenna", id_entity=4527, to="B9", date="2026-07-30", writer=w
+    )
+    assert "companion_radome" not in res.tos_changes
+
+
+def test_moving_a_receiver_never_looks_for_a_radome():
+    """The companion lookup is antenna-only — a receiver move must not drag a
+    radome that merely shares a close date."""
+    w = _paired_writer()
+    w.get_entity_history.side_effect = lambda eid: {
+        "code_entity_subtype": "gnss_receiver",
+        "attributes": [],
+        "children_connections": [],
+    }
+    w._request.side_effect = lambda method, path, **kw: (
+        []
+        if "parent_history" in path
+        else {
+            "id_entity": 4527,
+            "code_entity_subtype": "gnss_receiver",
+            "attributes": [],
+        }
+    )
+    move_device(
+        subtype="gnss_receiver", id_entity=4527, to="B9", date="2026-07-30", writer=w
+    )
+    assert {c.args[0] for c in w.move_device.call_args_list} == {4527}
+
+
+def test_ensure_port_forwards_accepts_a_station_marker(tmp_path, monkeypatch, capsys):
+    """Every other probe verb resolves the router from stations.cfg; making this
+    one require --host meant hand-copying router_ip the config already has."""
+    import argparse
+
+    from receivers.cli.cfg import cmd_cfg_ensure_port_forwards
+
+    cfg = tmp_path / "stations.cfg"
+    cfg.write_text("[ISAK]\nrouter_ip = ISAK.gps.vedur.is\n", encoding="utf-8")
+    monkeypatch.setenv("GPS_CONFIG_DATA_REPO", str(tmp_path))
+
+    calls = {}
+
+    def _fake_list(host, **kw):
+        calls["host"] = host
+        raise RuntimeError("stop after host resolution")
+
+    monkeypatch.setattr(
+        "receivers.cfg.telemetry_probe.list_port_forwards", _fake_list, raising=False
+    )
+    args = argparse.Namespace(
+        station="ISAK",
+        host=None,
+        dest_ip=None,
+        ports=None,
+        username=None,
+        password=None,
+        no_dry_run=False,
+        json=False,
+    )
+    with pytest.raises(RuntimeError, match="stop after host resolution"):
+        cmd_cfg_ensure_port_forwards(args)
+    assert calls["host"] == "ISAK.gps.vedur.is"
+
+
+def test_ensure_port_forwards_needs_a_station_or_host(capsys):
+    import argparse
+
+    from receivers.cli.cfg import cmd_cfg_ensure_port_forwards
+
+    args = argparse.Namespace(
+        station=None,
+        host=None,
+        dest_ip=None,
+        ports=None,
+        username=None,
+        password=None,
+        no_dry_run=False,
+        json=False,
+    )
+    assert cmd_cfg_ensure_port_forwards(args) == 2

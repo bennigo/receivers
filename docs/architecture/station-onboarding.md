@@ -97,13 +97,101 @@ receivers cfg add-antenna --station VOTT --model SEPPOLANT_X_MF \
     --antenna-height 0.0083 --date-start 2026-05-01 --no-dry-run
 ```
 
-- `--model` takes the IGS name or a known alias (e.g. `SEPPOLANT_X_MF`). If TOS rejects
-  the model, it isn't in `tostools.standards.igs_equipment.ANTENNA_IGS` yet — add it
-  there (this is how `SEPPOLANT_X_MF`/`_SF`, `AS-ANT3BCAL` got in).
+- `--model` must match an accepted IGS name **exactly** (case-insensitively). The name is
+  written verbatim into TOS and from there into every RINEX header, so a near-miss is not
+  a cosmetic problem. `ANTENNA_IGS`/`RADOME_IGS` are a hand-maintained subset of IGS
+  `rcvr_ant.tab` covering what the fleet runs, so check before you type:
+
+  ```bash
+  receivers cfg add-antenna --list-models      # antennas + radomes, offline, no TOS call
+  receivers cfg replace-antenna --list-models  # same
+  receivers cfg replace-radome --list-models   # radomes only
+  ```
+
+  The flag short-circuits before the station lookup, so it needs no `--station` and no
+  credentials — which matters because the verbs resolve the station against TOS *before*
+  validating the model, so you cannot otherwise provoke the "known models" error offline.
+  An unlisted model means adding it to `tostools/standards/igs_equipment.py` (this is how
+  `SEPPOLANT_X_MF`/`_SF` and `AS-ANT3BCAL` got in) — not a different flag.
 - **Unknown serial?** Omit `--serial`; you get a synthetic `antenna-<STID>-<YYYYMMDD>`
   placeholder (mirrors the fleet `radome-REYK-20130502` convention).
 - `--antenna-height` is the ARP height (RINEX `ANTENNA: DELTA H`). This belongs to the
   antenna, **not** the monument — see the monument_height gotcha below.
+
+`add-antenna` is **intake only**: it refuses when the station already has an open antenna,
+because two open antennas make `current_session()` — and every RINEX header, the stream
+SKL and each station.info line derived from it — ambiguous. To swap one, use
+`replace-antenna` (next).
+
+#### 2b. Swapping an antenna later — `replace-antenna`
+
+```bash
+# Same radome re-fitted to the new antenna (the usual field case):
+receivers cfg replace-antenna --station ISAK --model TRM115000.10 \
+    --serial 1441234567 --antenna-height 0.0083 --date 2026-07-30 \
+    --participants bgo@vedur.is --no-dry-run
+```
+
+Retires the open antenna (closes its join at `--date`), creates + joins the new one,
+writes a *Breyting* vitjun, and updates `stations.cfg` — `antenna_type`,
+`antenna_serial`, `antenna_height`, `rinex_config_valid_from`, plus `antenna_radome`
+only when `--radome` was given. Retire-before-create is deliberate: a mid-run failure
+leaves the station momentarily antenna-less (honest, recoverable) rather than with two
+open antennas.
+
+- **The radome follows the antenna.** It is screwed on, so ~95% of swaps take both down
+  and put both up. Default (no flag): the old radome's join is closed and a **new** radome
+  device is created carrying the **same model**. Four ways to say it:
+
+  | Flags | Effect |
+  |-------|--------|
+  | *(none)* | same model, new unit — model carried forward from the old radome |
+  | `--radome CODE` | a different radome type went on |
+  | `--radome NONE` | the new antenna is bare |
+  | `--keep-radome` | the same physical radome was re-fitted; TOS and cfg untouched |
+
+  The carried-forward model is an *inferred* write, so it's named in the dry-run plan
+  (`SCIS (new unit, model carried forward)`) — check it before committing. With no radome
+  in TOS **and** no `--radome`, nothing is created and cfg `antenna_radome` is left alone:
+  the run made no radome decision, and asserting `NONE` from a TOS gap would clobber a
+  real cfg value on a station whose radome was simply never registered.
+- **`--antenna-height` is the new ARP**; the cfg `antenna_height` composite is derived as
+  ARP + the open monument's `monument_height` (gotcha B below). With no monument to read,
+  the verb **raises** rather than writing a bare ARP — override via `--cfg-antenna-height`.
+- `--warehouse` reparents the old antenna **and the old radome** (they come off the mast
+  together); **off by default**, because retired kit is as often scrapped as returned and a
+  wrong location claim is indistinguishable from a real one afterwards. `--old-status
+  "bilað"` records why it came off.
+- Refuses when the station has **two** open antennas (a legacy `add-antenna --force`, or a
+  web-UI edit). Clear the stale one first:
+  `receivers cfg close-join --station ISAK --subtype antenna --date … --no-dry-run`.
+
+#### 2c. Radome only — `replace-radome`
+
+Antenna and radome are physically joined but modelled as independent TOS device children,
+so a radome does get replaced alone: cracked, snow-damaged, or upgraded to a different type
+over the same antenna.
+
+```bash
+receivers cfg replace-radome --station ISAK --model SNOW \
+    --date 2026-07-30 --participants bgo@vedur.is --no-dry-run
+```
+
+Retires the open radome, creates + joins the new one, writes a vitjun
+(*"Skipt um raðhlíf: SCIS → SNOW"*), and updates cfg `antenna_radome` — **only** that field:
+a radome carries no ARP offset, so swapping one cannot change the mark→ARP composite, and
+`antenna_height` is deliberately not recomputed.
+
+- With **no** open radome it still creates and joins one — the "a radome was fitted where
+  there wasn't one" case, mirroring how `replace-modem` handles a station with no modem.
+- `--model NONE` is the inverse: old join closed, nothing created, cfg records `NONE`.
+- Refuses on two open radomes, pointing at `close-join --subtype radome`.
+
+`close-join` is the non-destructive sibling of `delete-join` — it ends a join that was
+real and is now over (sets `time_to`, history preserved), where `delete-join` removes a
+row that should never have existed. Prefer `--station/--subtype`, which resolves the
+device *and* verifies the join is open; `--id ID_CONNECTION` patches a row directly with
+no open-check (TOS exposes no get-join-by-id), so inspect it with `tos device show` first.
 
 ### 3. Monument — `add-monument`
 

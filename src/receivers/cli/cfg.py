@@ -51,6 +51,96 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _resolve_warehouse_arg(value):
+    """Map the ``--warehouse`` arg to a warehouse name, or ``None`` for "don't".
+
+    ``nargs="?" const=""`` gives three distinguishable states: flag absent
+    (``None`` → leave the device parentless), bare ``--warehouse`` (``""`` →
+    the fleet default, so nobody has to retype "B9 - Kjallari - Jörð" with its
+    accents), or an explicit name.
+    """
+    if value is None:
+        return None
+    if value == "":
+        from ..cfg.operations import DEFAULT_WAREHOUSE
+
+        return DEFAULT_WAREHOUSE
+    return value
+
+
+def _add_list_models_flag(parser: argparse.ArgumentParser, *, what: str) -> None:
+    """Add ``--list-models`` to a verb that validates an IGS equipment name.
+
+    ``ANTENNA_IGS`` / ``RADOME_IGS`` are a hand-maintained subset of IGS
+    ``rcvr_ant.tab`` covering what the fleet actually runs, so "is my model
+    accepted?" is a real question with no other offline answer — the verbs
+    resolve the station against TOS *before* validating the model, so you
+    cannot even provoke the error message without network and credentials.
+    """
+    parser.add_argument(
+        "--list-models",
+        dest="list_models",
+        action="store_true",
+        help=(
+            f"Print the accepted IGS {what} names and exit. Offline — no TOS "
+            f"call, no other flags needed. An unlisted model means adding it "
+            f"to tostools/standards/igs_equipment.py, not a different flag."
+        ),
+    )
+
+
+def _print_igs_models(*, antennas: bool = True, radomes: bool = True) -> int:
+    """Print the IGS lookup tables the ``--model``/``--radome`` flags validate against.
+
+    Reuses ``tostools.device._format_known_models`` so this output is the same
+    text an operator gets in the ValueError on a bad model — one rendering, so
+    the two can't drift.
+    """
+    from tostools.device import _format_known_models
+    from tostools.standards.igs_equipment import ANTENNA_IGS, RADOME_IGS
+
+    blocks = []
+    if antennas:
+        blocks.append(
+            _format_known_models(
+                ANTENNA_IGS, "Accepted antenna models (aliases in parentheses):"
+            )
+        )
+    if radomes:
+        blocks.append(
+            _format_known_models(
+                RADOME_IGS, "Accepted radome codes (aliases in parentheses):"
+            )
+        )
+    print("\n\n".join(blocks))
+    print(
+        "\nNot the full IGS rcvr_ant.tab — a hand-maintained subset of what the "
+        "fleet runs.\nTo add one: tostools/standards/igs_equipment.py "
+        "(how SEPPOLANT_X_MF/_SF and AS-ANT3BCAL got in)."
+    )
+    return 0
+
+
+def _require_args_or_exit(args, *pairs: tuple) -> Optional[int]:
+    """Enforce flags argparse can't mark ``required`` because ``--list-models`` skips them.
+
+    Each pair is ``(dest, flag)`` — the flag spelling is carried explicitly
+    because several dests differ from their flag (``new_model`` ↔ ``--model``),
+    and an error naming a flag that doesn't exist is worse than no error.
+    Returns an exit code to propagate when something is missing, else ``None``.
+    """
+    import sys
+
+    missing = [flag for dest, flag in pairs if not getattr(args, dest, None)]
+    if not missing:
+        return None
+    print(
+        f"❌ missing required argument(s): {', '.join(missing)}",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def _add_global_flags(
     parser: argparse.ArgumentParser, *, swap_warning: bool = False
 ) -> None:
@@ -2655,6 +2745,20 @@ def cmd_cfg_add_antenna(args) -> int:
 
     from ..cfg.operations import CfgOperationError, add_antenna
 
+    # Before the owner gate and any TOS call — --list-models must work offline.
+    if getattr(args, "list_models", False):
+        return _print_igs_models()
+    missing = _require_args_or_exit(args, ("model", "--model"))
+    if missing is not None:
+        return missing
+    if not args.station and not args.warehouse:
+        print(
+            "❌ missing required argument(s): --station (install) or "
+            "--warehouse (intake)",
+            file=sys.stderr,
+        )
+        return 2
+
     owner = args.owner or "Jarðeðlismælihópur"
 
     # Owner gate — same OwnersCache check as add-receiver.
@@ -2685,9 +2789,11 @@ def cmd_cfg_add_antenna(args) -> int:
         result = add_antenna(
             writer,
             station_id=args.station,
+            warehouse=args.warehouse,
             model=args.model,
             radome=args.radome,
             serial=args.serial,
+            radome_serial=args.radome_serial,
             antenna_height=args.antenna_height,
             owner=owner,
             date_start=args.date_start,
@@ -4492,23 +4598,48 @@ Examples:
   # Choke-ring with a radome and a real serial:
   receivers cfg add-antenna --station REYK --model LEIAR25.R4 \\
       --radome LEIT --serial 725281 --no-dry-run
+
+  # Which model names are accepted? (offline, no TOS call)
+  receivers cfg add-antenna --list-models
 """,
     )
-    add_ant.add_argument(
+    _add_list_models_flag(add_ant, what="antenna and radome")
+    add_ant_dest = add_ant.add_mutually_exclusive_group()
+    add_ant_dest.add_argument(
         "--station",
-        required=True,
         metavar="STID",
         help="4-char station marker to install the antenna at (must exist in TOS).",
     )
+    add_ant_dest.add_argument(
+        "--warehouse",
+        metavar="LOCATION",
+        help=(
+            "WAREHOUSE INTAKE instead of a station install: register the "
+            "antenna (and its radome) against this location, e.g. "
+            '"B9 - Kjallari - Jörð". The antenna arrives with the radome '
+            "screwed on, so both are taken in together. `cfg replace-antenna` "
+            "later matches them BY SERIAL and reparents them to the station, "
+            "so --serial (and --radome-serial) are required here."
+        ),
+    )
     add_ant.add_argument(
         "--model",
-        required=True,
         help="Antenna model (IGS name or known alias, e.g. SEPPOLANT_X_MF).",
     )
     add_ant.add_argument(
         "--radome",
         default="NONE",
         help="Radome IGS code (default: NONE → no radome device created).",
+    )
+    add_ant.add_argument(
+        "--radome-serial",
+        dest="radome_serial",
+        help=(
+            "Radome serial. Omit at a station for the fleet convention (a "
+            "synthetic 'radome-<STID>-<YYYYMMDD>'); REQUIRED with --warehouse "
+            "alongside --radome, since a synthetic serial cannot be matched at "
+            "install time."
+        ),
     )
     add_ant.add_argument(
         "--serial",
@@ -5207,6 +5338,39 @@ Examples:
   # Move to a non-default warehouse:
   receivers cfg move-device --serial XYZ --to "Reykjavík - tæknibílskúr"
 """,
+    )
+    move.add_argument(
+        "--subtype",
+        default="gnss_receiver",
+        help=(
+            "TOS device subtype to move (gnss_receiver, antenna, radome, "
+            "monument, modem_gsm, sim_card …). Default: gnss_receiver. Any "
+            "device can be moved — including one already retired (no open "
+            "parent), which is how you file a unit into the warehouse after "
+            "the fact."
+        ),
+    )
+    move.add_argument(
+        "--id",
+        dest="id_entity",
+        type=int,
+        metavar="ID_ENTITY",
+        help=(
+            "Address the device by TOS id_entity instead of --serial. EXACT: "
+            "--serial goes through TOS's fuzzy /basic_search/, which has been "
+            "observed to miss an existing open serial. Get ids from "
+            "`tos station show <STID> --all`."
+        ),
+    )
+    move.add_argument(
+        "--no-radome",
+        dest="no_radome",
+        action="store_true",
+        help=(
+            "Move the antenna ALONE. By default a --subtype antenna move also "
+            "moves the radome that shared its station join — they are screwed "
+            "together and travel as one assembly. Ignored for other subtypes."
+        ),
     )
     move.add_argument(
         "--serial",
@@ -6216,13 +6380,25 @@ Examples:
   # Only the control port (what the PolaRX5 probe needs), explicit dest IP:
   receivers cfg ensure-port-forwards --host 10.6.1.228 \\
       --dest-ip 192.168.100.60 --ports control --no-dry-run
+
+  # By station marker — router_ip resolved from stations.cfg:
+  receivers cfg ensure-port-forwards ISAK
 """,
     )
     epf.add_argument(
+        "station",
+        nargs="?",
+        metavar="STID",
+        help=(
+            "4-char station marker; the router host is read from that "
+            "station's stations.cfg router_ip. Alternative to --host, which "
+            "stays available for bench units and stations not yet in cfg."
+        ),
+    )
+    epf.add_argument(
         "--host",
-        required=True,
         metavar="IP[:PORT]",
-        help="Router IP/hostname (the Teltonika unit).",
+        help="Router IP/hostname (the Teltonika unit). Optional when STID is given.",
     )
     epf.add_argument(
         "--dest-ip",
@@ -6433,6 +6609,466 @@ Examples:
         help="Emit a structured JSON summary.",
     )
     dj.set_defaults(func=cmd_cfg_delete_join)
+
+    # ---- close-join ------------------------------------------------------
+    cj = cfg_subparsers.add_parser(
+        "close-join",
+        help="Close an OPEN join (set time_to) — the non-destructive delete-join",
+        description=(
+            "End a device↔station join that was real and is now over: the "
+            "device left the site. Sets `time_to` on the open join row, "
+            "preserving history — unlike `delete-join`, which removes a row "
+            "that should never have existed. Use it to retire an antenna, "
+            "radome, receiver, modem or SIM from a station without installing "
+            "a replacement, or to clean up a duplicate open join before "
+            "`cfg replace-antenna` will run."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Retire ISAK's open antenna (preferred form — resolves + verifies the join):
+  receivers cfg close-join --station ISAK --subtype antenna --date 2026-07-30
+  receivers cfg close-join --station ISAK --subtype antenna --date 2026-07-30 --no-dry-run
+
+  # Same, but return the unit to the B9 warehouse instead of leaving it parentless:
+  receivers cfg close-join --station ISAK --subtype antenna --warehouse "B9 - Kjallari - Jörð"
+
+  # Close one specific join row (no open-check — inspect it first):
+  tos device show --serial 262509            # read the id_connection
+  receivers cfg close-join --id 27836 --date 2026-07-30 --no-dry-run
+""",
+    )
+    cj_target = cj.add_mutually_exclusive_group(required=True)
+    cj_target.add_argument(
+        "--station",
+        metavar="MARKER",
+        help="4-char marker whose open --subtype child to retire.",
+    )
+    cj_target.add_argument(
+        "--id",
+        dest="id_connection",
+        type=int,
+        metavar="ID_CONNECTION",
+        help=(
+            "Join row id (the `id` in parent_history). TOS has no "
+            "get-join-by-id endpoint, so NO open-check is performed — inspect "
+            "the row first."
+        ),
+    )
+    cj.add_argument(
+        "--subtype",
+        help=(
+            "TOS device subtype to close (antenna, radome, gnss_receiver, "
+            "modem_gsm, sim_card, monument …). Required with --station."
+        ),
+    )
+    cj.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD[THH:MM:SS]",
+        help=(
+            "When the join ended. Omitted → now; bare date → 12:00 noon; "
+            "full ISO datetime → exact moment."
+        ),
+    )
+    cj.add_argument(
+        "--warehouse",
+        nargs="?",
+        const="",
+        metavar="LOCATION",
+        help=(
+            "Reparent the device to a warehouse instead of leaving it "
+            "parentless (--station mode only). Bare --warehouse uses the fleet "
+            "default from [tos] default_warehouse."
+        ),
+    )
+    cj.add_argument(
+        "--no-dry-run",
+        action="store_true",
+        help="Commit the write; without this flag the payload is logged only.",
+    )
+    cj.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a structured JSON summary.",
+    )
+    cj.set_defaults(func=cmd_cfg_close_join)
+
+    # ---- replace-antenna -------------------------------------------------
+    ra = cfg_subparsers.add_parser(
+        "replace-antenna",
+        help="Swap a station's GNSS antenna — TOS Pattern 2 + stations.cfg",
+        description=(
+            "Record an antenna replacement. Retires the station's open antenna "
+            "(closes its join at --date), creates and joins the new one, writes "
+            "a Breyting vitjun, and updates stations.cfg (antenna_type, "
+            "antenna_serial, antenna_height, rinex_config_valid_from, and "
+            "antenna_radome when --radome is given). The counterpart of "
+            "`add-antenna`, which is intake-only and refuses when an antenna is "
+            "already open. Defaults to dry-run."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Radome: it is screwed to the antenna, so it FOLLOWS the antenna by default —
+the old radome's join is closed and a new radome device is created carrying the
+same model. That is the ~95%% field case (antenna + radome down, antenna +
+radome up). Three ways to say otherwise:
+  (flag omitted)   same model, NEW unit — model carried forward from the old one
+  --radome CODE    a different radome type went on
+  --radome NONE    the new antenna is bare
+  --keep-radome    the SAME physical radome was re-fitted; TOS left untouched
+Replacing ONLY the radome (antenna stays) is `cfg replace-radome`.
+
+Height: --antenna-height is the NEW antenna's ARP height (TOS
+antenna.antenna_height / RINEX 'ANTENNA: DELTA H'). The stations.cfg
+antenna_height is a COMPOSITE (ARP + monument offset) and is derived from the
+station's open monument; override with --cfg-antenna-height.
+
+Examples:
+  # Antenna + radome both swapped, radome same type as before (dry-run, commit):
+  receivers cfg replace-antenna --station ISAK \\
+      --model TRM115000.10 --serial 1441234567 \\
+      --antenna-height 0.0083 --date 2026-07-30
+
+  receivers cfg replace-antenna --station ISAK \\
+      --model TRM115000.10 --serial 1441234567 \\
+      --antenna-height 0.0083 --date 2026-07-30 \\
+      --participants bgo@vedur.is --no-dry-run
+
+  # New antenna, the old radome re-fitted onto it:
+  receivers cfg replace-antenna --station ISAK --model TRM115000.10 \\
+      --serial 1441234567 --antenna-height 0.0083 --keep-radome
+
+  # New antenna AND a different radome type, old units returned to B9, cfg
+  # written to gps-config-data and pushed:
+  receivers cfg replace-antenna --station ISAK --model TRM115000.10 \\
+      --serial 1441234567 --radome SNOW --antenna-height 0.0083 \\
+      --warehouse "B9 - Kjallari - Jörð" --old-status "bilað" \\
+      --global --push --no-dry-run
+
+  # Which model names are accepted? (offline, no TOS call)
+  receivers cfg replace-antenna --list-models
+""",
+    )
+    _add_list_models_flag(ra, what="antenna and radome")
+    ra.add_argument(
+        "--station",
+        metavar="STID",
+        help="4-char station marker whose antenna is being replaced.",
+    )
+    ra.add_argument(
+        "--model",
+        dest="new_model",
+        help=(
+            "New antenna model. Must match an accepted IGS name EXACTLY "
+            "(case-insensitively) — see --list-models. e.g. TRM115000.10."
+        ),
+    )
+    ra.add_argument(
+        "--serial",
+        dest="new_serial",
+        help=(
+            "New antenna serial. Omit when unknown — a synthetic "
+            "'antenna-<STID>-<YYYYMMDD>' placeholder is generated."
+        ),
+    )
+    ra.add_argument(
+        "--antenna-height",
+        dest="antenna_height",
+        metavar="METRES",
+        help=(
+            "New antenna ARP height in metres (RINEX 'ANTENNA: DELTA H'). "
+            "Required — a swap recorded without it would default to 0.0."
+        ),
+    )
+    ra_radome = ra.add_mutually_exclusive_group()
+    ra_radome.add_argument(
+        "--radome",
+        help=(
+            "New radome IGS code, or NONE if the antenna is now bare. OMIT to "
+            "carry the old radome's model forward as a NEW unit — the 95%% "
+            "case, where antenna and radome come down and go up together."
+        ),
+    )
+    ra.add_argument(
+        "--radome-serial",
+        dest="radome_serial",
+        help=(
+            "Serial of the NEW radome. Omit for the fleet convention — a "
+            "synthetic 'radome-<STID>-<YYYYMMDD>' placeholder. Applies to the "
+            "carried-forward radome too, not just an explicit --radome."
+        ),
+    )
+    ra_radome.add_argument(
+        "--keep-radome",
+        dest="keep_radome",
+        action="store_true",
+        help=(
+            "The SAME physical radome was unscrewed from the old antenna and "
+            "re-fitted to the new one: leave its TOS entity and join untouched "
+            "and don't rewrite cfg antenna_radome."
+        ),
+    )
+    ra.add_argument(
+        "--cfg-antenna-height",
+        dest="cfg_antenna_height",
+        metavar="METRES",
+        help=(
+            "Override the stations.cfg composite height (antenna ARP + "
+            "monument offset). Default: derived from the open monument child."
+        ),
+    )
+    ra.add_argument(
+        "--rinex-valid-from",
+        dest="rinex_valid_from",
+        metavar="YYYY-MM-DD",
+        help=(
+            "Override stations.cfg rinex_config_valid_from. Default: the swap "
+            "date if it was at midnight, else the next day (first full day on "
+            "the new antenna)."
+        ),
+    )
+    ra.add_argument(
+        "--owner",
+        help=(
+            "Owner label for the new device(s); must match the tostools "
+            "OwnersCache. Default: 'Jarðeðlismælihópur'."
+        ),
+    )
+    ra.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD[THH:MM:SS]",
+        help=(
+            "When the swap happened. Omitted → now; bare date → 12:00 noon "
+            "(pass the same date to move-device/add-monument so the devices "
+            "land in one TOS session); full ISO datetime → exact moment."
+        ),
+    )
+    ra.add_argument(
+        "--warehouse",
+        nargs="?",
+        const="",
+        metavar="LOCATION",
+        help=(
+            "Reparent the OLD antenna (and the old radome — they come off the "
+            "mast together) to a warehouse. Bare --warehouse uses the fleet "
+            "default from [tos] default_warehouse; pass a name to override. "
+            "OFF when the flag is absent: a retired antenna is as often "
+            "scrapped or left on site as returned, and a wrong location claim "
+            "is indistinguishable from a real one afterwards."
+        ),
+    )
+    ra.add_argument(
+        "--old-status",
+        dest="old_status",
+        metavar="VALUE",
+        help="Pattern-2 transition on the OLD antenna's `status` (e.g. 'bilað').",
+    )
+    ra.add_argument(
+        "--old-comment",
+        dest="old_comment",
+        metavar="TEXT",
+        help="Pattern-2 transition on the OLD antenna's `comment`.",
+    )
+    ra.add_argument(
+        "--comment",
+        help="Optional comment attribute on the NEW antenna.",
+    )
+    ra.add_argument(
+        "--vitjun",
+        metavar="TEXT",
+        help=(
+            "Override the 'Framkvæmt' text. Default: 'Skipt um loftnet: "
+            "<old model> <old serial> → <new model> <new serial>'."
+        ),
+    )
+    ra.add_argument(
+        "--participants",
+        metavar="EMAIL[,EMAIL...]",
+        help="Participant emails for the vitjun (e.g. bgo@vedur.is).",
+    )
+    ra.add_argument(
+        "--no-vitjun",
+        dest="no_vitjun",
+        action="store_true",
+        help="Skip the vitjun step entirely.",
+    )
+    ra.add_argument(
+        "--no-cfg",
+        dest="no_cfg",
+        action="store_true",
+        help="Skip the stations.cfg write entirely.",
+    )
+    ra.add_argument(
+        "--cfg-path",
+        dest="cfg_path",
+        help=(
+            "Override the stations.cfg location. Default: "
+            "$GPS_CONFIG_DATA_REPO/stations.cfg if set, else the "
+            "gps_parser-resolved deployed copy."
+        ),
+    )
+    ra.add_argument(
+        "--no-dry-run",
+        action="store_true",
+        help="Commit the writes; without this flag, payloads are logged only.",
+    )
+    ra.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a structured JSON summary instead of plain text.",
+    )
+    _add_global_flags(ra, swap_warning=True)
+    ra.set_defaults(func=cmd_cfg_replace_antenna)
+
+    # ---- replace-radome --------------------------------------------------
+    rrad = cfg_subparsers.add_parser(
+        "replace-radome",
+        help="Swap a station's radome only — TOS Pattern 2 + stations.cfg",
+        description=(
+            "Record a radome replacement with the antenna left in place. The "
+            "radome is screwed onto the antenna and usually travels with it — "
+            "when both change, use `replace-antenna`, which handles the radome "
+            "in the same command. This verb is for the radome-only case: "
+            "cracked, snow-damaged, or upgraded to a different type over the "
+            "same antenna. Retires the open radome, creates and joins the new "
+            "one, writes a Breyting vitjun, and updates stations.cfg "
+            "antenna_radome. Defaults to dry-run."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+With no open radome the verb still creates and joins the new one — the "a radome
+was fitted where there wasn't one" case. Use --model NONE for the inverse: the
+old join is closed, nothing is created, and cfg records NONE.
+
+antenna_height is deliberately NOT recomputed — a radome carries no ARP offset,
+so swapping one cannot change the mark→ARP composite.
+
+Examples:
+  # Cracked SCIS replaced like-for-like:
+  receivers cfg replace-radome --station ISAK --model SCIS --date 2026-07-30
+  receivers cfg replace-radome --station ISAK --model SCIS --date 2026-07-30 \\
+      --participants bgo@vedur.is --no-dry-run
+
+  # Upgraded to a snow radome, old one returned to B9:
+  receivers cfg replace-radome --station ISAK --model SNOW \\
+      --warehouse "B9 - Kjallari - Jörð" --no-dry-run
+
+  # Radome removed, antenna now bare:
+  receivers cfg replace-radome --station ISAK --model NONE --no-dry-run
+
+  # Which radome codes are accepted? (offline, no TOS call)
+  receivers cfg replace-radome --list-models
+""",
+    )
+    _add_list_models_flag(rrad, what="radome")
+    rrad.add_argument(
+        "--station",
+        metavar="STID",
+        help="4-char station marker whose radome is being replaced.",
+    )
+    rrad.add_argument(
+        "--model",
+        dest="new_model",
+        help=(
+            "New radome code. Must match an accepted IGS code EXACTLY "
+            "(case-insensitively) — see --list-models. e.g. SCIS, LEIT, SNOW. "
+            "NONE records removal."
+        ),
+    )
+    rrad.add_argument(
+        "--serial",
+        dest="new_serial",
+        help=(
+            "Radome serial. Omit for the fleet convention — a synthetic "
+            "'radome-<STID>-<YYYYMMDD>' placeholder (radomes are rarely "
+            "serialised)."
+        ),
+    )
+    rrad.add_argument(
+        "--owner",
+        help=(
+            "Owner label for the new radome; must match the tostools "
+            "OwnersCache. Default: 'Jarðeðlismælihópur'."
+        ),
+    )
+    rrad.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD[THH:MM:SS]",
+        help=(
+            "When the swap happened. Omitted → now; bare date → 12:00 noon; "
+            "full ISO datetime → exact moment."
+        ),
+    )
+    rrad.add_argument(
+        "--warehouse",
+        nargs="?",
+        const="",
+        metavar="LOCATION",
+        help=(
+            "Reparent the OLD radome to a warehouse. Bare --warehouse uses the "
+            "fleet default from [tos] default_warehouse; pass a name to "
+            "override. Off when absent — a retired radome is as often scrapped "
+            "as returned."
+        ),
+    )
+    rrad.add_argument(
+        "--old-status",
+        dest="old_status",
+        metavar="VALUE",
+        help="Pattern-2 transition on the OLD radome's `status` (e.g. 'bilað').",
+    )
+    rrad.add_argument(
+        "--old-comment",
+        dest="old_comment",
+        metavar="TEXT",
+        help="Pattern-2 transition on the OLD radome's `comment`.",
+    )
+    rrad.add_argument(
+        "--comment",
+        help="Optional comment attribute on the NEW radome.",
+    )
+    rrad.add_argument(
+        "--vitjun",
+        metavar="TEXT",
+        help=(
+            "Override the 'Framkvæmt' text. Default: 'Skipt um raðhlíf: "
+            "<old> → <new>'."
+        ),
+    )
+    rrad.add_argument(
+        "--participants",
+        metavar="EMAIL[,EMAIL...]",
+        help="Participant emails for the vitjun (e.g. bgo@vedur.is).",
+    )
+    rrad.add_argument(
+        "--no-vitjun",
+        dest="no_vitjun",
+        action="store_true",
+        help="Skip the vitjun step entirely.",
+    )
+    rrad.add_argument(
+        "--no-cfg",
+        dest="no_cfg",
+        action="store_true",
+        help="Skip the stations.cfg antenna_radome write.",
+    )
+    rrad.add_argument(
+        "--cfg-path",
+        dest="cfg_path",
+        help="Override the stations.cfg location.",
+    )
+    rrad.add_argument(
+        "--no-dry-run",
+        action="store_true",
+        help="Commit the writes; without this flag, payloads are logged only.",
+    )
+    rrad.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a structured JSON summary instead of plain text.",
+    )
+    _add_global_flags(rrad, swap_warning=True)
+    rrad.set_defaults(func=cmd_cfg_replace_radome)
 
 
 def _parse_attr_pairs(pairs: Optional[List[str]]) -> Dict[str, Optional[str]]:
@@ -6742,6 +7378,9 @@ def cmd_cfg_move_device(args) -> int:
         )
         result = move_device(
             args.serial,
+            subtype=args.subtype,
+            id_entity=args.id_entity,
+            with_radome=not args.no_radome,
             to=args.to,
             date=_normalise_date_arg(args.date),
             from_station=args.from_station,
@@ -7185,7 +7824,28 @@ def cmd_cfg_ensure_port_forwards(args) -> int:
         list_port_forwards,
     )
 
+    # Accept a station marker as well as --host: every other probe verb
+    # resolves the router from stations.cfg, and making this one the exception
+    # meant hand-copying router_ip for a station the config already describes.
     host = args.host
+    if not host:
+        if not args.station:
+            print(
+                "❌ pass a station marker (e.g. `ISAK`) or --host IP[:PORT]",
+                file=sys.stderr,
+            )
+            return 2
+        from ..cfg.operations import _station_router_ip
+
+        host = _station_router_ip(args.station)
+        if not host:
+            print(
+                f"❌ no router_ip in stations.cfg for {args.station!r} — "
+                f"pass --host explicitly.",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"   host {host} (from stations.cfg [{args.station}] router_ip)")
     dry_run = not args.no_dry_run
 
     # Resolve the receiver's LAN dest IP: explicit flag wins; else infer from an
@@ -7391,6 +8051,141 @@ def cmd_cfg_delete_join(args) -> int:
     dry_run = not args.no_dry_run
     result = delete_join(args.id, dry_run=dry_run)
     _print_result_summary(result, json_output=args.json, dry_run=dry_run)
+    return 0
+
+
+def cmd_cfg_close_join(args) -> int:
+    """``cfg close-join`` — end an open join (set time_to), preserving history."""
+    import sys
+
+    from ..cfg.operations import CfgOperationError, close_join
+
+    dry_run = not args.no_dry_run
+    if args.station and not args.subtype:
+        print(
+            "❌ --station requires --subtype (e.g. --subtype antenna)", file=sys.stderr
+        )
+        return 2
+    try:
+        result = close_join(
+            id_connection=args.id_connection,
+            station_id=args.station,
+            subtype=args.subtype,
+            date=_normalise_date_arg(args.date),
+            warehouse=_resolve_warehouse_arg(args.warehouse),
+            dry_run=dry_run,
+        )
+    except (CfgOperationError, RuntimeError) as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 1
+    _print_result_summary(result, json_output=args.json, dry_run=dry_run)
+    return 0
+
+
+def cmd_cfg_replace_antenna(args) -> int:
+    """``cfg replace-antenna`` — swap a station's antenna in TOS + stations.cfg."""
+    import sys
+
+    from ..cfg.operations import CfgOperationError, replace_antenna
+
+    if getattr(args, "list_models", False):
+        return _print_igs_models()
+    missing = _require_args_or_exit(
+        args,
+        ("station", "--station"),
+        ("new_model", "--model"),
+        ("antenna_height", "--antenna-height"),
+    )
+    if missing is not None:
+        return missing
+
+    dry_run = not args.no_dry_run
+    try:
+        _cfg_path = _resolve_global_target(args) or (
+            Path(args.cfg_path) if args.cfg_path else None
+        )
+        result = replace_antenna(
+            args.station,
+            new_model=args.new_model,
+            new_serial=args.new_serial,
+            antenna_height=args.antenna_height,
+            radome=args.radome,
+            radome_serial=args.radome_serial,
+            keep_radome=args.keep_radome,
+            owner=args.owner or "Jarðeðlismælihópur",
+            date=_normalise_date_arg(args.date),
+            cfg_antenna_height=args.cfg_antenna_height,
+            rinex_valid_from=args.rinex_valid_from,
+            old_status=args.old_status,
+            old_comment=args.old_comment,
+            comment=args.comment,
+            vitjun=args.vitjun,
+            participants=args.participants or "",
+            warehouse=_resolve_warehouse_arg(args.warehouse),
+            skip_vitjun=args.no_vitjun,
+            skip_cfg=args.no_cfg,
+            dry_run=dry_run,
+            cfg_path=_cfg_path,
+        )
+    except (CfgOperationError, RuntimeError) as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 1
+    _print_result_summary(result, json_output=args.json, dry_run=dry_run)
+    _maybe_commit_global(
+        args,
+        f"stations({args.station}): cfg replace-antenna",
+        changed=bool(result.cfg_changes),
+        dry_run=dry_run,
+    )
+    return 0
+
+
+def cmd_cfg_replace_radome(args) -> int:
+    """``cfg replace-radome`` — swap a station's radome, antenna untouched."""
+    import sys
+
+    from ..cfg.operations import CfgOperationError, replace_radome
+
+    if getattr(args, "list_models", False):
+        return _print_igs_models(antennas=False)
+    missing = _require_args_or_exit(
+        args, ("station", "--station"), ("new_model", "--model")
+    )
+    if missing is not None:
+        return missing
+
+    dry_run = not args.no_dry_run
+    try:
+        _cfg_path = _resolve_global_target(args) or (
+            Path(args.cfg_path) if args.cfg_path else None
+        )
+        result = replace_radome(
+            args.station,
+            new_model=args.new_model,
+            new_serial=args.new_serial,
+            owner=args.owner or "Jarðeðlismælihópur",
+            date=_normalise_date_arg(args.date),
+            old_status=args.old_status,
+            old_comment=args.old_comment,
+            comment=args.comment,
+            vitjun=args.vitjun,
+            participants=args.participants or "",
+            warehouse=_resolve_warehouse_arg(args.warehouse),
+            skip_vitjun=args.no_vitjun,
+            skip_cfg=args.no_cfg,
+            dry_run=dry_run,
+            cfg_path=_cfg_path,
+        )
+    except (CfgOperationError, RuntimeError, ValueError) as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 1
+    _print_result_summary(result, json_output=args.json, dry_run=dry_run)
+    _maybe_commit_global(
+        args,
+        f"stations({args.station}): cfg replace-radome",
+        changed=bool(result.cfg_changes),
+        dry_run=dry_run,
+    )
     return 0
 
 
