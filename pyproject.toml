@@ -45,7 +45,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
     "gtimes @ git+https://github.com/bgo-gnss/gtimes@v0.5.1",
-    "tostools @ git+https://github.com/bgo-gnss/tostools@8f04e44",
+    "tostools @ git+https://github.com/bgo-gnss/tostools@718cb68",
     # gps_parser main @257a2ee: passive-station schema (2c5b428) + canonical
     # module-level parse_station_role (257a2ee) — the API config_utils imports.
     "gps-parser @ git+https://github.com/bgo-gnss/gps_parser@257a2ee",
