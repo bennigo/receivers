@@ -212,6 +212,35 @@ def _resolve_station(writer: TOSWriter, station_id: str) -> int:
     return eid
 
 
+def _find_open_children(writer: TOSWriter, station_eid: int, subtype: str) -> List[int]:
+    """Return every open child of ``subtype`` joined to a station.
+
+    The TOS invariant is at most one open join per device subtype, but the
+    invariant is only *enforced* by the verbs that respect it — a historical
+    ``add-antenna --force`` (or a hand-edit in the web UI) can leave two open
+    antennas on one station. Callers that must not silently pick one of them
+    (:func:`replace_antenna`) use this and refuse on >1; callers that only
+    need "is there one" use :func:`_find_open_child`.
+    """
+    history = writer.get_entity_history(station_eid)
+    if not isinstance(history, dict):
+        return []
+    children = history.get("children_connections") or []
+    open_children = [c for c in children if c.get("time_to") is None]
+    found: List[int] = []
+    for child in open_children:
+        cid = child.get("id_entity_child")
+        if cid is None:
+            continue
+        child_hist = writer.get_entity_history(int(cid))
+        if (
+            isinstance(child_hist, dict)
+            and child_hist.get("code_entity_subtype") == subtype
+        ):
+            found.append(int(cid))
+    return found
+
+
 def _find_open_child(
     writer: TOSWriter, station_eid: int, subtype: str
 ) -> Optional[int]:
@@ -228,22 +257,8 @@ def _find_open_child(
 
     Returns ``None`` when no open child of that subtype exists.
     """
-    history = writer.get_entity_history(station_eid)
-    if not isinstance(history, dict):
-        return None
-    children = history.get("children_connections") or []
-    open_children = [c for c in children if c.get("time_to") is None]
-    for child in open_children:
-        cid = child.get("id_entity_child")
-        if cid is None:
-            continue
-        child_hist = writer.get_entity_history(int(cid))
-        if (
-            isinstance(child_hist, dict)
-            and child_hist.get("code_entity_subtype") == subtype
-        ):
-            return int(cid)
-    return None
+    found = _find_open_children(writer, station_eid, subtype)
+    return found[0] if found else None
 
 
 def _find_open_gnss_receiver_child(
@@ -496,10 +511,12 @@ def _default_rinex_valid_from(install_iso: str) -> str:
 def add_antenna(
     writer: Optional[TOSWriter] = None,
     *,
-    station_id: str,
+    station_id: Optional[str] = None,
+    warehouse: Optional[str] = None,
     model: str,
     radome: str = "NONE",
     serial: Optional[str] = None,
+    radome_serial: Optional[str] = None,
     antenna_height: Optional[str] = None,
     owner: str = "Jarðeðlismælihópur",
     date_start: Optional[str] = None,
@@ -551,17 +568,48 @@ def add_antenna(
         validate_model,
     )
 
-    w = _resolve_writer(writer, dry_run)
-    station_eid = _resolve_station(w, station_id)
-
-    # Default install date = the station's own date_start, else today.
-    if not date_start:
-        station_hist = w.get_entity_history(station_eid)
-        st_date = (
-            _device_attribute(station_hist, "date_start")
-            if isinstance(station_hist, dict)
-            else None
+    if (station_id is None) == (warehouse is None):
+        raise CfgOperationError(
+            "add-antenna: pass either --station STID (install) OR --warehouse "
+            "LOCATION (intake), not both and not neither."
         )
+    # Warehouse intake registers a specific unit you are holding, so its serial
+    # is on the label in front of you. A synthetic serial means "this station's
+    # antenna serial was never recorded" — meaningless for inventory, and it
+    # would not match at install time, so the unit would be duplicated instead
+    # of reparented. Require the real one.
+    if warehouse and (serial is None or str(serial).strip() == ""):
+        raise CfgOperationError(
+            "add-antenna --warehouse: --serial is required for intake. A "
+            "synthetic placeholder cannot be matched when the unit is later "
+            "installed, so the antenna would be duplicated rather than moved."
+        )
+    if warehouse and radome and radome.upper() != "NONE" and not radome_serial:
+        raise CfgOperationError(
+            "add-antenna --warehouse: --radome-serial is required alongside "
+            "--radome for intake (same matching reason as --serial). If the "
+            "radome carries no serial, omit --radome here and let "
+            "`cfg replace-antenna` create it at install time."
+        )
+
+    w = _resolve_writer(writer, dry_run)
+    station_eid = (
+        _resolve_station(w, station_id)
+        if station_id is not None
+        else _b9_eid(w, warehouse=warehouse)
+    )
+
+    # Default install date = the station's own date_start, else today. For
+    # warehouse intake there is no station to inherit from — today it is.
+    if not date_start:
+        st_date = None
+        if station_id is not None:
+            station_hist = w.get_entity_history(station_eid)
+            st_date = (
+                _device_attribute(station_hist, "date_start")
+                if isinstance(station_hist, dict)
+                else None
+            )
         date_start = st_date or datetime.now().date().isoformat()
     # Resolve to a full datetime with the SAME field-work convention as
     # cfg move-device: bare YYYY-MM-DD -> noon (T12:00:00); a full ISO datetime
@@ -577,19 +625,24 @@ def add_antenna(
     eff_date = _visit_default_time(date_start)
 
     # One open antenna per station (mirrors the receiver displacement guard).
-    open_existing = _find_open_child(w, station_eid, "antenna")
+    # Irrelevant for a warehouse, which holds any number of spare antennas.
+    open_existing = (
+        _find_open_child(w, station_eid, "antenna") if station_id is not None else None
+    )
     if open_existing is not None and not force:
         raise CfgOperationError(
             f"{station_id} already has an open antenna child "
-            f"(id_entity={open_existing}). Swap it with the future "
-            f"`cfg replace-antenna` verb, or pass --force to add a second."
+            f"(id_entity={open_existing}). Swap it with "
+            f"`cfg replace-antenna --station {station_id} …`, or pass --force "
+            f"to add a second (leaves TWO open antennas — ambiguous for every "
+            f"RINEX header and station.info line derived from the session)."
         )
 
     igs_model = validate_model("antenna", model)
 
     synthetic = serial is None or str(serial).strip() == ""
     ant_serial = (
-        synthetic_serial("antenna", station_id, eff_date)
+        synthetic_serial("antenna", str(station_id), eff_date)
         if synthetic
         else str(serial).strip()
     )
@@ -653,7 +706,11 @@ def add_antenna(
     # Radome — a separate TOS device. "NONE" means no radome at this station.
     igs_radome = validate_model("radome", radome or "NONE")
     if igs_radome != "NONE":
-        rad_serial = synthetic_serial("radome", station_id, eff_date)
+        rad_serial = (
+            str(radome_serial).strip()
+            if radome_serial and str(radome_serial).strip()
+            else synthetic_serial("radome", str(station_id), eff_date)
+        )
         rad_attrs = build_required_attributes(rad_serial, igs_radome, owner, eff_date)
         result.tos_changes["radome_serial"] = rad_serial
         result.tos_changes["radome_attributes"] = rad_attrs
@@ -1407,6 +1464,9 @@ def add_station(
 def move_device(
     serial: Optional[str] = None,
     *,
+    subtype: str = "gnss_receiver",
+    id_entity: Optional[int] = None,
+    with_radome: bool = True,
     to: str = DEFAULT_WAREHOUSE,
     date: Optional[str] = None,
     from_station: Optional[str] = None,
@@ -1517,10 +1577,10 @@ def move_device(
     # from STATION_A on day 1 (it's now at B9), and the next day
     # transfers it to STATION_B without typing the serial — they only
     # remember "the receiver that came off STATION_A".
-    if serial is None:
+    if serial is None and id_entity is None:
         if from_station is None:
             raise CfgOperationError(
-                "move_device: --serial or --from-station is required."
+                "move_device: --serial, --id or --from-station is required."
             )
         from_eid_for_infer = _resolve_station(w, from_station)
         # Prefer currently-open receiver, fall back to most recently closed.
@@ -1551,12 +1611,26 @@ def move_device(
             from_station,
         )
 
+    # The radome is screwed onto the antenna, so it travels with it. Resolve
+    # the companion BEFORE the move — afterwards the antenna's most recent join
+    # is the new one and the shared-period evidence is gone.
+    companion_radome: Optional[int] = None
+    if subtype == "antenna" and with_radome:
+        probe_id = id_entity
+        if probe_id is None and serial:
+            found = w.find_device_by_serial("antenna", str(serial))
+            probe_id = int(found["id_entity"]) if found else None
+        if probe_id is not None:
+            companion_radome = _find_companion_radome(w, int(probe_id))
+
     # Auto-detect target type: station marker first, then location name.
     station_eid = w.find_station_by_marker(to)
     if station_eid is not None:
-        return _move_to_station(
+        station_result = _move_to_station(
             w,
             serial=serial,
+            subtype=subtype,
+            id_entity=id_entity,
             station_id=to,
             station_eid=station_eid,
             eff_date=eff_date,
@@ -1574,6 +1648,14 @@ def move_device(
             skip_cfg=skip_cfg,
             assume_cleared_device_id=_assume_cleared_device_id,
         )
+        return _follow_with_radome(
+            w,
+            station_result,
+            companion_radome,
+            to=to,
+            date=date,
+            dry_run=dry_run,
+        )
 
     # Locations: try the warehouse subtype first (the common case), then
     # fall back to any non-station location so legitimate non-warehouse
@@ -1589,9 +1671,11 @@ def move_device(
         # replace_receiver (its install-new step writes the new cfg).
         # Also suppress when the caller passed --no-cfg (umbrella).
         skip_clear = skip_cfg or _assume_cleared_device_id is not None
-        return _move_to_location(
+        location_result = _move_to_location(
             w,
             serial=serial,
+            subtype=subtype,
+            id_entity=id_entity,
             location_name=to,
             location_eid=location_eid,
             eff_date=eff_date,
@@ -1604,6 +1688,14 @@ def move_device(
             skip_vitjun=skip_vitjun,
             cfg_path=cfg_path,
             skip_clear_cfg=skip_clear,
+        )
+        return _follow_with_radome(
+            w,
+            location_result,
+            companion_radome,
+            to=to,
+            date=date,
+            dry_run=dry_run,
         )
 
     raise CfgOperationError(
@@ -1632,6 +1724,8 @@ def _move_to_station(
     cfg_path: Optional[Path],
     skip_vitjun: bool,
     skip_cfg: bool,
+    subtype: str = "gnss_receiver",
+    id_entity: Optional[int] = None,
     assume_cleared_device_id: Optional[int] = None,
 ) -> OperationResult:
     """Station-destination path of :func:`move_device`.
@@ -1647,7 +1741,7 @@ def _move_to_station(
     on the station when ``--continue-from install-new`` is used after
     a partial step-2 failure.
     """
-    open_existing = _find_open_gnss_receiver_child(w, station_eid)
+    open_existing = _find_open_child(w, station_eid, subtype)
     # The dry-run-only escape hatch: when replace_receiver previews
     # step 3 before step 2 has written, accept the assume-cleared id
     # so the preview is not blocked by its own simulated state.
@@ -1658,21 +1752,24 @@ def _move_to_station(
     )
     if effective_open is not None:
         raise CfgOperationError(
-            f"{station_id} already has an open gnss_receiver child "
-            f"(id_entity={effective_open}). Move the old receiver out "
-            f"first: `receivers cfg move-device --serial <SERIAL>` "
-            f"(defaults to B9 warehouse) or "
-            f"`receivers cfg move-device --serial <SERIAL> --to <ELSE>`."
+            f"{station_id} already has an open {subtype} child "
+            f"(id_entity={effective_open}). Move the old one out "
+            f"first: `receivers cfg move-device --subtype {subtype} "
+            f"--serial <SERIAL>` (defaults to B9 warehouse) or "
+            f"`… --to <ELSE>`."
         )
 
-    device = w.find_device_by_serial("gnss_receiver", serial)
-    if device is None:
+    device = _resolve_device_for_move(
+        w, subtype=subtype, serial=serial, id_entity=id_entity
+    )
+    if device is None:  # pragma: no cover - resolver raises instead
         raise CfgOperationError(
-            f"No gnss_receiver in TOS with serial {serial!r}. "
+            f"No {subtype} in TOS with serial {serial!r}. "
             f"If this is a new unit, warehouse it first with "
             f"`receivers cfg add-receiver`."
         )
     device_id = int(device["id_entity"])
+    serial = serial or _device_attribute(device, "serial_number")
     new_model = _device_attribute(device, "model")
     new_firmware = _device_attribute(device, "firmware_version")
 
@@ -1693,7 +1790,10 @@ def _move_to_station(
         dry_run=dry_run,
     )
 
-    if not skip_vitjun:
+    # _auto_vitjun_text is receiver-worded ("Skipt um móttakara"). For other
+    # subtypes the operator must supply --vitjun; auto-generating receiver
+    # wording for an antenna move would write a false record.
+    if not skip_vitjun and (subtype == "gnss_receiver" or vitjun):
         work = vitjun or _auto_vitjun_text(
             w, station_eid, device, eff_date, from_station=from_station
         )
@@ -1718,7 +1818,10 @@ def _move_to_station(
         result=result,
     )
 
-    if not skip_cfg and not dry_run:
+    # stations.cfg's receiver_* keys describe a receiver; installing an
+    # antenna/modem/SIM must not write them. Those subtypes have their own
+    # verbs (replace-antenna / replace-modem / replace-sim) for the cfg side.
+    if not skip_cfg and not dry_run and subtype == "gnss_receiver":
         target_cfg = _resolve_cfg_path(cfg_path)
         cfg_updates: Dict[str, Optional[str]] = {
             "receiver_serial": serial,
@@ -1732,13 +1835,142 @@ def _move_to_station(
     return result
 
 
+def _follow_with_radome(
+    w: TOSWriter,
+    result: OperationResult,
+    radome_id: Optional[int],
+    *,
+    to: str,
+    date: Optional[str],
+    dry_run: bool,
+) -> OperationResult:
+    """Send the antenna's companion radome to the same destination.
+
+    Physically the two are one assembly; TOS keeps them as separate sibling
+    children, so without this the radome silently stays behind at the station
+    the antenna just left. The radome move carries no vitjun and no cfg write —
+    the antenna move already recorded the event, and a second vitjun would
+    double-report one action.
+    """
+    if radome_id is None:
+        return result
+    result.tos_changes["companion_radome"] = {
+        "id_entity": radome_id,
+        "moved_to": to,
+        "result": move_device(
+            subtype="radome",
+            id_entity=radome_id,
+            with_radome=False,
+            to=to,
+            date=date,
+            writer=w,
+            dry_run=dry_run,
+            skip_vitjun=True,
+            skip_cfg=True,
+        ).tos_changes.get("move"),
+    }
+    return result
+
+
+def _find_companion_radome(w: TOSWriter, antenna_id: int) -> Optional[int]:
+    """Find the radome that shared this antenna's station join.
+
+    TOS models antenna and radome as SIBLING children of the station, with no
+    link between them — but physically the radome is screwed onto the antenna
+    and the pair moves as one. The join period is the only evidence of the
+    pairing: the companion is the radome whose join to the same parent ends at
+    the same instant as the antenna's (or is likewise open).
+
+    Returns ``None`` when the pairing is not unambiguous — no radome, or more
+    than one candidate. Guessing which of two radomes travelled with an antenna
+    would write a location claim that cannot be distinguished from a real one.
+    """
+    hist = w._request("GET", f"/entity/parent_history/{int(antenna_id)}")
+    if not isinstance(hist, list) or not hist:
+        return None
+    join = max(hist, key=lambda j: j.get("time_from") or "")
+    parent = join.get("id_entity_parent")
+    if parent is None:
+        return None
+    antenna_time_to = join.get("time_to")
+    parent_hist = w.get_entity_history(int(parent))
+    if not isinstance(parent_hist, dict):
+        return None
+    matches: List[int] = []
+    for child in parent_hist.get("children_connections") or []:
+        if child.get("time_to") != antenna_time_to:
+            continue
+        cid = child.get("id_entity_child")
+        if cid is None:
+            continue
+        child_hist = w.get_entity_history(int(cid))
+        if (
+            isinstance(child_hist, dict)
+            and child_hist.get("code_entity_subtype") == "radome"
+        ):
+            matches.append(int(cid))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _resolve_device_for_move(
+    w: TOSWriter,
+    *,
+    subtype: str,
+    serial: Optional[str],
+    id_entity: Optional[int],
+) -> Dict[str, Any]:
+    """Resolve the device a move targets, by id_entity or by serial.
+
+    ``id_entity`` is the reliable selector and exists because TOS's
+    ``POST /basic_search/`` — the only serial index available, and what
+    :meth:`TOSWriter.find_device_by_serial` is built on — is fuzzy and has been
+    observed to MISS an exact, currently-open serial (antenna id 4527 carries
+    serial_number "262509" with date_to=None, yet a search for "262509" returns
+    seven unrelated hits and not that one). Any workflow that can only address a
+    device by serial is therefore one stale index entry away from "device not
+    found" — or, on a create-or-reuse path, from silently creating a duplicate.
+    Reading ``GET /entity/{id}/`` bypasses the index entirely.
+
+    Raises:
+        CfgOperationError: when neither/both selectors are given, when the id
+            does not exist, or when the resolved entity is not ``subtype``.
+    """
+    if (serial is None) == (id_entity is None):
+        raise CfgOperationError(
+            "move-device: pass exactly one of --serial or --id (--id is exact; "
+            "--serial goes through TOS's fuzzy search and can miss)."
+        )
+    if id_entity is not None:
+        entity = w._request("GET", f"/entity/{int(id_entity)}/")
+        if not isinstance(entity, dict) or not entity.get("id_entity"):
+            raise CfgOperationError(f"No TOS entity with id_entity={id_entity}.")
+        found = entity.get("code_entity_subtype")
+        if found != subtype:
+            raise CfgOperationError(
+                f"id_entity={id_entity} is a {found!r}, not a {subtype!r}. "
+                f"Pass --subtype {found} if that is what you meant to move."
+            )
+        return entity
+    device = w.find_device_by_serial(subtype, str(serial))
+    if device is None:
+        raise CfgOperationError(
+            f"No {subtype} in TOS with serial {serial!r}. Note TOS's serial "
+            f"search is fuzzy and can miss an existing device — if you know it "
+            f"exists, address it exactly with `--id <ID_ENTITY>` "
+            f"(`tos station show <STID> --all` lists ids for closed joins)."
+        )
+    return device
+
+
 def _move_to_location(
     w: TOSWriter,
     *,
-    serial: str,
+    serial: Optional[str],
     location_name: str,
     location_eid: int,
     eff_date: str,
+    subtype: str = "gnss_receiver",
+    id_entity: Optional[int] = None,
     vitjun: Optional[str],
     vitjun_remaining: Optional[str],
     participants: str,
@@ -1750,10 +1982,11 @@ def _move_to_location(
     skip_clear_cfg: bool = False,
 ) -> OperationResult:
     """Location-destination (bookkeeping) path of :func:`move_device`."""
-    device = w.find_device_by_serial("gnss_receiver", serial)
-    if device is None:
-        raise CfgOperationError(f"No gnss_receiver in TOS with serial {serial!r}.")
+    device = _resolve_device_for_move(
+        w, subtype=subtype, serial=serial, id_entity=id_entity
+    )
     device_id = int(device["id_entity"])
+    serial = serial or _device_attribute(device, "serial_number")
 
     open_join = w.get_open_parent_join(device_id)
     source_eid = open_join.get("id_entity_parent") if open_join else None
@@ -1795,9 +2028,13 @@ def _move_to_location(
     # Auto-clear stations.cfg when the device just left a station with no
     # immediate replacement. Suppressed when chained from replace_receiver
     # (the install-new step will overwrite the cfg anyway).
+    # The auto-clear NONEs stations.cfg's receiver_* keys, so it only makes
+    # sense for a receiver. An antenna/radome/modem leaving a station must not
+    # blank the receiver fields.
     if (
         not skip_clear_cfg
         and not dry_run
+        and subtype == "gnss_receiver"
         and source_eid is not None
         and source_eid != location_eid  # not a warehouse-to-warehouse move
     ):
@@ -3328,6 +3565,737 @@ def set_device_attribute(
         result.tos_changes["mode"] = "change"
         result.tos_changes["write"] = w.transition_attribute_value(
             device_id, code, value, _visit_default_time(date)
+        )
+    return result
+
+
+def close_join(
+    *,
+    id_connection: Optional[int] = None,
+    station_id: Optional[str] = None,
+    subtype: Optional[str] = None,
+    date: Optional[str] = None,
+    warehouse: Optional[str] = None,
+    dry_run: bool = True,
+    writer: Optional[TOSWriter] = None,
+) -> OperationResult:
+    """Close an open ``entity_connection`` (join) by setting its ``time_to``.
+
+    The non-destructive sibling of :func:`delete_join`. ``delete_join`` removes
+    a join row that should never have existed; ``close_join`` ends a join that
+    was real and is now over — the device left the station. History is
+    preserved either way, which is the whole point of the temporal store.
+
+    Two selection modes:
+
+    * **By station + subtype** (preferred) — resolves the station's open child
+      of ``subtype`` and closes *its* open parent join. Both lookups confirm
+      the join is open before writing, so this mode cannot close an already-
+      closed period.
+    * **By raw id** (``id_connection``) — patches that row directly. TOS
+      exposes no get-join-by-id endpoint, so **no open-check is performed**:
+      passing a closed row's id silently rewrites its ``time_to``. Inspect
+      ``GET /entity/parent_history/{id_child}`` first (same caveat as
+      :func:`delete_join`).
+
+    Args:
+        id_connection: Join row ``id`` to close. Mutually exclusive with
+            ``station_id``/``subtype``.
+        station_id: 4-char marker whose open ``subtype`` child to retire.
+        subtype: TOS device subtype (``"antenna"``, ``"radome"``,
+            ``"gnss_receiver"``, ``"modem_gsm"``, ``"sim_card"`` …).
+        date: When the join ended. Default now; bare date → noon.
+        warehouse: When given, *reparent* the device to that warehouse
+            (Pattern 2 close+open) instead of leaving it parentless.
+            Station+subtype mode only — a raw id identifies a join, not a
+            device, so there is nothing to reparent.
+        dry_run: When True (default), no writes are sent.
+        writer: Optional pre-built TOSWriter.
+
+    Returns:
+        :class:`OperationResult` with ``operation="close-join"``.
+
+    Raises:
+        CfgOperationError: On a bad selector combination, when the station has
+            no open child of that subtype, or when that child has no open
+            parent join.
+    """
+    if (id_connection is None) == (station_id is None):
+        raise CfgOperationError(
+            "close_join: pass either id_connection OR station_id+subtype "
+            "(not both, not neither)."
+        )
+    if station_id is not None and not subtype:
+        raise CfgOperationError("close_join: station_id requires subtype.")
+    if id_connection is not None and warehouse:
+        raise CfgOperationError(
+            "close_join: --warehouse needs a device to reparent — use "
+            "--station/--subtype selection, not --id."
+        )
+
+    w = _resolve_writer(writer, dry_run)
+    eff_date = _visit_default_time(date)
+    result = OperationResult(
+        operation="close-join",
+        station_id=station_id,
+        date=eff_date,
+        dry_run=dry_run,
+    )
+
+    if id_connection is not None:
+        result.tos_changes["id_connection"] = id_connection
+        result.tos_changes["closed"] = w.patch_entity_connection(
+            int(id_connection), time_to=eff_date
+        )
+        return result
+
+    station_eid = _resolve_station(w, str(station_id))
+    open_ids = _find_open_children(w, station_eid, str(subtype))
+    if not open_ids:
+        raise CfgOperationError(
+            f"{station_id} has no open {subtype} child — nothing to close."
+        )
+    if len(open_ids) > 1:
+        raise CfgOperationError(
+            f"{station_id} has {len(open_ids)} open {subtype} children "
+            f"({', '.join(str(i) for i in open_ids)}). Close them one at a "
+            f"time with `cfg close-join --id <ID_CONNECTION>` after "
+            f"inspecting `tos device show --id-entity <ID>`."
+        )
+    device_id = open_ids[0]
+    hist = w.get_entity_history(device_id)
+    serial = (
+        _device_attribute(hist, "serial_number") if isinstance(hist, dict) else None
+    )
+    result.serial = serial
+    result.tos_changes["device"] = {
+        "id_entity": device_id,
+        "subtype": subtype,
+        "serial": serial,
+    }
+
+    # Resolve the join in BOTH modes: the reparent path doesn't need the id
+    # (move_device finds it itself), but reporting the same tos_changes shape
+    # either way keeps `--json` consumers from having to special-case the
+    # warehouse run — and it fails loudly here if there is nothing open.
+    open_join = w.get_open_parent_join(device_id)
+    if not open_join or open_join.get("id") is None:
+        raise CfgOperationError(
+            f"{station_id}: {subtype} {serial or device_id} has no open "
+            f"parent join to close."
+        )
+    result.tos_changes["id_connection"] = int(open_join["id"])
+    warehouse_eid = _b9_eid(w, warehouse=warehouse) if warehouse else None
+    result.tos_changes["closed"] = _retire_old_child(
+        w, device_id, eff_date, to_warehouse_eid=warehouse_eid
+    )
+    return result
+
+
+def replace_antenna(
+    station_id: str,
+    *,
+    new_model: str,
+    new_serial: Optional[str] = None,
+    antenna_height: Optional[str] = None,
+    radome: Optional[str] = None,
+    radome_serial: Optional[str] = None,
+    keep_radome: bool = False,
+    owner: str = "Jarðeðlismælihópur",
+    date: Optional[str] = None,
+    cfg_antenna_height: Optional[str] = None,
+    rinex_valid_from: Optional[str] = None,
+    old_status: Optional[str] = None,
+    old_comment: Optional[str] = None,
+    comment: Optional[str] = None,
+    vitjun: Optional[str] = None,
+    participants: str = "",
+    warehouse: Optional[str] = None,
+    skip_vitjun: bool = False,
+    skip_cfg: bool = False,
+    dry_run: bool = True,
+    writer: Optional[TOSWriter] = None,
+    cfg_path: Optional[Path] = None,
+) -> OperationResult:
+    """Swap a station's GNSS antenna in TOS (Pattern-2) + ``stations.cfg``.
+
+    The counterpart to :func:`replace_receiver` for the other half of the
+    RINEX header. :func:`add_antenna` is *intake* — it refuses when the station
+    already has an open antenna, because adding a second open antenna makes
+    ``current_session()`` (and therefore station.info, the stream SKL and every
+    RINEX header) ambiguous. This verb is the swap:
+
+      1. Retire the old antenna: close its station join at ``date`` (or
+         reparent to ``warehouse``) and apply ``old_status``/``old_comment``.
+      2. **The radome follows the antenna** — the two are screwed together and
+         ~95% of field swaps take both down and put both up. So by default the
+         old radome's join is closed and a new radome device is created and
+         joined alongside the new antenna. See "Radome semantics" below.
+      3. Create (or reuse, when pre-registered) the new antenna and open its
+         station join at the same instant.
+      4. Write a Breyting vitjun ("Skipt um loftnet: … → …").
+      5. Update ``stations.cfg``: ``antenna_type``, ``antenna_serial``,
+         ``antenna_radome``, ``antenna_height`` and ``rinex_config_valid_from``.
+
+    **Radome semantics.** A radome is screwed onto the antenna, so the pair
+    normally comes down and goes up together — but TOS models them as two
+    independent device children, and either can be replaced alone (radome-only:
+    :func:`replace_radome`). Three cases, keyed on ``radome`` / ``keep_radome``:
+
+    ==========================  ==================================================
+    Flags                       Effect
+    ==========================  ==================================================
+    *(neither given)*           **Same model, NEW unit.** The old radome's join is
+                                closed and a fresh radome device is created with
+                                the old one's model. This is the 95% case — a new
+                                antenna arriving with its own radome of the usual
+                                type. It is an *inferred* write: the carried-
+                                forward model is reported in
+                                ``tos_changes["plan"]["radome"]`` so a dry-run
+                                shows what it decided. With **no** open radome to
+                                carry forward, nothing is created and nothing is
+                                closed (a station that never had one keeps not
+                                having one).
+    ``radome="CODE"``           New radome of that model. ``"NONE"`` means the new
+                                antenna is bare: old join closed, nothing created.
+    ``keep_radome=True``        The physical radome was unscrewed from the old
+                                antenna and re-fitted to the new one. Entity and
+                                join are left untouched, and cfg
+                                ``antenna_radome`` is not rewritten.
+    ==========================  ==================================================
+
+    The cfg ``antenna_height`` is a **composite** — antenna ARP height plus the
+    monument's mark→ARP offset — which TOS splits across two entities. It is
+    derived as ``antenna_height + monument.monument_height`` from the station's
+    open monument child; pass ``cfg_antenna_height`` to override. When neither
+    is resolvable the operation raises rather than writing a height short by
+    the monument offset (a wrong ``ANTENNA: DELTA H`` biases every downstream
+    position without erroring anywhere).
+
+    Args:
+        station_id: 4-char marker of the station.
+        new_model: New antenna model (IGS name or known alias; validated).
+        new_serial: New antenna serial; ``None``/empty → synthetic
+            ``antenna-<STID>-<YYYYMMDD>`` placeholder (as :func:`add_antenna`).
+        antenna_height: New antenna ARP height in metres (TOS
+            ``antenna.antenna_height``, RINEX ``ANTENNA: DELTA H``). Required —
+            a replacement without a height would silently default to 0.0.
+        radome: New radome IGS code, or ``"NONE"`` for "no radome fitted".
+            Omit to carry the old radome's model forward — see "Radome
+            semantics" above. Mutually exclusive with ``keep_radome``.
+        radome_serial: Serial of the new radome. ``None`` → synthetic
+            ``radome-<STID>-<YYYYMMDD>`` (the fleet convention — most radomes
+            are unserialised), but modern units do carry one and it should be
+            recorded when known.
+        keep_radome: Re-fit the SAME physical radome onto the new antenna —
+            leave its entity and join alone.
+        owner: TOS owner attribute for the new devices.
+        date: When the swap happened. Default now; bare date → noon (the
+            field-work convention shared with ``move-device``/``add-antenna``,
+            so co-installs land in one TOS session).
+        cfg_antenna_height: Override for the cfg composite height.
+        rinex_valid_from: Override ``rinex_config_valid_from``. Default:
+            :func:`_default_rinex_valid_from` of the swap date.
+        old_status / old_comment: Pattern-2 transitions on the OLD antenna
+            (e.g. ``"bilað"``). ``None`` to leave untouched.
+        comment: Free-text comment attribute on the NEW antenna.
+        vitjun: Override the auto-derived vitjun text.
+        participants: Comma-separated emails for the vitjun.
+        warehouse: Reparent the old antenna to this warehouse instead of
+            leaving it parentless. Off by default — unlike a receiver, a
+            retired antenna is as often scrapped as returned, and a wrong
+            reparent writes a location claim indistinguishable from a real one.
+            Also applies to the **old radome** whenever it is retired: the two
+            come off the mast together, so they land in the same place.
+        skip_vitjun: Skip the vitjun step.
+        skip_cfg: Skip the ``stations.cfg`` write.
+        dry_run / writer / cfg_path: As :func:`move_device`.
+
+    Returns:
+        :class:`OperationResult` with ``operation="replace-antenna"``.
+
+    Raises:
+        CfgOperationError: When the station has no open antenna (use
+            ``add-antenna``), has more than one, when the new serial matches
+            the open antenna's, when ``antenna_height`` is missing, or when the
+            cfg composite height cannot be resolved.
+    """
+    from tostools.device import (
+        build_antenna_attributes,
+        build_required_attributes,
+        synthetic_serial,
+        validate_model,
+    )
+
+    if antenna_height is None or str(antenna_height).strip() == "":
+        raise CfgOperationError(
+            "replace-antenna: --antenna-height is required. The new antenna's "
+            "ARP height drives RINEX 'ANTENNA: DELTA H'; omitting it would "
+            "record 0.0 and bias every position computed from this station."
+        )
+
+    w = _resolve_writer(writer, dry_run)
+    station_eid = _resolve_station(w, station_id)
+    eff_date = _visit_default_time(date)
+
+    # --- Locate the antenna being replaced --------------------------------
+    open_antennas = _find_open_children(w, station_eid, "antenna")
+    if not open_antennas:
+        raise CfgOperationError(
+            f"{station_id} has no open antenna child — this is an intake, not "
+            f"a swap. Use `receivers cfg add-antenna --station {station_id}`."
+        )
+    if len(open_antennas) > 1:
+        raise CfgOperationError(
+            f"{station_id} has {len(open_antennas)} open antenna children "
+            f"({', '.join(str(i) for i in open_antennas)}) — ambiguous. Close "
+            f"the stale one with `cfg close-join` first, then re-run."
+        )
+    old_id = open_antennas[0]
+    old_hist = w.get_entity_history(old_id)
+    old_serial = (
+        _device_attribute(old_hist, "serial_number")
+        if isinstance(old_hist, dict)
+        else None
+    )
+    old_model = (
+        _device_attribute(old_hist, "model") if isinstance(old_hist, dict) else None
+    )
+
+    if radome is not None and keep_radome:
+        raise CfgOperationError(
+            "replace-antenna: --radome and --keep-radome are mutually "
+            "exclusive — either a new radome goes on (--radome CODE, or omit "
+            "the flag to carry the old model forward) or the old one is "
+            "re-fitted (--keep-radome)."
+        )
+    if radome_serial and keep_radome:
+        raise CfgOperationError(
+            "replace-antenna: --radome-serial has nothing to name under "
+            "--keep-radome — no radome device is created. To correct the "
+            "existing radome's serial use `cfg set-attr --subtype radome`."
+        )
+
+    # Validate BOTH models up front: a bad radome code discovered after the old
+    # antenna's join was already closed would leave the station half-swapped.
+    igs_model = validate_model("antenna", new_model)
+    synthetic = new_serial is None or str(new_serial).strip() == ""
+    ant_serial = (
+        synthetic_serial("antenna", station_id, eff_date)
+        if synthetic
+        else str(new_serial).strip()
+    )
+    if old_serial and old_serial == ant_serial:
+        raise CfgOperationError(
+            f"New antenna serial {ant_serial!r} matches the antenna already "
+            f"open at {station_id}. Did the swap actually happen? (To correct "
+            f"a wrong model/height on the SAME unit use `cfg set-attr`.)"
+        )
+
+    # --- radome plan: resolved BEFORE any write ---------------------------
+    # The radome is screwed to the antenna, so by default it comes down with it
+    # and a new one goes up: close the old join, create a fresh device carrying
+    # the SAME model (a new antenna normally ships with a radome of the usual
+    # type). --radome CODE names a different one; --keep-radome means the same
+    # physical unit was re-fitted and TOS should not be touched.
+    old_radome_id = None if keep_radome else _find_open_child(w, station_eid, "radome")
+    old_radome_model: Optional[str] = None
+    if old_radome_id is not None:
+        rad_hist = w.get_entity_history(old_radome_id)
+        if isinstance(rad_hist, dict):
+            old_radome_model = _device_attribute(rad_hist, "model")
+
+    igs_radome: Optional[str] = None
+    # cfg antenna_radome is written only when this run actually decided
+    # something about the radome. Left None, cfg keeps whatever it had: with no
+    # radome in TOS and no flag we have made no decision, and asserting "NONE"
+    # from TOS's mere absence would clobber a real cfg value on a station whose
+    # radome simply was never registered.
+    radome_cfg_value: Optional[str] = None
+    radome_plan: str
+    if keep_radome:
+        radome_plan = "kept (same physical unit re-fitted)"
+    elif radome is not None:
+        igs_radome = validate_model("radome", radome or "NONE")
+        radome_cfg_value = igs_radome
+        radome_plan = (
+            "removed (none fitted)" if igs_radome == "NONE" else f"{igs_radome} (new)"
+        )
+    elif old_radome_model:
+        # Carried forward — an inferred write, so name it in the plan where the
+        # dry-run line will show it.
+        igs_radome = validate_model("radome", old_radome_model)
+        radome_cfg_value = igs_radome
+        radome_plan = f"{igs_radome} (new unit, model carried forward)"
+    else:
+        radome_plan = "none in TOS and no --radome — cfg left as-is"
+
+    # --- cfg composite height: ARP + monument offset ----------------------
+    # Resolved BEFORE any write so an unresolvable height aborts with TOS
+    # untouched rather than half-swapped.
+    cfg_height = cfg_antenna_height
+    monument_height: Optional[str] = None
+    if cfg_height is None and not skip_cfg:
+        monument_id = _find_open_child(w, station_eid, "monument")
+        if monument_id is not None:
+            mon_hist = w.get_entity_history(monument_id)
+            if isinstance(mon_hist, dict):
+                monument_height = _device_attribute(mon_hist, "monument_height")
+        if monument_height is None:
+            raise CfgOperationError(
+                f"{station_id}: cannot derive the stations.cfg composite "
+                f"antenna_height — no open monument child carries a "
+                f"monument_height. stations.cfg antenna_height = antenna ARP + "
+                f"monument offset; writing the bare ARP would understate it. "
+                f"Pass --cfg-antenna-height explicitly (or --no-cfg), and "
+                f"consider `cfg add-monument` so the split is recorded."
+            )
+        try:
+            cfg_height = f"{float(antenna_height) + float(monument_height):.4f}"
+        except (TypeError, ValueError) as exc:
+            raise CfgOperationError(
+                f"{station_id}: non-numeric height component "
+                f"(antenna={antenna_height!r}, monument={monument_height!r}) — "
+                f"pass --cfg-antenna-height explicitly."
+            ) from exc
+
+    result = OperationResult(
+        operation="replace-antenna",
+        station_id=station_id,
+        serial=ant_serial,
+        date=eff_date,
+        tos_changes={
+            "plan": {
+                "old_serial": old_serial,
+                "old_model": old_model,
+                "new_serial": ant_serial,
+                "new_model": igs_model,
+                "synthetic_serial": synthetic,
+                "old_radome_model": old_radome_model,
+                "radome": radome_plan,
+                "monument_height": monument_height,
+            }
+        },
+        dry_run=dry_run,
+    )
+
+    # --- 1: retire the old antenna FIRST ----------------------------------
+    # Retire-before-create keeps the station at no more than one open antenna
+    # at any instant: a mid-run failure leaves it momentarily antenna-less
+    # (honest, recoverable) rather than with two simultaneously-open antennas,
+    # which is precisely the state that makes current_session() — and every
+    # RINEX header and station.info line derived from it — ambiguous.
+    warehouse_eid = _b9_eid(w, warehouse=warehouse) if warehouse else None
+    result.tos_changes["retire_old_antenna"] = _retire_old_child(
+        w, old_id, eff_date, to_warehouse_eid=warehouse_eid
+    )
+    _apply_device_attribute_transitions(
+        w,
+        old_id,
+        eff_date,
+        device_status=old_status,
+        device_comment=old_comment,
+        result=result,
+    )
+
+    # --- 2: radome — follows the antenna unless keep_radome ---------------
+    # `old_radome_id` was resolved during the pre-write plan and is already
+    # None under keep_radome, so this whole block is a no-op in that case.
+    if old_radome_id is not None:
+        result.tos_changes["retire_old_radome"] = _retire_old_child(
+            w, old_radome_id, eff_date, to_warehouse_eid=warehouse_eid
+        )
+    if igs_radome is not None and igs_radome != "NONE":
+        rad_serial = (
+            str(radome_serial).strip()
+            if radome_serial and str(radome_serial).strip()
+            else synthetic_serial("radome", station_id, eff_date)
+        )
+        rad_attrs = build_required_attributes(rad_serial, igs_radome, owner, eff_date)
+        _rad_id, rad_created, rad_join = _create_and_join_device(
+            w,
+            subtype="radome",
+            attributes=rad_attrs,
+            station_eid=station_eid,
+            eff_date=eff_date,
+            dry_run=dry_run,
+        )
+        result.tos_changes["new_radome_serial"] = rad_serial
+        result.tos_changes["new_radome_create"] = rad_created
+        result.tos_changes["new_radome_join"] = rad_join
+
+    # --- 3: create + join the new antenna ---------------------------------
+    if comment is None and synthetic:
+        comment = "antenna serial unknown at install — synthetic placeholder"
+    attrs = build_antenna_attributes(
+        serial=ant_serial,
+        model=igs_model,
+        owner=owner,
+        date_start=eff_date,
+        antenna_height=str(antenna_height),
+    )
+    if comment:
+        attrs.append(
+            {
+                "code": "comment",
+                "value": comment,
+                "date_from": eff_date,
+                "date_to": None,
+            }
+        )
+    result.tos_changes["new_antenna_attributes"] = attrs
+    _new_id, created, join = _create_and_join_device(
+        w,
+        subtype="antenna",
+        attributes=attrs,
+        station_eid=station_eid,
+        eff_date=eff_date,
+        dry_run=dry_run,
+    )
+    result.tos_changes["new_antenna_create"] = created
+    result.tos_changes["new_antenna_join"] = join
+
+    # Pin the ARP height on the device we just joined — even when it was
+    # REUSED. The canonical workflow warehouses an antenna first
+    # (`tos device add --subtype antenna …`), which writes only the canonical
+    # attributes: serial/model/owner/status/date_start, NO antenna_height. And
+    # _create_and_join_device deliberately leaves a pre-registered device's
+    # attributes alone (the join is what an install is about). Without this,
+    # --antenna-height would be silently dropped for exactly the antennas that
+    # went through warehouse intake, and RINEX 'ANTENNA: DELTA H' would sit at
+    # 0.0 — the failure this verb makes --antenna-height mandatory to prevent.
+    # Idempotent: for a freshly created device the value is already correct.
+    if _new_id is not None:
+        result.tos_changes["antenna_height_set"] = w.upsert_attribute_value(
+            int(_new_id), "antenna_height", str(antenna_height), eff_date
+        )
+
+    # --- 4: vitjun --------------------------------------------------------
+    if not skip_vitjun:
+        old_label = f"{old_model or '?'} {old_serial or '?'}".strip()
+        work = vitjun or f"Skipt um loftnet: {old_label} → {igs_model} {ant_serial}"
+        if vitjun is None:
+            # The radome went up or came down in the same visit — say so, so the
+            # vitjun reads as the full record of what happened on the mast.
+            if old_radome_id is not None and igs_radome and igs_radome != "NONE":
+                work += f" (skipt um raðhlíf: {old_radome_model or '?'} → {igs_radome})"
+            elif igs_radome and igs_radome != "NONE":
+                work += f" (raðhlíf sett upp: {igs_radome})"
+            elif old_radome_id is not None:
+                work += f" (raðhlíf fjarlægð: {old_radome_model or '?'})"
+            elif keep_radome:
+                work += " (sama raðhlíf sett aftur á)"
+        vit = w.add_maintenance_visit(
+            station_eid,
+            start_time=eff_date,
+            maintenance_type="on_site",
+            participants=participants,
+            reasons=["change"],
+            work=work,
+        )
+        result.tos_changes["vitjun"] = vit
+        result.vitjun_id = vit.get("id_maintenance")
+
+    # --- 5: stations.cfg --------------------------------------------------
+    if not skip_cfg and not dry_run:
+        updates: Dict[str, Optional[str]] = {
+            "antenna_type": igs_model,
+            "antenna_serial": ant_serial,
+            "antenna_height": cfg_height,
+            "rinex_config_valid_from": rinex_valid_from
+            or _default_rinex_valid_from(eff_date),
+        }
+        # None = this run made no radome decision (--keep-radome, or nothing in
+        # TOS and no flag) → leave cfg alone. See the radome plan block above.
+        if radome_cfg_value is not None:
+            updates["antenna_radome"] = radome_cfg_value
+        target_cfg = _resolve_cfg_path(cfg_path)
+        result.cfg_changes = _apply_cfg_updates(target_cfg, station_id, updates)
+    return result
+
+
+def replace_radome(
+    station_id: str,
+    *,
+    new_model: str,
+    new_serial: Optional[str] = None,
+    owner: str = "Jarðeðlismælihópur",
+    date: Optional[str] = None,
+    old_status: Optional[str] = None,
+    old_comment: Optional[str] = None,
+    comment: Optional[str] = None,
+    vitjun: Optional[str] = None,
+    participants: str = "",
+    warehouse: Optional[str] = None,
+    skip_vitjun: bool = False,
+    skip_cfg: bool = False,
+    dry_run: bool = True,
+    writer: Optional[TOSWriter] = None,
+    cfg_path: Optional[Path] = None,
+) -> OperationResult:
+    """Swap a station's radome in TOS (Pattern-2) + ``stations.cfg``, antenna untouched.
+
+    The radome-only half of :func:`replace_antenna`. A radome is screwed onto
+    the antenna and usually travels with it — but the two are independent TOS
+    device children of the station, and a radome does get replaced on its own
+    (cracked, snow-loaded, upgraded to a different type over the same antenna).
+    This verb covers exactly that case; when both change, use
+    ``replace-antenna``, which handles the radome in the same command.
+
+      1. Retire the open radome, if any: close its station join at ``date`` (or
+         reparent to ``warehouse``) and apply ``old_status``/``old_comment``.
+      2. Create the new ``radome`` device and open its station join.
+      3. Write a Breyting vitjun ("Skipt um raðhlíf: … → …").
+      4. Update ``stations.cfg[antenna_radome]``.
+
+    With **no** open radome the verb still creates and joins the new one — the
+    "a radome was fitted where there wasn't one" case — mirroring how
+    :func:`replace_modem` handles a station with no modem on record. Use
+    ``new_model="NONE"`` for the inverse (radome removed, none refitted): the
+    old join is closed, nothing is created, and cfg records ``NONE``.
+
+    Args:
+        station_id: 4-char marker of the station.
+        new_model: New radome IGS code (e.g. ``"SCIS"``), or ``"NONE"`` to
+            record removal without a replacement.
+        new_serial: Radome serial; ``None`` → synthetic
+            ``radome-<STID>-<YYYYMMDD>`` (the fleet convention — radomes are
+            rarely serialised).
+        owner: TOS owner attribute for the new device.
+        date: When the swap happened. Default now; bare date → noon.
+        old_status / old_comment: Pattern-2 transitions on the OLD radome.
+        comment: Free-text comment attribute on the NEW radome.
+        vitjun: Override the auto-derived vitjun text.
+        participants: Comma-separated emails for the vitjun.
+        warehouse: Reparent the old radome instead of leaving it parentless.
+            Off by default, as for :func:`replace_antenna`.
+        skip_vitjun / skip_cfg: Skip the vitjun / ``stations.cfg`` step.
+        dry_run / writer / cfg_path: As :func:`move_device`.
+
+    Returns:
+        :class:`OperationResult` with ``operation="replace-radome"``.
+
+    Raises:
+        CfgOperationError: When the station has more than one open radome.
+        ValueError: When ``new_model`` is not a known IGS radome code — raised
+            before any write, so a typo cannot leave the station bare.
+    """
+    from tostools.device import (
+        build_required_attributes,
+        synthetic_serial,
+        validate_model,
+    )
+
+    w = _resolve_writer(writer, dry_run)
+    station_eid = _resolve_station(w, station_id)
+    eff_date = _visit_default_time(date)
+
+    # Validate before any write — same discipline as replace_antenna: a bad
+    # code discovered after the old join closed would leave the station bare.
+    igs_radome = validate_model("radome", new_model or "NONE")
+
+    open_radomes = _find_open_children(w, station_eid, "radome")
+    if len(open_radomes) > 1:
+        raise CfgOperationError(
+            f"{station_id} has {len(open_radomes)} open radome children "
+            f"({', '.join(str(i) for i in open_radomes)}) — ambiguous. Close "
+            f"the stale one with `cfg close-join --station {station_id} "
+            f"--subtype radome` first, then re-run."
+        )
+    old_id = open_radomes[0] if open_radomes else None
+    old_model: Optional[str] = None
+    if old_id is not None:
+        old_hist = w.get_entity_history(old_id)
+        if isinstance(old_hist, dict):
+            old_model = _device_attribute(old_hist, "model")
+
+    rad_serial = (
+        str(new_serial).strip()
+        if new_serial and str(new_serial).strip()
+        else synthetic_serial("radome", station_id, eff_date)
+    )
+
+    result = OperationResult(
+        operation="replace-radome",
+        station_id=station_id,
+        serial=rad_serial if igs_radome != "NONE" else None,
+        date=eff_date,
+        tos_changes={
+            "plan": {
+                "old_model": old_model,
+                "new_model": igs_radome,
+                "new_serial": rad_serial if igs_radome != "NONE" else None,
+            }
+        },
+        dry_run=dry_run,
+    )
+
+    # 1: retire first — never two open radomes at once (same reasoning as the
+    # antenna: a second open child makes current_session() ambiguous).
+    if old_id is not None:
+        warehouse_eid = _b9_eid(w, warehouse=warehouse) if warehouse else None
+        result.tos_changes["retire_old_radome"] = _retire_old_child(
+            w, old_id, eff_date, to_warehouse_eid=warehouse_eid
+        )
+        _apply_device_attribute_transitions(
+            w,
+            old_id,
+            eff_date,
+            device_status=old_status,
+            device_comment=old_comment,
+            result=result,
+        )
+
+    # 2: create + join the new radome (nothing to create when removing).
+    if igs_radome != "NONE":
+        attrs = build_required_attributes(rad_serial, igs_radome, owner, eff_date)
+        if comment:
+            attrs.append(
+                {
+                    "code": "comment",
+                    "value": comment,
+                    "date_from": eff_date,
+                    "date_to": None,
+                }
+            )
+        result.tos_changes["new_radome_attributes"] = attrs
+        _new_id, created, join = _create_and_join_device(
+            w,
+            subtype="radome",
+            attributes=attrs,
+            station_eid=station_eid,
+            eff_date=eff_date,
+            dry_run=dry_run,
+        )
+        result.tos_changes["new_radome_create"] = created
+        result.tos_changes["new_radome_join"] = join
+
+    # 3: vitjun.
+    if not skip_vitjun:
+        if igs_radome == "NONE":
+            work = vitjun or f"Raðhlíf fjarlægð: {old_model or '?'}"
+        elif old_model:
+            work = vitjun or f"Skipt um raðhlíf: {old_model} → {igs_radome}"
+        else:
+            work = vitjun or f"Sett upp raðhlíf: {igs_radome}"
+        vit = w.add_maintenance_visit(
+            station_eid,
+            start_time=eff_date,
+            maintenance_type="on_site",
+            participants=participants,
+            reasons=["change"],
+            work=work,
+        )
+        result.tos_changes["vitjun"] = vit
+        result.vitjun_id = vit.get("id_maintenance")
+
+    # 4: stations.cfg — the radome model is the only cfg field this touches.
+    # antenna_height is deliberately NOT recomputed: a radome carries no ARP
+    # offset, so swapping one cannot change the mark→ARP composite.
+    if not skip_cfg and not dry_run:
+        target_cfg = _resolve_cfg_path(cfg_path)
+        result.cfg_changes = _apply_cfg_updates(
+            target_cfg, station_id, {"antenna_radome": igs_radome}
         )
     return result
 

@@ -157,8 +157,24 @@ is filled. The receiver-derived attrs (`sampling_interval`, FTP/HTTP/CTRL
 ports, `ip_address`) have **no TOS attribute code** — there is nowhere to
 write them — so they are out of scope (see vault todo #29). `antenna_height`
 is a stations.cfg *composite* (antenna ARP + monument height) that TOS splits
-across two entities, hence non-writable from one cfg number; antenna/monument/
-radome belong to the future `cfg replace-antenna`/`replace-radome` verbs.
+across two entities, hence non-writable from one cfg number; the antenna group
+belongs to `cfg replace-antenna` (below), monument height to `cfg add-monument`.
+
+**Antenna/radome swaps — `cfg replace-antenna`, `cfg replace-radome`, `cfg
+close-join`**: `add-antenna` is intake-only and refuses when an antenna is already
+open — two open antennas make `current_session()`, and therefore every RINEX
+header, the stream SKL and station.info, ambiguous. `replace-antenna` is the
+swap: retire the open antenna, create + join the new one, vitjun, cfg antenna
+group. The radome is screwed to the antenna, so it **follows the antenna by
+default** (old join closed, new unit created carrying the same model — the ~95%
+case); `--radome CODE` names a different type, `--radome NONE` means bare, and
+`--keep-radome` covers re-fitting the same physical unit. `replace-radome` is the
+radome-only swap (antenna stays; touches cfg `antenna_radome` only, never the
+height composite). The cfg `antenna_height` composite is derived from the open
+monument — `replace-antenna` raises rather than write a bare ARP. `close-join` is
+the non-destructive `delete-join`: it *ends* a real join instead of removing a row
+that shouldn't exist. Full walkthrough + gotchas:
+[`docs/architecture/station-onboarding.md`](docs/architecture/station-onboarding.md) §2b–2c.
 
 ### Production Mode
 

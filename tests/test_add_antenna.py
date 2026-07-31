@@ -251,3 +251,96 @@ def test_add_antenna_full_datetime_preserved():
     w.create_entity_connection.assert_called_once_with(
         SEY9_EID, 50001, "2021-03-25T00:00:00"
     )
+
+
+# ---------------------------------------------------------------------------
+# Warehouse intake — the antenna arrives with its radome screwed on
+# ---------------------------------------------------------------------------
+
+
+def _warehouse_writer():
+    w = _writer()
+    w.find_location_by_name.return_value = 9001
+    return w
+
+
+def test_warehouse_intake_joins_antenna_and_radome_to_the_warehouse():
+    """Both come in as one unit — one command, one location, one date."""
+    w = _warehouse_writer()
+    res = add_antenna(
+        w,
+        warehouse="B9 - Kjallari - Jörð",
+        model="SEPPOLANT_X_MF",
+        serial="2505010005",
+        radome="SCIS",
+        radome_serial="RAD-77",
+        date_start="2026-07-30",
+    )
+    assert res.serial == "2505010005"
+    assert res.tos_changes["radome_serial"] == "RAD-77"
+    # Both joined to the warehouse entity, not a station.
+    parents = {c.args[0] for c in w.create_entity_connection.call_args_list}
+    assert parents == {9001}
+    assert w.create_device.call_count == 2
+
+
+def test_warehouse_intake_requires_a_real_antenna_serial():
+    """A synthetic serial can't be matched at install → the unit would be
+    duplicated instead of reparented."""
+    w = _warehouse_writer()
+    with pytest.raises(CfgOperationError, match="--serial is required"):
+        add_antenna(w, warehouse="B9 - Kjallari - Jörð", model="SEPPOLANT_X_MF")
+    w.create_device.assert_not_called()
+
+
+def test_warehouse_intake_requires_a_radome_serial_when_a_radome_is_given():
+    w = _warehouse_writer()
+    with pytest.raises(CfgOperationError, match="--radome-serial is required"):
+        add_antenna(
+            w,
+            warehouse="B9 - Kjallari - Jörð",
+            model="SEPPOLANT_X_MF",
+            serial="2505010005",
+            radome="SCIS",
+        )
+    w.create_device.assert_not_called()
+
+
+def test_station_and_warehouse_are_mutually_exclusive():
+    w = _warehouse_writer()
+    with pytest.raises(CfgOperationError, match="not both and not neither"):
+        add_antenna(
+            w,
+            station_id="SEY9",
+            warehouse="B9 - Kjallari - Jörð",
+            model="SEPPOLANT_X_MF",
+            serial="x",
+        )
+    with pytest.raises(CfgOperationError, match="not both and not neither"):
+        add_antenna(w, model="SEPPOLANT_X_MF", serial="x")
+
+
+def test_warehouse_intake_skips_the_one_open_antenna_guard():
+    """A warehouse holds any number of spare antennas."""
+    w = _warehouse_writer()
+    res = add_antenna(
+        w,
+        warehouse="B9 - Kjallari - Jörð",
+        model="SEPPOLANT_X_MF",
+        serial="SPARE-2",
+        date_start="2026-07-30",
+    )
+    assert res.serial == "SPARE-2"
+
+
+def test_radome_serial_override_at_a_station():
+    w = _writer()
+    res = add_antenna(
+        w,
+        station_id="SEY9",
+        model="LEIAR25.R4",
+        radome="LEIT",
+        radome_serial="RAD-99",
+        date_start="2021-03-25",
+    )
+    assert res.tos_changes["radome_serial"] == "RAD-99"
