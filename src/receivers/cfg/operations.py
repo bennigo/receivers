@@ -1708,7 +1708,7 @@ def move_device(
 def _move_to_station(
     w: TOSWriter,
     *,
-    serial: str,
+    serial: Optional[str],
     station_id: str,
     station_eid: int,
     eff_date: str,
@@ -1951,7 +1951,7 @@ def _resolve_device_for_move(
                 f"Pass --subtype {found} if that is what you meant to move."
             )
         return entity
-    device = w.find_device_by_serial(subtype, str(serial))
+    device: Optional[Dict[str, Any]] = w.find_device_by_serial(subtype, str(serial))
     if device is None:
         raise CfgOperationError(
             f"No {subtype} in TOS with serial {serial!r}. Note TOS's serial "
