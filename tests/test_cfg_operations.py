@@ -2688,3 +2688,56 @@ def test_moving_a_receiver_never_looks_for_a_radome():
         subtype="gnss_receiver", id_entity=4527, to="B9", date="2026-07-30", writer=w
     )
     assert {c.args[0] for c in w.move_device.call_args_list} == {4527}
+
+
+def test_ensure_port_forwards_accepts_a_station_marker(tmp_path, monkeypatch, capsys):
+    """Every other probe verb resolves the router from stations.cfg; making this
+    one require --host meant hand-copying router_ip the config already has."""
+    import argparse
+
+    from receivers.cli.cfg import cmd_cfg_ensure_port_forwards
+
+    cfg = tmp_path / "stations.cfg"
+    cfg.write_text("[ISAK]\nrouter_ip = ISAK.gps.vedur.is\n", encoding="utf-8")
+    monkeypatch.setenv("GPS_CONFIG_DATA_REPO", str(tmp_path))
+
+    calls = {}
+
+    def _fake_list(host, **kw):
+        calls["host"] = host
+        raise RuntimeError("stop after host resolution")
+
+    monkeypatch.setattr(
+        "receivers.cfg.telemetry_probe.list_port_forwards", _fake_list, raising=False
+    )
+    args = argparse.Namespace(
+        station="ISAK",
+        host=None,
+        dest_ip=None,
+        ports=None,
+        username=None,
+        password=None,
+        no_dry_run=False,
+        json=False,
+    )
+    with pytest.raises(RuntimeError, match="stop after host resolution"):
+        cmd_cfg_ensure_port_forwards(args)
+    assert calls["host"] == "ISAK.gps.vedur.is"
+
+
+def test_ensure_port_forwards_needs_a_station_or_host(capsys):
+    import argparse
+
+    from receivers.cli.cfg import cmd_cfg_ensure_port_forwards
+
+    args = argparse.Namespace(
+        station=None,
+        host=None,
+        dest_ip=None,
+        ports=None,
+        username=None,
+        password=None,
+        no_dry_run=False,
+        json=False,
+    )
+    assert cmd_cfg_ensure_port_forwards(args) == 2

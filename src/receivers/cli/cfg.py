@@ -6380,13 +6380,25 @@ Examples:
   # Only the control port (what the PolaRX5 probe needs), explicit dest IP:
   receivers cfg ensure-port-forwards --host 10.6.1.228 \\
       --dest-ip 192.168.100.60 --ports control --no-dry-run
+
+  # By station marker — router_ip resolved from stations.cfg:
+  receivers cfg ensure-port-forwards ISAK
 """,
     )
     epf.add_argument(
+        "station",
+        nargs="?",
+        metavar="STID",
+        help=(
+            "4-char station marker; the router host is read from that "
+            "station's stations.cfg router_ip. Alternative to --host, which "
+            "stays available for bench units and stations not yet in cfg."
+        ),
+    )
+    epf.add_argument(
         "--host",
-        required=True,
         metavar="IP[:PORT]",
-        help="Router IP/hostname (the Teltonika unit).",
+        help="Router IP/hostname (the Teltonika unit). Optional when STID is given.",
     )
     epf.add_argument(
         "--dest-ip",
@@ -7812,7 +7824,28 @@ def cmd_cfg_ensure_port_forwards(args) -> int:
         list_port_forwards,
     )
 
+    # Accept a station marker as well as --host: every other probe verb
+    # resolves the router from stations.cfg, and making this one the exception
+    # meant hand-copying router_ip for a station the config already describes.
     host = args.host
+    if not host:
+        if not args.station:
+            print(
+                "❌ pass a station marker (e.g. `ISAK`) or --host IP[:PORT]",
+                file=sys.stderr,
+            )
+            return 2
+        from ..cfg.operations import _station_router_ip
+
+        host = _station_router_ip(args.station)
+        if not host:
+            print(
+                f"❌ no router_ip in stations.cfg for {args.station!r} — "
+                f"pass --host explicitly.",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"   host {host} (from stations.cfg [{args.station}] router_ip)")
     dry_run = not args.no_dry_run
 
     # Resolve the receiver's LAN dest IP: explicit flag wins; else infer from an
