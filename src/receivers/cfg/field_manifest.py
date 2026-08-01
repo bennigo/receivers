@@ -590,6 +590,11 @@ FIELDS: List[FieldSpec] = [
     FieldSpec(
         cfg_key="rinex_marker_number",
         label="Marker Number (DOMES)",
+        # The receiver's ReceiverSetup MarkerNumber field. Flag-only: TOS/IGS
+        # owns the DOMES, so a receiver mismatch means the BOX is stale and
+        # wants `rec-config --set-domes` — it never means cfg should follow the
+        # receiver. Surfacing it is what makes that drift visible at all.
+        receiver_extract=lambda identity: identity.get("marker_number"),
         tos_extract=tos_adapter.iers_domes_number,
         receiver_authoritative=False,
         description="IERS DOMES number for RINEX MARKER NUMBER (TOS-canonical)",
