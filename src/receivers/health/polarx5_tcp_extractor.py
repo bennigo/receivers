@@ -30,16 +30,14 @@ import time
 from datetime import UTC, datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..septentrio.fw_policy import firmware_requires_auth
 from .metrics import MetricChecker, load_thresholds
 
-
-def _firmware_requires_auth(firmware_version: str) -> bool:
-    """Return True if the firmware version requires TCP authentication (>= 5.7.0)."""
-    try:
-        parts = [int(x) for x in firmware_version.split(".")]
-        return parts >= [5, 7, 0]
-    except (ValueError, AttributeError):
-        return True  # Unknown format — attempt auth to be safe
+#: Backwards-compatible alias. The policy now lives in
+#: ``receivers.septentrio.fw_policy`` so that every receiver-comms path (health
+#: extractor, config-push TCP client, download manager, polarx5) shares one
+#: definition instead of importing this module's private helper across packages.
+_firmware_requires_auth = firmware_requires_auth
 
 
 class PolaRX5TCPExtractor:
@@ -583,6 +581,11 @@ class PolaRX5TCPExtractor:
                 return raw.split(b"\x00", 1)[0].decode("ascii", errors="ignore").strip()
 
             marker_name = _extract_string(sbf_data, 16, 60)
+            # MarkerNumber (76-95) carries the IERS DOMES. Read so `cfg
+            # reconcile` can show a receiver column for it and flag drift —
+            # otherwise `rec-config --set-domes` writes blind, with no way to
+            # verify afterwards.
+            marker_number = _extract_string(sbf_data, 76, 20)
             serial_number = _extract_string(sbf_data, 156, 20)
             rx_name = _extract_string(sbf_data, 176, 20)
             firmware_version = _extract_string(sbf_data, 196, 20)
@@ -608,6 +611,8 @@ class PolaRX5TCPExtractor:
                 identity["serial_number"] = serial_number
             if marker_name:
                 identity["marker_name"] = marker_name
+            if marker_number:
+                identity["marker_number"] = marker_number
 
             self.logger.info(
                 f"Receiver identity: model={receiver_model}, "

@@ -658,6 +658,16 @@ Examples:
         "station gets its own push. Septentrio PolaRx5 only.",
     )
     mode_group.add_argument(
+        "--set-domes",
+        action="store_true",
+        help="Push the station's IERS DOMES into the receiver's MARKER NUMBER "
+        "(rinex_marker_number from stations.cfg) — ONLY setMarkerParameters "
+        "arg 2 + boot save, so the marker name and 4-char station code are left "
+        "untouched. Stations without a real DOMES are SKIPPED, never filled with "
+        "the 4-char id (MARKER NUMBER carries the DOMES and nothing else). "
+        "Marker-side sibling of --set-antenna. Septentrio PolaRx5 only.",
+    )
+    mode_group.add_argument(
         "--check-session",
         metavar="SESSION",
         help="Check whether a logging session is enabled (e.g. status_1hr). "
