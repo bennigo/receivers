@@ -82,9 +82,7 @@ def _validate_station_for_download(
     """
     station_config = get_station_config(station_id)
     if station_config is None:
-        logger.warning(
-            f"⚠️  Station {station_id} not found in configuration - SKIPPING"
-        )
+        logger.warning(f"⚠️  Station {station_id} not found in configuration - SKIPPING")
         return None
 
     try:
@@ -898,9 +896,7 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             voltage = power.get("voltage")
             if voltage is not None:
                 status = power.get("status", "ok")
-                emoji = (
-                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
-                )
+                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
                 metric_lines.append(f"Voltage: {emoji} {voltage:.2f} V")
 
         # Temperature
@@ -909,9 +905,7 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             value = temp.get("value")
             if value is not None:
                 status = temp.get("status", "ok")
-                emoji = (
-                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
-                )
+                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
                 metric_lines.append(f"Temp: {emoji} {value}°C")
 
         # CPU load
@@ -920,9 +914,7 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             value = cpu.get("value", cpu.get("percent"))
             if value is not None:
                 status = cpu.get("status", "ok")
-                emoji = (
-                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
-                )
+                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
                 metric_lines.append(f"CPU: {emoji} {value}%")
 
         # Disk usage
@@ -931,9 +923,7 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             value = disk.get("usage_percent")
             if value is not None:
                 status = disk.get("status", "ok")
-                emoji = (
-                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
-                )
+                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
                 metric_lines.append(f"Disk: {emoji} {value:.0f}%")
 
         if metric_lines:
@@ -945,9 +935,7 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             total = sats.get("total")
             if total is not None:
                 status = sats.get("status", "ok")
-                emoji = (
-                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
-                )
+                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
                 by_const = sats.get("by_constellation", {})
                 const_str = (
                     ", ".join(f"{k}:{v}" for k, v in by_const.items())
@@ -965,9 +953,7 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
             fix_mode = pos.get("fix_mode") or pos.get("fix_type")
             if fix_mode:
                 status = pos.get("status", "ok")
-                emoji = (
-                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
-                )
+                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
                 sats_used = pos.get("satellites_used", "")
                 lat = pos.get("latitude")
                 lon = pos.get("longitude")
@@ -1073,9 +1059,7 @@ def _print_quick_status(health: Dict[str, Any], station_config: Dict[str, Any]) 
                     status = "warning"
                 else:
                     status = "ok"
-                emoji = (
-                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
-                )
+                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
                 label = session_labels.get(session, session)
                 file_parts.append(f"{label}:{emoji}")
         if file_parts:
@@ -1805,9 +1789,7 @@ def cmd_health_single(args, station_id: str, logger: logging.Logger) -> int:
                 tcp = connection["tcp"]
                 status = tcp.get("status", "unknown")
                 host = tcp.get("host", "")
-                emoji = (
-                    "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
-                )
+                emoji = "✅" if status == "ok" else "⚠️" if status == "warning" else "❌"
                 print(f"  tcp: {emoji} {status} ({host})")
 
             # Show port status (always show all ports for consistency, N/A if not configured)
@@ -2511,6 +2493,59 @@ def cmd_rec_config(args) -> int:
                 _os.unlink(tf.name)
         return worst
 
+    # Handle --set-domes: push the station's IERS DOMES into the receiver's
+    # MARKER NUMBER (identity-safe: setMarkerParameters arg 2 + boot save).
+    # Marker-side sibling of --set-antenna; kept separate so that verb's
+    # "never touches the marker" guarantee stays literally true.
+    if getattr(args, "set_domes", False):
+        import os as _os
+        import tempfile
+
+        from ..septentrio.marker import (
+            NoDomesError,
+            build_domes_commands_from_station_config,
+        )
+
+        worst = 0
+        for target in targets:
+            station_id = target[0]
+            station_config = get_station_config(station_id)
+            if station_config is None:
+                logger.error(
+                    f"[{station_id}] not in stations.cfg — --set-domes reads "
+                    "rinex_marker_number from cfg (no bench mode)"
+                )
+                worst = max(worst, 1)
+                continue
+            try:
+                cmds = build_domes_commands_from_station_config(station_config)
+            except NoDomesError as exc:
+                # Not an error: most of the fleet has no DOMES, and those
+                # stations must be left alone rather than filled with the
+                # 4-char id. Exit status is unaffected.
+                logger.info(f"[{station_id}] skipped — {exc}")
+                continue
+            except ValueError as exc:
+                logger.error(f"[{station_id}] {exc}")
+                worst = max(worst, 2)
+                continue
+            logger.info(f"[{station_id}] DOMES push: {cmds[0]}")
+            tf = tempfile.NamedTemporaryFile(
+                "w", suffix=".txt", prefix=f"domes_{station_id}_", delete=False
+            )
+            tf.write(f"# rec-config --set-domes {station_id} (identity-safe)\n")
+            tf.write("\n".join(cmds) + "\n")
+            tf.close()
+            args.push = tf.name
+            try:
+                rc = _push_configs(
+                    args, [target], logger, tcp_username, tcp_password, rec_config_dir
+                )
+                worst = max(worst, rc)
+            finally:
+                _os.unlink(tf.name)
+        return worst
+
     # Handle --ntrip-stream / --disable-mount: identity-safe NTRIP server on/off
     # (+ optional --drop-sbf), pushed via the same temp-file path as --tracking.
     if getattr(args, "ntrip_stream", None) or getattr(args, "disable_mount", None):
@@ -2598,6 +2633,7 @@ def _ntrip_stream_configs(
                     timeout=getattr(args, "timeout", 30),
                     username=tcp_username,
                     password=tcp_password,
+                    firmware_version=_station_firmware(station_id),
                 )
                 config_text = client.extract_config("Current")
                 client.disconnect()
@@ -2730,6 +2766,7 @@ def _extract_configs(
                 timeout=args.timeout,
                 username=tcp_username,
                 password=tcp_password,
+                firmware_version=_station_firmware(station_id),
             )
             config = client.extract_config(config_type)
             client.disconnect()
@@ -2798,6 +2835,30 @@ def _extract_configs(
     return 0 if success_count == len(targets) else 1
 
 
+def _station_firmware(station_id: str) -> Optional[str]:
+    """Firmware version from stations.cfg, for firmware-aware receiver comms.
+
+    Every TCP client we open should be told this — fw 5.7.0 enforces auth while
+    earlier versions do not, and guessing wrong in either direction is harmful:
+    skipping auth on a 5.7.0 box means silently rejected commands reported as
+    success, while sending a doomed login to a pre-5.7 box feeds the
+    brute-force counter that becomes a ~9h global lockout the moment that
+    station is upgraded (the ISAK case). ``None`` (unknown) makes
+    :mod:`receivers.septentrio.fw_policy` assume auth is required.
+    """
+    try:
+        cfg = get_station_config(station_id, silent=True)
+    except Exception:  # noqa: BLE001 - never let cfg lookup break a push
+        return None
+    if not cfg:
+        return None
+    val = cfg.get("receiver_firmware_version")
+    if val is None:
+        val = (cfg.get("receiver") or {}).get("firmware_version")
+    text = str(val).strip() if val is not None else ""
+    return text or None
+
+
 def _push_configs(
     args, targets, logger, tcp_username=None, tcp_password=None, rec_config_dir=None
 ) -> int:
@@ -2857,10 +2918,21 @@ def _push_configs(
                 timeout=args.timeout,
                 username=tcp_username,
                 password=tcp_password,
+                firmware_version=_station_firmware(station_id),
             )
             success, errors = client.push_config(
                 commands, save_to_boot=not args.no_save
             )
+
+            # A rejected login on a fw ≥5.7.0 receiver means every command that
+            # followed was refused. Reporting "applied successfully" there is a
+            # lie the operator acts on, so fail loudly instead.
+            if client.auth_failed:
+                success = False
+                errors = list(errors or []) + [
+                    "authentication required by firmware but rejected — "
+                    "no commands were applied"
+                ]
 
             # Query serial number before disconnecting
             serial = None
@@ -2974,6 +3046,7 @@ def _check_session(args, targets, logger, tcp_username=None, tcp_password=None) 
                 timeout=args.timeout,
                 username=tcp_username,
                 password=tcp_password,
+                firmware_version=_station_firmware(station_id),
             )
             if not client.connect():
                 print(f"{station_id}: ERROR connect-failed")
@@ -3116,6 +3189,7 @@ def _enable_session(
                 timeout=args.timeout,
                 username=tcp_username,
                 password=tcp_password,
+                firmware_version=_station_firmware(station_id),
             )
             if not client.connect():
                 print("  ✗ Connect failed")
@@ -3246,6 +3320,7 @@ def _audit_session(args, targets, logger, tcp_username=None, tcp_password=None) 
                 timeout=args.timeout,
                 username=tcp_username,
                 password=tcp_password,
+                firmware_version=_station_firmware(station_id),
             )
             if not client.connect():
                 print(f"{station_id}: ERROR connect-failed")
@@ -3720,6 +3795,7 @@ def cmd_rec_provision(args) -> int:
                         timeout=args.timeout,
                         username=tcp_username,
                         password=tcp_password,
+                        firmware_version=_station_firmware(station_id),
                     )
                     config = client.extract_config("Current")
                     client.disconnect()

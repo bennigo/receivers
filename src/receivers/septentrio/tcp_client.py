@@ -42,6 +42,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from .fw_policy import firmware_requires_auth, should_attempt_login
+
 logger = logging.getLogger(__name__)
 
 # Default TCP command ports for Septentrio receivers
@@ -65,6 +67,7 @@ class PolaRX5TCPClient:
         username: Optional[str] = None,
         password: Optional[str] = None,
         use_tls: bool = False,
+        firmware_version: Optional[str] = None,
     ):
         """Initialize TCP client.
 
@@ -76,6 +79,13 @@ class PolaRX5TCPClient:
             username: TCP login username for fw 5.7.0+ (None = skip auth)
             password: TCP login password for fw 5.7.0+
             use_tls: Wrap connection in TLS (for port 28783 when receiver is in secure mode)
+            firmware_version: The station's firmware from stations.cfg. Decides
+                whether a rejected login is a real failure (fw ≥5.7.0, where
+                auth is enforced) or benign (pre-5.7, where the login command
+                exists but unauthenticated commands still work). Without it
+                every pre-5.7 push logs a misleading "wrong credentials"
+                warning and then succeeds anyway. ``None`` = assume auth is
+                required, the safe default.
         """
         self.host = host
         self.station_id = station_id
@@ -84,9 +94,14 @@ class PolaRX5TCPClient:
         self.username = username
         self.password = password
         self.use_tls = use_tls
+        self.firmware_version = firmware_version
         self.logger = logging.getLogger(f"receivers.septentrio.tcp.{station_id}")
         self._sock: Optional[socket.socket] = None
         self._conn_id: Optional[str] = None
+        #: True only when auth was REQUIRED (fw ≥5.7.0) and was rejected. Callers
+        #: must not report success in that case — the receiver will have refused
+        #: every command that followed.
+        self.auth_failed = False
 
     def connect(self) -> bool:
         """Establish TCP connection to receiver.
@@ -136,6 +151,16 @@ class PolaRX5TCPClient:
         if not self.username or not self.password or not self._sock:
             return
 
+        # Known pre-5.7 receiver: auth is not enforced, so a login buys nothing
+        # and a rejected one still feeds the brute-force counter that produces
+        # the ~9h global lockout after an upgrade. See fw_policy.
+        if not should_attempt_login(self.firmware_version):
+            self.logger.debug(
+                f"Skipping login for {self.station_id} "
+                f"(fw {self.firmware_version} does not enforce auth)"
+            )
+            return
+
         cmd = f"login, {self.username}, {self.password}\n"
         self._sock.sendall(cmd.encode("utf-8"))
 
@@ -161,10 +186,29 @@ class PolaRX5TCPClient:
             self.logger.debug(
                 f"Login not recognised by {self.station_id} — fw≤5.5.0, proceeding"
             )
-        elif "Wrong username or password" in decoded:
-            self.logger.warning(
-                f"TCP auth failed for {self.station_id}: wrong credentials"
-            )
+        elif (
+            "Wrong username or password" in decoded
+            or "Too many failed login" in decoded
+        ):
+            # Gate on the firmware in stations.cfg, mirroring
+            # polarx5_tcp_extractor._firmware_requires_auth. Pre-5.7 receivers
+            # accept the `login` command but do NOT enforce it, so a rejection
+            # there is benign and the commands that follow still apply — warning
+            # about "wrong credentials" and then reporting success was simply
+            # misleading (seen on NYLA, still fw 5.6.0).
+            if firmware_requires_auth(self.firmware_version):
+                self.auth_failed = True
+                self.logger.error(
+                    f"TCP auth failed for {self.station_id}: wrong credentials "
+                    f"(fw {self.firmware_version or 'unknown'} enforces auth — "
+                    f"commands will be REJECTED; check tcp_username/tcp_password "
+                    f"in receivers.cfg)"
+                )
+            else:
+                self.logger.debug(
+                    f"TCP login not accepted by {self.station_id} "
+                    f"(fw {self.firmware_version}), proceeding unauthenticated"
+                )
 
     def disconnect(self) -> None:
         """Close TCP connection."""
