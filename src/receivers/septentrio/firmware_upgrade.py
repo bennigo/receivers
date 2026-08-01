@@ -189,42 +189,99 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
-def stream_suf(
-    sock: socket.socket,
-    suf_path: Path,
-    *,
-    progress: Optional[Callable[[int, int], None]] = None,
-    chunk_size: int = 1 << 16,
-    ready_timeout_s: float = 30.0,
-) -> None:
-    """Put the receiver into upgrade mode and stream the .suf in binary.
+def _excerpt(buf: bytes, limit: int = 400) -> str:
+    """Render what the receiver actually sent, for error messages.
 
-    Raises ``FirmwareUpgradeError`` if the receiver never signals readiness. The
-    receiver reboots on its own once the stream completes; the socket is expected
-    to drop — callers reconnect over TLS afterward.
+    The previous implementation discarded this buffer, so a failed flash gave
+    no clue whether the receiver had objected, gone quiet, or hung up.
     """
-    total = suf_path.stat().st_size
-    # Enter upgrade mode. The receiver replies, then begins waiting for the file.
-    sock.sendall(b"exeResetReceiver, Upgrade, none\n")
+    if not buf:
+        return "<nothing>"
+    text = buf.decode("utf-8", errors="replace").strip()
+    if len(text) > limit:
+        text = text[:limit] + f"… (+{len(text) - limit} chars)"
+    return repr(text)
 
-    # Wait (bounded) for "Ready for SUF download ...".
+
+def await_suf_ready(sock: socket.socket, ready_timeout_s: float = 60.0) -> str:
+    """Block until the receiver signals ``Ready for SUF download``.
+
+    Returns the text received. Raises ``FirmwareUpgradeError`` otherwise —
+    and crucially distinguishes *why*, because the three failures need
+    different operator responses and the previous code reported all of them
+    as "never signalled Ready":
+
+    * **EOF** — ``recv()`` returns ``b""``, meaning the receiver closed the
+      connection. This is NOT the documented protocol (Reference Guide § 1.32
+      method 5 streams the ``.suf`` over the *same* socket), so it means the
+      receiver rejected the command or rebooted instead of entering upgrade
+      mode. The old code could not see it: a timeout also yielded ``b""``, so
+      EOF was swallowed as "no data yet" and the loop spun out the full budget
+      before blaming the wrong thing.
+    * **socket error** — the link died mid-wait.
+    * **timeout** — nothing arrived in time.
+
+    In every failure case NO firmware has been streamed, and a receiver that
+    did enter upgrade mode restarts in normal mode once its 200 s
+    download-start window lapses. Aborting here is always safe.
+    """
     end = time.time() + ready_timeout_s
     buf = b""
     sock.settimeout(2.0)
     while time.time() < end:
         try:
             chunk = sock.recv(4096)
-        except (TimeoutError, OSError):
-            chunk = b""
-        if chunk:
-            buf += chunk
-            if _READY_RE.search(buf.decode("utf-8", errors="ignore")):
-                break
-    else:
-        raise FirmwareUpgradeError(
-            "receiver never signalled 'Ready for SUF download' after "
-            "exeResetReceiver — aborted before streaming firmware"
-        )
+        # TimeoutError is a subclass of OSError — must be caught first.
+        except TimeoutError:
+            continue
+        except OSError as exc:
+            raise FirmwareUpgradeError(
+                f"socket error while waiting for 'Ready for SUF download': {exc} "
+                f"— no firmware was streamed. Receiver said: {_excerpt(buf)}"
+            ) from exc
+        if not chunk:
+            raise FirmwareUpgradeError(
+                "receiver closed the connection after 'exeResetReceiver, Upgrade' "
+                "instead of signalling 'Ready for SUF download' — no firmware was "
+                "streamed, and the receiver restarts in normal mode. "
+                f"Receiver said before hanging up: {_excerpt(buf)}"
+            )
+        buf += chunk
+        if _READY_RE.search(buf.decode("utf-8", errors="ignore")):
+            return buf.decode("utf-8", errors="ignore")
+    raise FirmwareUpgradeError(
+        f"receiver never signalled 'Ready for SUF download' within "
+        f"{ready_timeout_s:.0f}s of exeResetReceiver — no firmware was streamed. "
+        f"Receiver said: {_excerpt(buf)}"
+    )
+
+
+def stream_suf(
+    sock: socket.socket,
+    suf_path: Path,
+    *,
+    progress: Optional[Callable[[int, int], None]] = None,
+    chunk_size: int = 1 << 16,
+    ready_timeout_s: float = 60.0,
+) -> None:
+    """Put the receiver into upgrade mode and stream the .suf in binary.
+
+    Raises ``FirmwareUpgradeError`` if the receiver never signals readiness —
+    see :func:`await_suf_ready` for how the failure modes are told apart. The
+    receiver reboots on its own once the stream completes; the socket is
+    expected to drop — callers reconnect over TLS afterward.
+
+    ``ready_timeout_s`` bounds only the wait for readiness; it does not eat
+    into the receiver's 200 s download-start window, which starts when the
+    receiver signals ready. Hence the unhurried 60 s default — a slow APN
+    link is not a reason to abort a flash.
+    """
+    total = suf_path.stat().st_size
+    # Enter upgrade mode. The receiver replies, then begins waiting for the file.
+    sock.sendall(b"exeResetReceiver, Upgrade, none\n")
+
+    ready = await_suf_ready(sock, ready_timeout_s=ready_timeout_s)
+    logger.debug("receiver signalled ready: %s", ready.strip()[-200:])
 
     # Stream the file. Must start within SUF_DOWNLOAD_START_WINDOW_S of readiness.
     sent = 0
