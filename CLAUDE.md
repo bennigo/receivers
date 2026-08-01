@@ -689,6 +689,23 @@ bgo is in the gpsops group — can read/write gpsops-owned dirs without owning t
 2. On rek-d01 as bgo: `cd ~/git/receivers && git pull`
 3. Reinstall: `sudo bash deployment/server/install.sh` (idempotent — safe to re-run; skips protected files like `database.cfg`)
 
+**install.sh stops the scheduler for the duration of the run** (Phase 4 → Phase 10
+restart) — every deploy therefore has a short downtime window. It used to stop only
+on `--wipe*`, which meant ordinary deploys swapped packages under a live process:
+`receivers` is an **editable** install, so the working tree from step 2 *is* the
+live code, and imports are lazy. If the run aborts between the two, the scheduler
+stays down and the script says so loudly — restart with
+`systemctl --user start gps-receivers-scheduler` as gpsops.
+
+**Phase 4 preflights the dependency tree** (`pip install --dry-run -e .`, ~10 s)
+*before* the uninstall on line ~530. That uninstall is destructive by design (pip
+won't re-fetch a direct-URL dep when the installed version already satisfies it, so
+a same-version SHA bump needs it), which means a failed resolve used to leave the
+venv with **no tostools** and the deploy worse than it found things — exactly what
+happened on 2026-07-31. **Sibling `git+https` pins for the same package must match
+EXACTLY across repos**; two differing direct URLs (even pinned-vs-unpinned at the
+same commit) are a hard `ResolutionImpossible`. Skipped under `--dev`.
+
 **Config source**: install.sh Phase 5 checks `~/git/gps-config-data/<file>` first, then `config/defaults/<file>`.
 `~/git/gps-config-data/receivers.cfg` must exist (non-template) for TCP credentials to deploy correctly.
 
