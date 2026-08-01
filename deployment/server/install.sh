@@ -111,6 +111,25 @@ gpsops_systemctl() {
         systemctl --user "$@"
 }
 
+# Set once Phase 4 stops the scheduler, so the exit trap can tell the operator
+# whether an aborted run left it down. Phase 10 is what brings it back.
+SCHEDULER_STOPPED=false
+
+# `set -euo pipefail` means any failed step aborts mid-install. If that happens
+# after Phase 4 stopped the scheduler, it stays stopped — say so loudly rather
+# than auto-restarting onto a venv whose state we no longer know is coherent.
+warn_if_scheduler_left_down() {
+    local rc=$?
+    if [[ $rc -ne 0 ]] && $SCHEDULER_STOPPED; then
+        echo ""
+        echo -e "${RED}  install.sh aborted (rc=$rc) — THE SCHEDULER IS STOPPED.${NC}"
+        echo "  The venv may be half-installed; inspect before restarting."
+        echo "  Restart as $SERVICE_USER:"
+        echo "    systemctl --user start gps-receivers-scheduler"
+    fi
+}
+trap warn_if_scheduler_left_down EXIT
+
 # Stop the scheduler regardless of whether it's running as a user unit
 # (current) or a legacy system unit (pre-migration). Used by --wipe* flags
 # and by Phase 10 before the unit is reinstalled.
@@ -124,6 +143,9 @@ stop_scheduler() {
     fi
     # Legacy system unit — safe no-op if absent.
     systemctl stop "$svc" 2>/dev/null || true
+    # Set here rather than at the call sites so every path that stops the
+    # scheduler (Phase 4 and the --wipe* branches) is covered by the exit trap.
+    SCHEDULER_STOPPED=true
 }
 
 # ── Parse arguments ───────────────────────────────────────────────────────
@@ -471,6 +493,18 @@ fi
 # ===========================================================================
 phase 4 "Python virtual environment"
 
+# Stop the scheduler before touching the venv, config, or database.
+#
+# Everything from here to the Phase 10 restart mutates state the running
+# scheduler depends on: pip swaps packages underneath it, `receivers` is an
+# EDITABLE install (so the working tree IS the live code — a `git pull` before
+# this script already moved it), imports are lazy, and Phase 6 runs migrations.
+# A job that resolves a lazy import mid-install gets new code against old
+# objects. Until now stop_scheduler ran only for --wipe*, so ordinary deploys
+# ran straight over a live process.
+stop_scheduler
+ok "Scheduler stopped for the install (Phase 10 restarts it)"
+
 echo "  Python: $PYTHON_VERSION"
 
 if [[ ! -d "$VENV_DIR" ]]; then
@@ -482,6 +516,40 @@ fi
 
 # Install packages as bgo (bgo owns the venv)
 sudo -u "$ADMIN_USER" "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel -q
+
+# Preflight: prove the dependency tree resolves BEFORE the destructive
+# uninstall below.
+#
+# `set -euo pipefail` aborts the script the moment the install fails — but by
+# then the uninstall has already run, so the venv is left with NO tostools
+# (or gtimes/gps_parser). The deploy makes things worse than it found them.
+#
+# One mismatched direct-URL pin between two siblings is enough to trigger it:
+# pip treats two direct URLs for the same package as conflicting unless they
+# match exactly, so `receivers → gps-parser@257a2ee` against
+# `tostools → gps-parser` (unpinned) is a hard ResolutionImpossible. Hit for
+# real on rek-d01 2026-07-31; the fix was pinning both to 257a2ee.
+#
+# Verified on rek-d01 that this catches it even with tostools already
+# installed (pip does not short-circuit): broken pin rc=1, fixed pin rc=0,
+# ~10 s. Turns "deploy bricks production" into "deploy refuses to start".
+if ! $FLAG_DEV; then
+    PREFLIGHT_LOG=$(mktemp)
+    echo "  Preflight: resolving dependency tree…"
+    if ! sudo -u "$ADMIN_USER" "$VENV_DIR/bin/pip" \
+            install --dry-run -e "$INSTALL_DIR" >"$PREFLIGHT_LOG" 2>&1; then
+        err "Dependency preflight FAILED — venv left untouched."
+        echo ""
+        tail -25 "$PREFLIGHT_LOG"
+        echo ""
+        echo "  Nothing was uninstalled. Fix the pins in pyproject.toml"
+        echo "  (sibling direct-URL pins must match EXACTLY), then re-run."
+        rm -f "$PREFLIGHT_LOG"
+        exit 1
+    fi
+    rm -f "$PREFLIGHT_LOG"
+    ok "Dependency tree resolves"
+fi
 
 # Force a clean re-resolve of the git-pinned siblings. pip skips re-fetching a
 # direct-URL (git) dependency when its installed VERSION already satisfies the
