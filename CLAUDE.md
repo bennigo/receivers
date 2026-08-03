@@ -481,6 +481,14 @@ TOS device-intake walkthrough (add-receiver/move-device → add-antenna → add-
 telemetry → stream-flip/download), with the session-split / monument_height /
 find_station-reindex / legacy-router gotchas.
 
+**Station remediation**: See `docs/architecture/station-metadata-remediation.md` for
+repairing an EXISTING station — the ordered three-phase pipeline (TOS correctness →
+header retrofit → R2→R3 upgrade where the raw is constellation-capable), the
+verification steps (audit clean, era-correct headers, catalog parity across hosts),
+and the trap table (`--parallel` needs `-s/-e`; the `software_version` comparator
+flags 200/202 files spuriously; station.info is a composite, not the ARP; resume-skip
+needs `--force`). Worked end-to-end on ISAK 2026-08-03.
+
 **Source of truth**: `gps-config-data` repo (`git.vedur.is/bgo/gps-config-data`).
 **RULE (bgo, 2026-07-06): ALL config changes are made in gps-config-data and propagate
 outward — never edit a deployed file directly.** Commit + push immediately; an
