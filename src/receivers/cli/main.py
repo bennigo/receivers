@@ -5976,6 +5976,8 @@ def cmd_rinex(args) -> int:
                     flush_fn=_flush_fn,
                     flush_every=_flush_every,
                     push_dest=_push_dest_display,
+                    retry_attempts=getattr(args, "retry_attempts", 2),
+                    retry_backoff=getattr(args, "retry_backoff", 3.0),
                     correct_hardware=_correct_hw,
                     loglevel=args.loglevel,
                     progress=h,

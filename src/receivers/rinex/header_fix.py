@@ -545,6 +545,123 @@ def discover_rinex_files(
     return deduped
 
 
+def _retry_transient_failures(
+    summary: dict,
+    station_id: str,
+    *,
+    attempts: int,
+    backoff: float,
+    pending: Optional[list],
+    archive_old: bool,
+    dry_run: bool,
+    work_dir: Optional[Path],
+    source_base: Path,
+    session: str,
+    tos_cache: Any,
+    correct_hardware: frozenset,
+    loglevel: int,
+) -> None:
+    """Re-run the failures that a retry can plausibly fix, in place.
+
+    Only the transient class — see :mod:`receivers.rinex.failure_class`. A
+    corrupt stub or a missing TOS session produces the identical error on a
+    second pass, and retrying it buries the signal an operator needs.
+
+    Mutates ``summary`` so the reported counts reflect the final state rather
+    than the first attempt: a file that succeeds on retry moves out of
+    ``errors`` and into ``fixed``/``skipped``, and its ``error`` key is cleared.
+    Retry outcomes are logged and summarised, because a run that only passes on
+    the second attempt is itself worth noticing — it means the box is under
+    pressure, which is the condition that produced the ELEY failures.
+    """
+    import time
+
+    from .failure_class import partition_failures
+
+    retryable, permanent = partition_failures(summary.get("details", []))
+    # Recorded before the early return: a run whose failures are ALL permanent
+    # is the common good case (ISAK's 6 corrupt stubs), and the count is what
+    # the operator acts on.
+    summary["permanent_failures"] = len(permanent)
+    summary.setdefault("recovered_on_retry", 0)
+    if permanent:
+        logger.info(
+            "%s: %d permanent failure(s) — not retried", station_id, len(permanent)
+        )
+    if not retryable:
+        return
+
+    print(
+        f"   ↻ retrying {len(retryable)} transient failure(s), "
+        f"up to {attempts} attempt(s)"
+    )
+    recovered = 0
+    for detail in retryable:
+        # `source` is the archive path the result was built from — the only
+        # key guaranteed present, since it is set before any failure can occur.
+        path = detail.get("source")
+        if not path:
+            continue
+        for attempt in range(1, attempts + 1):
+            if backoff:
+                # Pressure is exactly what these failures are made of, so give
+                # the box a widening moment rather than hammering it.
+                time.sleep(backoff * attempt)
+            retry = fix_headers_in_file(
+                Path(path),
+                station_id,
+                archive_old=archive_old,
+                dry_run=dry_run,
+                work_dir=work_dir,
+                source_base=source_base,
+                session_type=session,
+                tos_cache=tos_cache,
+                correct_hardware=correct_hardware,
+                loglevel=loglevel,
+            )
+            if retry.get("error"):
+                logger.warning(
+                    "%s: retry %d/%d still failing for %s: %s",
+                    station_id,
+                    attempt,
+                    attempts,
+                    Path(path).name,
+                    retry["error"],
+                )
+                detail["error"] = retry["error"]
+                detail["retry_attempts"] = attempt
+                continue
+            # Recovered. Fold the new result into the original entry so the
+            # grouped field summary and the push batch both see it.
+            detail.update(retry)
+            detail["error"] = None
+            detail["recovered_after"] = attempt
+            summary["errors"] -= 1
+            if retry.get("changed_labels"):
+                if dry_run:
+                    summary["would_fix"] = summary.get("would_fix", 0) + 1
+                else:
+                    summary["fixed"] += 1
+            else:
+                summary["skipped"] = summary.get("skipped", 0) + 1
+            if pending is not None and (
+                retry.get("fixed") or retry.get("preserved_org")
+            ):
+                pending.append(retry)
+            recovered += 1
+            logger.info(
+                "%s: recovered %s on retry %d", station_id, Path(path).name, attempt
+            )
+            break
+
+    summary["recovered_on_retry"] = recovered
+    summary["permanent_failures"] = len(permanent)
+    if recovered:
+        print(f"   ✓ recovered {recovered}/{len(retryable)} on retry")
+    else:
+        print(f"   ✗ none of the {len(retryable)} transient failure(s) recovered")
+
+
 def fix_headers_station(
     station_id: str,
     session: str,
@@ -560,6 +677,8 @@ def fix_headers_station(
     flush_fn: Any = None,
     flush_every: int = 0,
     push_dest: Optional[str] = None,
+    retry_attempts: int = 2,
+    retry_backoff: float = 3.0,
     correct_hardware: frozenset = frozenset(),
     loglevel: int = logging.INFO,
     progress: Any = None,
@@ -699,6 +818,26 @@ def fix_headers_station(
             )
         if progress is not None:
             progress.advance()
+    # Retry the transient failures before the final flush, so anything that
+    # succeeds on a second attempt rides out with the last batch rather than
+    # needing its own push.
+    if retry_attempts > 0 and summary["errors"]:
+        _retry_transient_failures(
+            summary,
+            station_id,
+            attempts=retry_attempts,
+            backoff=retry_backoff,
+            pending=_pending if _do_flush else None,
+            archive_old=archive_old,
+            dry_run=dry_run,
+            work_dir=work_dir,
+            source_base=source_base,
+            session=session,
+            tos_cache=tos_cache,
+            correct_hardware=correct_hardware,
+            loglevel=loglevel,
+        )
+
     # Flush the final partial batch.
     if _do_flush and _pending:
         flush_fn(_pending)

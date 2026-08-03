@@ -1365,6 +1365,28 @@ Examples:
         "Use a large value to push once at the end.",
     )
     mode_group.add_argument(
+        "--retry-attempts",
+        type=int,
+        default=2,
+        metavar="N",
+        help="With --fix-headers: re-run TRANSIENT per-file failures up to N times "
+        "before reporting them (default: 2; 0 disables). Permanent failures are "
+        "never retried — unreadable/corrupt files, truncated raw, a missing TOS "
+        "session, or a refused rinex_org preservation all produce the same error "
+        "on a second pass and need an operator, not another attempt. Driving case: "
+        "the ELEY 1Hz retrofit ended with ~13 transient `compress` failures that "
+        "succeeded on a manual re-run.",
+    )
+    mode_group.add_argument(
+        "--retry-backoff",
+        type=float,
+        default=3.0,
+        metavar="SECONDS",
+        help="Base delay before each retry, multiplied by the attempt number "
+        "(default: 3.0). These failures come from subprocess/IO pressure, so the "
+        "wait is the point — set 0 only in tests.",
+    )
+    mode_group.add_argument(
         "--catalog-host",
         default=None,
         metavar="HOST",
