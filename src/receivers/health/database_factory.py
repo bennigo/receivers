@@ -544,6 +544,22 @@ class DatabaseConnectionFactory:
             return params
 
         cfg = _load_config_file()
+
+        # The primary is habitually declared as `localhost` (unix socket), while
+        # other config names the same machine by FQDN — rek-d01's
+        # `[archive] catalog_hosts = rek-d01.vedur.is, pgdev.vedur.is`. Those are
+        # one server under two names, so every catalog write logged a warning and
+        # fell back to a *guess* that happened to be right. `local_aliases`
+        # declares the equivalence, and returning the primary params unchanged
+        # keeps the socket rather than opening a needless TCP loopback.
+        aliases = {
+            alias.strip()
+            for alias in (cfg.get("local_aliases") or "").split(",")
+            if alias.strip()
+        }
+        if host in aliases:
+            return params
+
         if host == cfg.get("mirror_host"):
             host_params = {**params, "host": host}
             mirror_user = cfg.get("mirror_user")

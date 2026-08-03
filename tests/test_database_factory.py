@@ -409,3 +409,70 @@ class TestConnectionSemaphore:
         gate.set()
         t1.join(timeout=2)
         t2.join(timeout=2)
+
+
+class TestLocalAliases:
+    """The primary declared as `localhost` is the same box as its own FQDN.
+
+    rek-d01 sets `[archive] catalog_hosts = rek-d01.vedur.is, pgdev.vedur.is`
+    while `database.cfg` declares `host = localhost`. Every catalog write
+    therefore logged "neither the primary nor the mirror_host — falling back to
+    primary credentials" and connected over TCP to a machine it was already on.
+    The credentials happened to be right, which is precisely the problem: an
+    undeclared identity doing load-bearing work.
+    """
+
+    _CFG = {
+        "host": "localhost",
+        "user": "gpsops",
+        "password": "primarypass",
+        "mirror_host": "pgdev.vedur.is",
+        "mirror_user": "bgo",
+        "local_aliases": "rek-d01.vedur.is, reknew",
+    }
+
+    def _resolve(self, host, cfg=None):
+        with patch(
+            "receivers.health.database_factory._load_config_file",
+            return_value=cfg or self._CFG,
+        ):
+            with patch.dict(os.environ, {}, clear=True):
+                return DatabaseConnectionFactory.get_connection_params_for_host(host)
+
+    def test_alias_resolves_to_the_primary(self):
+        p = self._resolve("rek-d01.vedur.is")
+        assert p["user"] == "gpsops"
+        assert p["password"] == "primarypass"
+
+    def test_alias_keeps_the_socket_not_a_tcp_loopback(self):
+        """Returning the primary params unchanged means host stays `localhost`."""
+        assert self._resolve("rek-d01.vedur.is")["host"] == "localhost"
+
+    def test_second_alias_in_the_list(self):
+        assert self._resolve("reknew")["host"] == "localhost"
+
+    def test_whitespace_around_entries_is_tolerated(self):
+        cfg = {**self._CFG, "local_aliases": "  rek-d01.vedur.is  ,  reknew "}
+        assert self._resolve("rek-d01.vedur.is", cfg)["host"] == "localhost"
+
+    def test_mirror_still_wins_its_own_credentials(self):
+        """An alias list must not shadow the mirror branch."""
+        p = self._resolve("pgdev.vedur.is")
+        assert p["host"] == "pgdev.vedur.is"
+        assert p["user"] == "bgo"
+
+    def test_unknown_host_still_falls_back_and_warns(self):
+        p = self._resolve("some-other.vedur.is")
+        assert p["host"] == "some-other.vedur.is"
+        assert p["user"] == "gpsops"
+
+    def test_absent_local_aliases_changes_nothing(self):
+        cfg = {k: v for k, v in self._CFG.items() if k != "local_aliases"}
+        p = self._resolve("rek-d01.vedur.is", cfg)
+        assert p["host"] == "rek-d01.vedur.is"
+
+    def test_empty_local_aliases_is_not_a_wildcard(self):
+        """A blank value must not make every host an alias of the primary."""
+        cfg = {**self._CFG, "local_aliases": "  ,  "}
+        p = self._resolve("rek-d01.vedur.is", cfg)
+        assert p["host"] == "rek-d01.vedur.is"
