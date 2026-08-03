@@ -3131,15 +3131,68 @@ def _retire_old_child(
     join (device left parentless / retired) — used for SIM cards, which aren't
     warehoused inventory. Returns the writer response, or ``None`` when there
     was no ``old_id`` or no open join.
+
+    Also closes the device's **installation-scoped** attribute periods at
+    ``eff_date`` — see :func:`_close_install_scoped_attributes`. Closing the
+    join alone is what left ISAK antenna 4527 (removed 2026-07-30) still
+    reporting this mark's ``antenna_height`` as its current value.
     """
     if old_id is None:
         return None
+    _close_install_scoped_attributes(w, old_id, eff_date)
     if to_warehouse_eid is not None:
         return w.move_device(old_id, to_warehouse_eid, eff_date)
     open_join = w.get_open_parent_join(old_id)
     if open_join and open_join.get("id") is not None:
         return w.patch_entity_connection(int(open_join["id"]), time_to=eff_date)
     return None
+
+
+def _close_install_scoped_attributes(
+    w: TOSWriter,
+    device_id: int,
+    eff_date: str,
+) -> Dict[str, Any]:
+    """End the attribute periods that described the installation just ended.
+
+    A device's geometry — antenna height above the monument, the eccentricity
+    offsets, the azimuth — is true of one INSTALLATION, not of the device. When
+    it comes off the mark those values stop being true, but nothing succeeds
+    them: kit in a warehouse has no height above anything. So they are closed,
+    not transitioned.
+
+    Left open they are actively wrong rather than merely stale: every consumer
+    that asks TOS for "the current value" gets this mark's number for a device
+    that is somewhere else. ISAK antenna 4527 sat that way from 2026-07-30
+    until it was found by ``tos audit missing-attributes``.
+
+    Device-state codes (``status``, ``comment``, ``owner``) are deliberately
+    untouched — they describe the device wherever it now is, and the calling
+    verbs already transition them via ``old_status``/``old_comment``.
+
+    The code set is imported from ``tostools`` rather than restated here so the
+    write path closes exactly what the audit reports.
+    """
+    from tostools.audit_missing_attributes import INSTALL_SCOPED_CODES
+
+    closed: Dict[str, Any] = {}
+    for code in sorted(INSTALL_SCOPED_CODES):
+        try:
+            response = w.close_attribute_period(device_id, code, eff_date)
+        except Exception as exc:  # noqa: BLE001
+            # A tidy-up must never sink the swap it is tidying up after: the
+            # join close and the new device are the operation's real payload.
+            logger.warning(
+                "could not close %s on device %s at %s: %s",
+                code,
+                device_id,
+                eff_date,
+                exc,
+            )
+            continue
+        if response is not None:
+            closed[code] = response
+    return closed
 
 
 def replace_modem(
