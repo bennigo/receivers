@@ -1,0 +1,748 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Loki log-follow dashboard for the receivers package on rek-d01. Companion to the Postgres gps_health dashboards: metrics/state live there, the log narrative lives here. Labels: job/host/level/component/source. station and run_id are JSON fields (cardinality rule) filtered via `| json`.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 2,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Health Overview",
+      "tooltip": "GPS receiver health overview (Postgres gps_health)",
+      "type": "link",
+      "url": "/d/gps-health-voltage/gps-receiver-health-voltage"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Station Detail",
+      "tooltip": "Per-station health deep dive (Postgres gps_health)",
+      "type": "link",
+      "url": "/d/gps-station-detail/gps-station-detail?var-station=${station}"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Data Delivery",
+      "tooltip": "Per-station file delivery & download history",
+      "type": "link",
+      "url": "/d/gps-data-delivery/gps-data-delivery"
+    }
+  ],
+  "panels": [
+    {
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "code": { "language": "plaintext", "showLineNumbers": false, "showMiniMap": false },
+        "content": "**How to use** — Narrow with the label variables (Host / Component / Level / Source), then refine with the field filters: **Station** and **Run** are regex over JSON *fields* (not Loki labels — 173 stations would explode stream cardinality), e.g. `RHOF` or `RHOF|ELDC`. **Include / Exclude** are raw line-regex filters. Click a station in *Top error stations* to focus this dashboard or jump to Station Detail; click a run in *Recent runs* to load its full narrative below. The bottom panel supports Grafana **Live** tailing.",
+        "mode": "markdown"
+      },
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 3 },
+      "id": 2,
+      "panels": [],
+      "title": "Overview",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+      "description": "ERROR+CRITICAL lines in the selected time range, honoring all dashboard filters.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 50 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({job=~\"$job\", host=~\"$host\", component=~\"$component\", source=~\"$source\", level=~\"ERROR|CRITICAL\"} |~ `$include_regex` !~ `$exclude_regex` | json | station =~ `$station` | run_id =~ `$run_id` [$__range]))",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Errors (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+      "description": "WARNING lines in the selected time range, honoring all dashboard filters.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "orange", "value": 200 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 4 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({job=~\"$job\", host=~\"$host\", component=~\"$component\", source=~\"$source\", level=\"WARNING\"} |~ `$include_regex` !~ `$exclude_regex` | json | station =~ `$station` | run_id =~ `$run_id` [$__range]))",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Warnings (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+      "description": "Distinct stations that produced at least one ERROR/CRITICAL line in the range (station is a JSON field; `.+` requires a non-empty value, i.e. excludes non-station lines such as scheduler internals).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 4 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "count(sum by (station) (count_over_time({job=~\"$job\", host=~\"$host\", component=~\"$component\", level=~\"ERROR|CRITICAL\"} | json | station =~ `.+` [$__range])))",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Stations with errors",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+      "description": "Raw log bytes matching the label filters in the range — the volume/ingest knob to watch (todo #61 verbosity audit).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 200000000 },
+              { "color": "red", "value": 1000000000 }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 4 },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "sum(bytes_over_time({job=~\"$job\", host=~\"$host\", component=~\"$component\", level=~\"$level\", source=~\"$source\"} [$__range]))",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Log volume (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+      "description": "ERROR/CRITICAL vs WARNING line rate over time, honoring all dashboard filters. A burst here is the entry point: narrow Component/Station, then read the live tail below.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "lines",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "ERROR" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "CRITICAL" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "dark-red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "WARNING" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 7,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "sum by (level) (count_over_time({job=~\"$job\", host=~\"$host\", component=~\"$component\", source=~\"$source\", level=~\"ERROR|CRITICAL\"} |~ `$include_regex` !~ `$exclude_regex` | json | station =~ `$station` | run_id =~ `$run_id` [$__auto]))",
+          "legendFormat": "{{level}}",
+          "queryType": "range",
+          "refId": "errors"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "sum by (level) (count_over_time({job=~\"$job\", host=~\"$host\", component=~\"$component\", source=~\"$source\", level=\"WARNING\"} |~ `$include_regex` !~ `$exclude_regex` | json | station =~ `$station` | run_id =~ `$run_id` [$__auto]))",
+          "legendFormat": "{{level}}",
+          "queryType": "range",
+          "refId": "warnings"
+        }
+      ],
+      "title": "Error / warning rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+      "description": "Log line volume split by component (Loki label, ~10 values: download, health, scheduler, rinex, cli, archive, pipeline, monitoring, audit). Stacked — the shape shows which subsystem is talking.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "lines",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 8,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": true, "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "sum by (component) (count_over_time({job=~\"$job\", host=~\"$host\", component=~\"$component\", level=~\"$level\", source=~\"$source\"} [$__auto]))",
+          "legendFormat": "{{component}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Log volume by component",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "id": 9,
+      "panels": [],
+      "title": "Stations & runs",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+      "description": "Stations with the most ERROR/WARNING/CRITICAL lines in the range (aggregated over the JSON `station` field — deliberately not a Loki label). Click a station to focus this dashboard, or jump to Station Detail.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "station" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Focus log dashboard on ${__data.fields.station}",
+                    "url": "/d/gps-log-follow/gps-receivers-log-follow?${__url_time_range}&var-station=${__data.fields.station}"
+                  },
+                  {
+                    "title": "Station Detail (health) →",
+                    "url": "/d/gps-station-detail/gps-station-detail?var-station=${__data.fields.station}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "err+warn lines" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "mode": "gradient", "type": "gauge" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 10, "x": 0, "y": 17 },
+      "id": 10,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "err+warn lines" }]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "topk(15, sum by (station) (count_over_time({job=~\"$job\", host=~\"$host\", component=~\"$component\", level=~\"ERROR|WARNING|CRITICAL\"} |~ `$include_regex` !~ `$exclude_regex` | json | station =~ `.+` [$__range])))",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Top error stations",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": {},
+            "renameByName": { "Value #A": "err+warn lines" }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+      "description": "CLI runs seen in the range (source=\"run\" = the runs/ per-invocation log files; run_id and command are JSON fields). Click a run_id to load its narrative in the Run log panel below.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "run_id" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Drill into run ${__data.fields.run_id}",
+                    "url": "/d/gps-log-follow/gps-receivers-log-follow?${__url_time_range}&var-run_id=${__data.fields.run_id}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "errors" },
+            "properties": [{ "id": "custom.cellOptions", "value": { "type": "color-text" } }]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 14, "x": 10, "y": 17 },
+      "id": 11,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "lines" }]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "topk(20, sum by (run_id, command) (count_over_time({job=~\"$job\", host=~\"$host\", source=\"run\"} | json | run_id =~ `.+` [$__range])))",
+          "queryType": "instant",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "sum by (run_id) (count_over_time({job=~\"$job\", host=~\"$host\", source=\"run\", level=~\"ERROR|CRITICAL\"} | json | run_id =~ `.+` [$__range]))",
+          "queryType": "instant",
+          "refId": "B"
+        }
+      ],
+      "title": "Recent runs",
+      "transformations": [
+        { "id": "merge", "options": {} },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": { "run_id": 0, "command": 1 },
+            "renameByName": { "Value #A": "lines", "Value #B": "errors" }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+      "description": "Full narrative of the selected run (all levels, all sources), ascending like a log file. Set the Run variable or click a run in the Recent runs table. run_id is a JSON field, so this works across receivers.log, the runs/ file and the audit stream.",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 26 },
+      "id": 12,
+      "options": {
+        "dedupStrategy": "none",
+        "enableInfiniteScrolling": true,
+        "enableLogDetails": true,
+        "prettifyLogMessage": true,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Ascending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "{job=~\"$job\", host=~\"$host\"} | json | run_id =~ `$run_id` | station =~ `$station`",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Run log — $run_id",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "id": 13,
+      "panels": [],
+      "title": "Live follow",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+      "description": "The ops-follow stream. Honors every variable: label filters (job/host/component/level/source), line filters (include/exclude regex) and JSON field filters (station, run_id). Use the panel's Live button to tail.",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 37 },
+      "id": 14,
+      "options": {
+        "dedupStrategy": "none",
+        "enableInfiniteScrolling": true,
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+          "editorMode": "code",
+          "expr": "{job=~\"$job\", host=~\"$host\", component=~\"$component\", level=~\"$level\", source=~\"$source\"} |~ `$include_regex` !~ `$exclude_regex` | json | station =~ `$station` | run_id =~ `$run_id`",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Live tail — $component / $station",
+      "type": "logs"
+    }
+  ],
+  "preload": false,
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["gps", "logs", "receivers", "loki"],
+  "templating": {
+    "list": [
+      {
+        "allowCustomValue": true,
+        "current": { "text": "gps-receivers", "value": "gps-receivers" },
+        "description": "Loki job label the rek-d01 Alloy/Promtail agent pushes with. Kept as a variable until the label is finalized with IT.",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Job",
+        "multi": false,
+        "name": "job",
+        "options": [{ "selected": true, "text": "gps-receivers", "value": "gps-receivers" }],
+        "query": "gps-receivers",
+        "type": "custom"
+      },
+      {
+        "allValue": ".*",
+        "current": { "text": ["All"], "value": ["$__all"] },
+        "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+        "definition": "",
+        "description": "Host label (rek-d01 today; gpsplot / rek_new later share the same job).",
+        "includeAll": true,
+        "label": "Host",
+        "multi": true,
+        "name": "host",
+        "options": [],
+        "query": {
+          "label": "host",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{job=~\"$job\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": { "text": ["All"], "value": ["$__all"] },
+        "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+        "definition": "",
+        "description": "Module family from the receivers.* logger hierarchy (~10 values): download, health, scheduler, rinex, cli, archive, pipeline, monitoring, audit.",
+        "includeAll": true,
+        "label": "Component",
+        "multi": true,
+        "name": "component",
+        "options": [],
+        "query": {
+          "label": "component",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{job=~\"$job\", host=~\"$host\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": { "text": ["All"], "value": ["$__all"] },
+        "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+        "definition": "",
+        "description": "Python level names (DEBUG dropped at the agent; expect INFO/WARNING/ERROR/CRITICAL).",
+        "includeAll": true,
+        "label": "Level",
+        "multi": true,
+        "name": "level",
+        "options": [],
+        "query": {
+          "label": "level",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{job=~\"$job\", host=~\"$host\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": { "text": ["All"], "value": ["$__all"] },
+        "datasource": { "type": "loki", "uid": "c72827c2-7aa4-45fb-a07f-06ffd1267d9c" },
+        "definition": "",
+        "description": "Which file class the line came from: receivers_log (firehose), run (per-invocation runs/ log), audit (download_audit.jsonl).",
+        "includeAll": true,
+        "label": "Source",
+        "multi": true,
+        "name": "source",
+        "options": [],
+        "query": {
+          "label": "source",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{job=~\"$job\", host=~\"$host\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": { "text": ".*", "value": ".*" },
+        "description": "Regex over the JSON `station` field (NOT a Loki label — 173 stations x level x component would explode stream cardinality). Examples: RHOF, RHOF|ELDC, ^(?!$).+ for station-lines only. Default .* matches everything including lines without a station.",
+        "hide": 0,
+        "label": "Station (regex)",
+        "name": "station",
+        "options": [{ "selected": true, "text": ".*", "value": ".*" }],
+        "query": ".*",
+        "type": "textbox"
+      },
+      {
+        "current": { "text": ".*", "value": ".*" },
+        "description": "Regex over the JSON `run_id` field (unbounded cardinality — never a label). Paste a run_id from the Recent runs table, or a fragment like rinex-RHOF.",
+        "hide": 0,
+        "label": "Run (regex)",
+        "name": "run_id",
+        "options": [{ "selected": true, "text": ".*", "value": ".*" }],
+        "query": ".*",
+        "type": "textbox"
+      },
+      {
+        "current": { "text": ".*", "value": ".*" },
+        "description": "Line-level include filter (|~ regex over the raw JSON line). Default .* keeps everything.",
+        "hide": 0,
+        "label": "Include (line regex)",
+        "name": "include_regex",
+        "options": [{ "selected": true, "text": ".*", "value": ".*" }],
+        "query": ".*",
+        "type": "textbox"
+      },
+      {
+        "current": { "text": "^$", "value": "^$" },
+        "description": "Line-level exclude filter (!~ regex). Default ^$ matches nothing, i.e. excludes nothing. Example: heartbeat|ping_ok.",
+        "hide": 0,
+        "label": "Exclude (line regex)",
+        "name": "exclude_regex",
+        "options": [{ "selected": true, "text": "^$", "value": "^$" }],
+        "query": "^$",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "GPS Receivers — Log Follow",
+  "uid": "gps-log-follow",
+  "version": 1,
+  "weekStart": ""
+}
