@@ -4768,9 +4768,7 @@ def _rinex_convert_station_period(
             elif getattr(result, "validation_category", None):
                 # Raw-validation refusal: ONE compact line mid-run; the detail
                 # + suggested procedure prints in the end-of-batch epilog.
-                print(
-                    f"  🛡  {raw_file.name}: refused " f"({result.validation_category})"
-                )
+                print(f"  🛡  {raw_file.name}: refused ({result.validation_category})")
                 _validation_refusals.append(result)
                 failed += 1
                 if progress is not None:
@@ -5420,9 +5418,24 @@ def _push_reconverted(work_dir, args, logger, only_rel=None) -> Dict[str, Any]:
         # files. The caller tracks which rel paths have gone.
         rel = list(only_rel)
     else:
-        staged = [
+        # Only finished products. The converter stages its intermediates in the
+        # SAME rinex/ directory (`ISAK…0000a.13o`, `…_gfzrnx.13o`) and deletes
+        # them when the file is done, so listing everything meant rsync was
+        # handed paths that vanished underneath it — `link_stat … No such file
+        # or directory`, exit 24, partial transfer. With --parallel that is not
+        # a rare race: other year-chunks are converting throughout the push.
+        # Archive products are always compressed (.Z / .gz); intermediates never
+        # are, which is the cheapest reliable discriminator.
+        all_staged = [
             p for p in work.rglob("*") if p.is_file() and p.parent.name == "rinex"
         ]
+        staged = [p for p in all_staged if p.suffix in (".Z", ".gz")]
+        _intermediates = len(all_staged) - len(staged)
+        if _intermediates:
+            logger.debug(
+                "push: skipping %d uncompressed intermediate(s) in staging",
+                _intermediates,
+            )
         rel = []
         for p in staged:
             try:

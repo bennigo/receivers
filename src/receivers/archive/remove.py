@@ -223,6 +223,10 @@ def remove_catalog_rows(conn, storage_location: str, rel_paths: list[str]) -> in
     return removed
 
 
+#: Paths per SSH invocation. Each path is an argv entry, so an unbounded call
+#: overruns the remote shell — see :func:`backup_old_archive_files`.
+_BACKUP_CHUNK = 500
+
 # Remote move: rinex/FILE -> sibling rinex_bak/FILE. Same argv-safe pattern as
 # the delete script — paths arrive as $@, never interpolated. Quoted heredoc.
 _BACKUP_REMOTE_SCRIPT = r"""
@@ -285,46 +289,60 @@ def backup_old_archive_files(
             logger.error("refusing invalid archive path: %r", rel)
     if not valid:
         return res
-    cmd = [
-        "ssh",
-        "-o",
-        "BatchMode=yes",
-        ssh_target,
-        "bash",
-        "-s",
-        "--",
-        dest_root,
-        "1" if execute else "0",
-        *valid,
-    ]
-    proc = subprocess.run(
-        cmd,
-        input=_BACKUP_REMOTE_SCRIPT,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    for line in proc.stdout.splitlines():
-        parts = line.strip().split("|")
-        if len(parts) != 2:
-            continue
-        status, rel = parts
-        if status == "BACKED_UP":
-            res.backed_up.append(rel)
-            audit.info("re-rinex archive backup %s -> rinex_bak/", rel)
-        elif status == "WOULD_BACKUP":
-            res.would_backup.append(rel)
-        elif status == "MISSING":
-            res.missing.append(rel)
-        elif status == "SKIP_NOTFILE":
-            res.not_file.append(rel)
-        elif status == "FAIL":
-            res.failed.append(rel)
-            logger.error("re-rinex backup FAILED for %s", rel)
-    if proc.returncode != 0 and not (res.backed_up or res.would_backup):
-        logger.error(
-            "ssh gateway error (rc=%s): %s",
-            proc.returncode,
-            clean_ssh_stderr(proc.stderr),
+
+    # Chunked: every path is an argv entry, so one call for a whole staging
+    # tree blows the remote shell's limit — `/bin/bash: Argument list too long`,
+    # rc=1, ZERO files backed up. Observed on the ISAK R3 run at ~3,100 paths,
+    # 11 times, each silently leaving that batch unprotected before the rsync
+    # overwrote it. 500 keeps the command well inside ARG_MAX on any host while
+    # still amortising the SSH handshake.
+    for start in range(0, len(valid), _BACKUP_CHUNK):
+        batch = valid[start : start + _BACKUP_CHUNK]
+        cmd = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            ssh_target,
+            "bash",
+            "-s",
+            "--",
+            dest_root,
+            "1" if execute else "0",
+            *batch,
+        ]
+        proc = subprocess.run(
+            cmd,
+            input=_BACKUP_REMOTE_SCRIPT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
+        reported = 0
+        for line in proc.stdout.splitlines():
+            parts = line.strip().split("|")
+            if len(parts) != 2:
+                continue
+            status, rel = parts
+            reported += 1
+            if status == "BACKED_UP":
+                res.backed_up.append(rel)
+                audit.info("re-rinex archive backup %s -> rinex_bak/", rel)
+            elif status == "WOULD_BACKUP":
+                res.would_backup.append(rel)
+            elif status == "MISSING":
+                res.missing.append(rel)
+            elif status == "SKIP_NOTFILE":
+                res.not_file.append(rel)
+            elif status == "FAIL":
+                res.failed.append(rel)
+                logger.error("re-rinex backup FAILED for %s", rel)
+        if proc.returncode != 0 and reported == 0:
+            # This batch produced nothing — the caller must not read that as
+            # "nothing needed backing up", so name the size that failed.
+            logger.error(
+                "ssh gateway error (rc=%s, %d path(s) unbacked): %s",
+                proc.returncode,
+                len(batch),
+                clean_ssh_stderr(proc.stderr),
+            )
     return res
