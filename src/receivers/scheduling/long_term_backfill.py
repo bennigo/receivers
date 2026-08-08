@@ -241,3 +241,71 @@ def format_report(report: LongTermGapReport, max_queued: int = 12) -> str:
     else:
         lines.append("  queued: (none — nothing recoverable in window)")
     return "\n".join(lines)
+
+
+def run_long_term_backfill_station(
+    sid: str,
+    session: str,
+    lookback_days: int = 365,
+    run_rinex: bool = True,
+    dry_run: bool = False,
+    max_days: Optional[int] = None,
+    receiver_type: Optional[str] = None,
+) -> LongTermGapReport:
+    """Recover one station's classified gaps through the full per-day pipeline.
+
+    Classify via :func:`query_long_term_gaps` (skips ``confirmed_gone``), then for
+    each ``queued`` day run download → RINEX → archive → DB via the shared
+    per-day backfill primitive. The download client records a receiver-absence
+    on a verified ``not_found`` (never on a transient unreachable), so days the
+    receiver has aged out get confirmed rather than re-attempted forever.
+
+    Gateway push (archive_sync / EPOS) is deliberately downstream — see
+    ``docs/design/long-term-backfill.md`` §6 — not in this per-day call.
+
+    Args:
+        sid, session, lookback_days, receiver_type: as for :func:`query_long_term_gaps`.
+        run_rinex: run RINEX conversion after download (default True).
+        dry_run: classify only, no downloads.
+        max_days: cap how many queued days to process this run (throttle).
+    """
+    report = query_long_term_gaps(sid, session, lookback_days, receiver_type=receiver_type)
+    n = len(report.queued)
+    if n == 0:
+        logger.info(
+            "Long-term backfill %s/%s: nothing queued — %s", sid, session, report.summary()
+        )
+        return report
+
+    queued = report.queued if not max_days else report.queued[:max_days]
+    logger.info(
+        "Long-term backfill %s/%s: %d/%d day(s) to recover%s",
+        sid, session, len(queued), n, " [DRY RUN]" if dry_run else "",
+    )
+    if dry_run:
+        return report
+
+    from .backfill import _backfill_station_day_generic
+
+    recovered = failed = 0
+    for gap in queued:
+        try:
+            _backfill_station_day_generic(
+                sid,
+                gap.file_date,
+                gap.file_date,  # backfill_end = this day → marks the day complete
+                session,
+                immediate_archive=True,
+                run_rinex=run_rinex,
+            )
+            recovered += 1
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            logger.warning(
+                "Long-term backfill %s/%s/%s failed: %s", sid, session, gap.file_date, e
+            )
+    logger.info(
+        "Long-term backfill %s/%s done: recovered=%d failed=%d",
+        sid, session, recovered, failed,
+    )
+    return report

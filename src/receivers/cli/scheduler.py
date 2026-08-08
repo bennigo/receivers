@@ -461,6 +461,27 @@ def cmd_scheduler_long_term_gaps(args) -> int:
     return 0
 
 
+def cmd_scheduler_long_term_backfill(args) -> int:
+    """Recover a station's classified gaps through the full per-day pipeline."""
+    from ..scheduling.long_term_backfill import (
+        format_report,
+        run_long_term_backfill_station,
+    )
+
+    session = getattr(args, "session", "15s_24hr")
+    lookback = getattr(args, "lookback", 365)
+    run_rinex = not getattr(args, "no_rinex", False)
+    dry_run = getattr(args, "dry_run", False)
+    max_days = getattr(args, "max_days", None)
+    for sid in (args.stations or []):
+        report = run_long_term_backfill_station(
+            sid.upper(), session, lookback_days=lookback,
+            run_rinex=run_rinex, dry_run=dry_run, max_days=max_days,
+        )
+        print(format_report(report))
+    return 0
+
+
 def cmd_scheduler_clean_stale_tmp(args) -> int:
     """Delete stale partial downloads from the tmp directory."""
     session = getattr(args, "session", "15s_24hr")
@@ -1424,6 +1445,21 @@ def create_scheduler_parser(subparsers):
         "--lookback", type=int, default=365, help="Hard cap on days to look back"
     )
     lt_gaps_parser.set_defaults(func=cmd_scheduler_long_term_gaps)
+
+    # Long-term backfill — recover classified gaps through the full pipeline (#136)
+    lt_bf_parser = scheduler_subparsers.add_parser(
+        "long-term-backfill",
+        help="Recover a station's classified gaps (download+RINEX+archive+DB)",
+    )
+    lt_bf_parser.add_argument("--stations", nargs="+", required=True)
+    lt_bf_parser.add_argument(
+        "--session", default="15s_24hr", choices=["15s_24hr", "1Hz_1hr", "status_1hr"]
+    )
+    lt_bf_parser.add_argument("--lookback", type=int, default=365)
+    lt_bf_parser.add_argument("--max-days", type=int, help="Cap days to recover this run")
+    lt_bf_parser.add_argument("--no-rinex", action="store_true", help="Raw only (skip RINEX)")
+    lt_bf_parser.add_argument("--dry-run", action="store_true", help="Classify only; no downloads")
+    lt_bf_parser.set_defaults(func=cmd_scheduler_long_term_backfill)
 
     # Reconcile command
     reconcile_parser = scheduler_subparsers.add_parser(
