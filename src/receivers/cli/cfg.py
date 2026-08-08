@@ -2139,6 +2139,40 @@ def cmd_cfg_history(args) -> int:
     return 0
 
 
+def _tos_base_url(args) -> str:
+    """Build the TOS API base URL from ``--server`` / ``--port``.
+
+    The path segment is taken from tostools' own ``DEFAULT_TOS_URL`` rather than
+    written literally here. tostools moved off ``/tos/v1`` onto ``/tos/internal``
+    in ``bdfb9f3`` ("adapt to new TOS backend"), but the six copies of the
+    literal in this module were never updated, and ``/tos/v1`` is now gone
+    server-side::
+
+        POST /tos/v1/login        -> 404
+        POST /tos/internal/login  -> 401 (exists, wants credentials)
+
+    That broke ``add-receiver``, ``add-antenna``, ``add-monument``,
+    ``add-station``, ``import-campaigns`` and ``set-continuity`` outright:
+    :meth:`TOSWriter.login` builds its URL as ``f"{base_url}/login"`` — the one
+    request that does *not* go through ``canonical_tos_url`` — so every one of
+    them died on a 404 before doing any work, including in dry-run (the
+    duplicate-serial guard authenticates before the dry-run check).
+
+    Verbs that build no base_url of their own were unaffected, because
+    ``TOSWriter()`` already defaults to ``/tos/internal`` — which is why
+    ``move-device`` / ``replace-*`` / ``reconcile`` kept working and masked this.
+
+    Deriving the path means the two packages cannot desynchronise again.
+    """
+    from urllib.parse import urlsplit
+
+    from tostools.api.tos_writer import DEFAULT_TOS_URL
+
+    scheme = "https" if args.port == 443 else "http"
+    path = urlsplit(DEFAULT_TOS_URL).path.rstrip("/")
+    return f"{scheme}://{args.server}:{args.port}{path}"
+
+
 # ---------------------------------------------------------------------------
 # cfg extract
 # ---------------------------------------------------------------------------
@@ -2520,8 +2554,7 @@ def cmd_cfg_add_receiver(args) -> int:
         optional.append(("software_version", software_value))
 
     # ---- Writer setup ---------------------------------------------------
-    scheme = "https" if args.port == 443 else "http"
-    base_url = f"{scheme}://{args.server}:{args.port}/tos/v1"
+    base_url = _tos_base_url(args)
     dry_run = not args.no_dry_run
     writer = TOSWriter(base_url=base_url, dry_run=dry_run)
 
@@ -2780,8 +2813,7 @@ def cmd_cfg_add_antenna(args) -> int:
             file=sys.stderr,
         )
 
-    scheme = "https" if args.port == 443 else "http"
-    base_url = f"{scheme}://{args.server}:{args.port}/tos/v1"
+    base_url = _tos_base_url(args)
     dry_run = not args.no_dry_run
     writer = TOSWriter(base_url=base_url, dry_run=dry_run)
 
@@ -2886,8 +2918,7 @@ def cmd_cfg_add_monument(args) -> int:
         )
         return 2
 
-    scheme = "https" if args.port == 443 else "http"
-    base_url = f"{scheme}://{args.server}:{args.port}/tos/v1"
+    base_url = _tos_base_url(args)
     dry_run = not args.no_dry_run
     writer = TOSWriter(base_url=base_url, dry_run=dry_run)
 
@@ -2982,8 +3013,7 @@ def cmd_cfg_import_campaigns(args) -> int:
         )
         return 2
 
-    scheme = "https" if args.port == 443 else "http"
-    base_url = f"{scheme}://{args.server}:{args.port}/tos/v1"
+    base_url = _tos_base_url(args)
     dry_run = not args.no_dry_run
     writer = TOSWriter(base_url=base_url, dry_run=dry_run)
 
@@ -3066,8 +3096,7 @@ def cmd_cfg_set_continuity(args) -> int:
 
     value = "continuous" if args.continuous else "campaign"
 
-    scheme = "https" if args.port == 443 else "http"
-    base_url = f"{scheme}://{args.server}:{args.port}/tos/v1"
+    base_url = _tos_base_url(args)
     dry_run = not args.no_dry_run
     writer = TOSWriter(base_url=base_url, dry_run=dry_run)
 
@@ -3138,8 +3167,7 @@ def cmd_cfg_add_station(args) -> int:
         print(f"❌ {e}", file=sys.stderr)
         return 1
 
-    scheme = "https" if args.port == 443 else "http"
-    base_url = f"{scheme}://{args.server}:{args.port}/tos/v1"
+    base_url = _tos_base_url(args)
     client = TOSClient(base_url=base_url)
 
     try:
@@ -6582,7 +6610,7 @@ Examples:
         epilog="""
 Examples:
   # Inspect the device's joins, identify the stale id:
-  curl -s https://vi-api.vedur.is/tos/v1/entity/parent_history/21197 | jq
+  curl -s https://vi-api.vedur.is/tos/internal/entity/parent_history/21197 | jq
 
   # Dry-run the delete (default — no writes):
   receivers cfg delete-join --id 27836
