@@ -31,6 +31,7 @@ from .convert import (
     published_name,
 )
 from .qc_gate import qc_check
+from .source_identity import check_source_identity
 from .tos_access import session_fingerprint
 
 # Supplies the TOS session (one device_history entry) for (station, observation
@@ -411,6 +412,22 @@ class EposDisseminate:
             if self.session_provider is not None
             else None
         )
+        # Identity gate, on the SOURCE, BEFORE anything is converted or
+        # rewritten. The QC gate below runs on the post-set-header product, so it
+        # cannot answer "is this file actually this station's?" — set_header has
+        # by then normalised the header towards TOS, and the check would be
+        # validating the pipeline's own rewrite. See source_identity for the ISAK
+        # Aug-2016 case this exists to stop: 14 days of a campaign survey up to
+        # 245 km away, published as ISAK with ISAK's DOMES.
+        if source is not None:
+            identity = check_source_identity(Path(source), session)
+            if not identity.ok:
+                result.qc_passed = False
+                result.qc_message = identity.message
+                result.message = f"identity gate failed: {identity.message}"
+                result.errors.append(result.message)
+                return result
+
         do_set_header = self.set_header and session is not None
         fingerprint = session_fingerprint(session) if do_set_header else ""
 
