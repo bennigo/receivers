@@ -3360,6 +3360,7 @@ def cmd_cfg_add_monument(args) -> int:
         result = add_monument(
             writer,
             station_id=args.station,
+            warehouse=args.warehouse,
             height=args.height,
             serial=args.serial,
             owner=owner,
@@ -5348,9 +5349,21 @@ Examples:
     )
     add_mon.add_argument(
         "--station",
-        required=True,
         metavar="STID",
         help="4-char station marker to install the monument at (must exist in TOS).",
+    )
+    add_mon.add_argument(
+        "--warehouse",
+        metavar="LOCATION",
+        help=(
+            "WAREHOUSE INTAKE instead of a station install: register the "
+            'monument against this location, e.g. "B9 - Kjallari - Jörð". '
+            "Mirrors `add-antenna --warehouse`. --serial is REQUIRED here: the "
+            "synthetic monument-<STID>-<date> placeholder needs a station, and "
+            "`move-device --subtype monument` matches the unit by serial when "
+            "you later install it. Not every mark can be warehoused — a pillar "
+            "cast in place goes straight to --station."
+        ),
     )
     add_mon.add_argument(
         "--height",
