@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,11 @@ class ReceiverIdentity:
     firmware_version: Optional[str] = None
     marker_name: Optional[str] = None
     partial: bool = False
+    #: TOS constellation codes the receiver is demonstrably using (``{"GPS",
+    #: "GLO", "GAL", "BDS"}``). Positive evidence only — see
+    #: :func:`constellations_from_satellites` for why an empty entry is never
+    #: proof a system is disabled. Empty when the probe could not read them.
+    constellations: FrozenSet[str] = frozenset()
 
 
 class ProbeError(Exception):
@@ -153,6 +158,71 @@ def resolve_station_probe(station_id: str, *, router_only: bool = False) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: Health-extractor constellation labels → TOS ``gnss_receiver`` attribute codes.
+#: TOS side is :data:`tostools.constellation.TOS_CONSTELLATION_CODES`; the
+#: extractor reports vendor-style names, so the two have to be bridged here.
+#: Keys are matched case-insensitively.
+CONSTELLATION_LABEL_TO_TOS: Dict[str, str] = {
+    "gps": "GPS",
+    "glonass": "GLO",
+    "glo": "GLO",
+    "galileo": "GAL",
+    "gal": "GAL",
+    "beidou": "BDS",
+    "bds": "BDS",
+    "compass": "BDS",  # pre-2012 name, still seen in some firmware strings
+    "qzss": "QZSS",
+    "sbas": "SBAS",
+    "irnss": "IRN",
+    "navic": "IRN",  # IRNSS was renamed NavIC in 2016
+}
+
+
+def constellations_from_satellites(
+    satellites: Optional[Dict[str, Any]]
+) -> FrozenSet[str]:
+    """Map the probe's per-constellation satellite counts to TOS codes.
+
+    ``satellites`` is the extractor's ``metrics.satellites`` payload, whose
+    ``by_constellation`` counts come from **PVTSatCartesian (SBF 4008)** —
+    satellites actually used in the PVT solution. Deliberately *not*
+    ChannelStatus (4013), which lists allocated channels for disabled
+    constellations too and would over-report (see the note at
+    ``polarx5_tcp_extractor._query_satellite_tracking``).
+
+    Returns only systems with a **non-zero** count, i.e. positive evidence.
+
+    An absent system is NOT evidence it is disabled, for two reasons: the
+    receiver may simply have had no satellite of that system in view at the
+    instant of the probe, and QZSS / IRN are regional systems never visible
+    from Iceland even when fully enabled. Callers must therefore write ``true``
+    for what is present and leave the rest unset — never ``false``.
+    """
+    if not isinstance(satellites, dict):
+        return frozenset()
+    by_system = satellites.get("by_constellation")
+    if not isinstance(by_system, dict):
+        return frozenset()
+
+    codes = set()
+    for label, count in by_system.items():
+        try:
+            if int(count) <= 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        code = CONSTELLATION_LABEL_TO_TOS.get(str(label).strip().lower())
+        if code:
+            codes.add(code)
+        else:
+            logger.warning(
+                "unmapped constellation label %r from probe — add it to "
+                "CONSTELLATION_LABEL_TO_TOS",
+                label,
+            )
+    return frozenset(codes)
+
+
 def _probe_polarx5(
     host: str,
     port: Optional[int],
@@ -202,6 +272,18 @@ def _probe_polarx5(
             "host may not be a PolaRX5 or requires TCP credentials"
         )
 
+    # Constellations ride the same unauthenticated SBF channel as the identity
+    # block, so this is one extra request and no credentials. Best-effort: a
+    # receiver that answers 5902 but not 4008 still yields a usable identity —
+    # constellations are an optional TOS attribute, serial/model are not.
+    constellations: FrozenSet[str] = frozenset()
+    try:
+        constellations = constellations_from_satellites(
+            extractor._query_satellite_tracking()
+        )
+    except Exception as e:  # noqa: BLE001 — never fail intake over an optional attr
+        logger.debug("PolaRX5 constellation probe failed at %s: %s", host, e)
+
     return ReceiverIdentity(
         subtype="gnss_receiver",
         probe_type="polarx5",
@@ -210,6 +292,7 @@ def _probe_polarx5(
         firmware_version=setup.get("firmware_version"),
         marker_name=setup.get("marker_name"),
         partial=False,
+        constellations=constellations,
     )
 
 

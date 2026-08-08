@@ -26,7 +26,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, cast
 
 from ..cfg.field_manifest import (
     FIELDS,
@@ -2271,6 +2271,56 @@ def cmd_cfg_extract(args) -> int:
 # ---------------------------------------------------------------------------
 
 
+def build_constellation_attrs(
+    constellations: Optional[Iterable[str]],
+    *,
+    skip: bool = False,
+) -> tuple[list[tuple[str, str]], Optional[str], bool]:
+    """Turn probed constellation codes into TOS optional attributes.
+
+    Returns ``(attrs, note, note_is_warning)`` where ``attrs`` is a sorted list
+    of ``(code, "true")`` pairs ready to append to ``add-receiver``'s optional
+    list, and ``note`` is an operator-facing line (``None`` if there is nothing
+    to say).
+
+    Why this exists: without it the constellation attributes are simply never
+    written at intake, and the only thing that notices later is
+    ``tos audit missing-attributes`` — which suggests the *catalog defaults*
+    (GPS + GLO), not what the receiver reports. Applying that suggestion to a
+    Galileo/BeiDou-capable unit silently records it as a two-constellation
+    station. Measured on NPSK 2026-08-08: the probe found GPS/GLO/GAL/BDS while
+    the triage file offered GPS/GLO only.
+
+    **Only ``"true"`` is ever emitted.** A system absent from the PVT solution
+    may merely have had nothing in view at that instant, and QZSS/IRN are
+    regional systems never visible from Iceland even when fully enabled. So
+    absence is not evidence of "disabled", and writing ``false`` would be worse
+    than writing nothing — it reads as a deliberate operator decision.
+    """
+    codes = sorted(constellations or ())
+    if skip:
+        note = (
+            f"  ↷ skipping probed constellations ({', '.join(codes)}) "
+            "— --no-constellations"
+            if codes
+            else None
+        )
+        return [], note, False
+    if not codes:
+        return (
+            [],
+            "  ⚠️  no constellations read from the probe — set them later with\n"
+            "      `tos audit missing-attributes --id <station> --triage <file>`,\n"
+            "      but verify against the receiver, not the suggested defaults.",
+            True,
+        )
+    return (
+        [(code, "true") for code in codes],
+        f"  🛰  constellations from PVT solution: {', '.join(codes)}",
+        False,
+    )
+
+
 def cmd_cfg_add_receiver(args) -> int:
     """``cfg add-receiver`` — probe a receiver and register it in TOS.
 
@@ -2518,6 +2568,14 @@ def cmd_cfg_add_receiver(args) -> int:
         if sw_warn:
             print(f"  ⚠️  {sw_warn}", file=sys.stderr)
         optional.append(("software_version", software_value))
+
+    constellation_attrs, note, note_is_warning = build_constellation_attrs(
+        getattr(identity, "constellations", None),
+        skip=getattr(args, "no_constellations", False),
+    )
+    optional.extend(constellation_attrs)
+    if note:
+        print(note, file=sys.stderr if note_is_warning else sys.stdout)
 
     # ---- Writer setup ---------------------------------------------------
     scheme = "https" if args.port == 443 else "http"
@@ -4504,6 +4562,15 @@ Examples:
     add_rx.add_argument("--comment", help="Optional free-form comment attribute.")
     add_rx.add_argument(
         "--galvos", help="Optional galvos (inventory/registration) number."
+    )
+    add_rx.add_argument(
+        "--no-constellations",
+        action="store_true",
+        help=(
+            "Do not write the constellation toggles (GPS/GLO/GAL/BDS/…) read "
+            "from the receiver's PVT solution. Only systems actually in the "
+            "solution are ever written, and only as 'true'."
+        ),
     )
     add_rx.add_argument(
         "--serial",
