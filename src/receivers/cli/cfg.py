@@ -2155,44 +2155,29 @@ _EXTRACT_TODO_FIELDS = [
 ]
 
 
-def cmd_cfg_extract(args) -> int:
-    """``cfg extract`` — probe a receiver and add a new station section to stations.cfg."""
-    import re
-    from datetime import date
-    from pathlib import Path
+#: cfg keys whose probed value is a receiver PVT navigation fix, not a survey.
+#: Metre-level and provisional — see ``_print_probed_fields``.
+_PROBE_PROVISIONAL_POSITION = ("latitude", "longitude", "height")
 
+
+def _probe_cfg_fields(
+    sid: str, station_config: Dict[str, Any], host: Optional[str]
+) -> tuple[Dict[str, Any], Dict[str, str]] | None:
+    """Probe a receiver and shape its identity into stations.cfg field values.
+
+    Shared by ``cfg extract`` and ``cfg add-tos-station``: both need the same
+    probe → field-manifest → ordered-fields pipeline, and a second copy would
+    let the port defaults drift apart.
+
+    Returns ``(identity, fields)``, or ``None`` when the receiver is unreachable
+    so the caller can report in its own voice.
+    """
     from ..cfg.field_manifest import FIELDS
-    from ..config.receivers_config import create_station_section
-    from ..config_utils import resolve_receiver_endpoint
-
-    sid = args.station_id.upper()
-    host = getattr(args, "host", None)
-
-    station_config = resolve_receiver_endpoint(args, sid)
-    if station_config is None:
-        print(f"❌ {sid}: not found in stations.cfg and no --host given")
-        print("   Provide --host <IP> to connect to the receiver directly.")
-        return 1
-
-    try:
-        import gps_parser  # type: ignore
-
-        cfg_path = Path(gps_parser.ConfigParser().get_stations_config_path())
-    except Exception as exc:
-        print(f"❌ Cannot locate stations.cfg: {exc}")
-        return 1
-
-    cfg_text = cfg_path.read_text()
-    if re.search(r"^\[" + re.escape(sid) + r"\]", cfg_text, re.MULTILINE):
-        print(f"❌ [{sid}] already exists in stations.cfg")
-        print(f"   Use: receivers cfg reconcile {sid}  to update individual fields")
-        return 1
 
     print(f"↳ {sid}: probing receiver…", flush=True)
     identity = _query_receiver_identity(sid, station_config)
     if identity is None:
-        print(f"❌ {sid}: receiver unreachable or returned no identity data")
-        return 1
+        return None
 
     # Extract fields via field manifest (reuses receiver_extract lambdas + cfg_format)
     manifest_fields: Dict[str, str] = {}
@@ -2228,16 +2213,71 @@ def cmd_cfg_extract(args) -> int:
 
     # Remaining manifest fields (antenna, position, serial, firmware)
     fields.update(manifest_fields)
+    return identity, fields
+
+
+def _print_probed_fields(fields: Dict[str, str], host: Optional[str]) -> None:
+    """Print probed cfg fields, flagging the ones that are NOT ground truth.
+
+    Two values look authoritative in the output but are not: ``router_ip`` is
+    whatever host we dialled (a bench IP on an intake run), and the position
+    triple is a single-epoch PVT navigation fix — metre-level, not a survey.
+    stations.cfg position is otherwise treated as ground truth for surveyed
+    coordinates, and ``cfg reconcile`` compares the receiver's PVT against it at
+    a 2 m tolerance, so an unflagged probe value turns that check into a
+    self-confirming PVT-vs-PVT comparison.
+    """
+    for key, val in fields.items():
+        if key == "router_ip" and host:
+            note = "  ← bench/probe IP — update to deployment IP before use"
+        elif key in _PROBE_PROVISIONAL_POSITION:
+            note = "  ← receiver PVT fix (~metre-level) — PROVISIONAL, not surveyed"
+        else:
+            note = ""
+        print(f"  {key} = {val}{note}")
+
+
+def cmd_cfg_extract(args) -> int:
+    """``cfg extract`` — probe a receiver and add a new station section to stations.cfg."""
+    import re
+    from datetime import date
+    from pathlib import Path
+
+    from ..config.receivers_config import create_station_section
+    from ..config_utils import resolve_receiver_endpoint
+
+    sid = args.station_id.upper()
+    host = getattr(args, "host", None)
+
+    station_config = resolve_receiver_endpoint(args, sid)
+    if station_config is None:
+        print(f"❌ {sid}: not found in stations.cfg and no --host given")
+        print("   Provide --host <IP> to connect to the receiver directly.")
+        return 1
+
+    try:
+        import gps_parser  # type: ignore
+
+        cfg_path = Path(gps_parser.ConfigParser().get_stations_config_path())
+    except Exception as exc:
+        print(f"❌ Cannot locate stations.cfg: {exc}")
+        return 1
+
+    cfg_text = cfg_path.read_text()
+    if re.search(r"^\[" + re.escape(sid) + r"\]", cfg_text, re.MULTILINE):
+        print(f"❌ [{sid}] already exists in stations.cfg")
+        print(f"   Use: receivers cfg reconcile {sid}  to update individual fields")
+        return 1
+
+    probed = _probe_cfg_fields(sid, station_config, host)
+    if probed is None:
+        print(f"❌ {sid}: receiver unreachable or returned no identity data")
+        return 1
+    _identity, fields = probed
 
     # Display extracted fields
     print(f"\nFields extracted for [{sid}]:")
-    for k, v in fields.items():
-        note = (
-            "  ← bench/probe IP — update to deployment IP before use"
-            if k == "router_ip"
-            else ""
-        )
-        print(f"  {k} = {v}{note}")
+    _print_probed_fields(fields, host)
     print(f"\nFill in manually: {', '.join(_EXTRACT_TODO_FIELDS)}")
 
     if args.dry_run:
@@ -2263,6 +2303,342 @@ def cmd_cfg_extract(args) -> int:
     print(
         "   Next: fill in manual fields, then run 'receivers seed stations' to sync to DB"
     )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# add-tos-station — greenfield orchestrator: one probe → TOS site+station+cfg
+# ---------------------------------------------------------------------------
+
+
+def cmd_cfg_add_tos_station(args) -> int:
+    """``cfg add-tos-station`` — one probe → TOS site + station + stations.cfg.
+
+    Collapses steps 0 and 1 of the greenfield onboarding sequence into a single
+    command: probe the receiver once for its identity and PVT position, hand the
+    coordinates to ``tos station add`` (which find-or-creates the ``land`` site,
+    creates the station entity and joins them), then write the matching
+    ``[STID]`` stations.cfg section from the same probe.
+
+    Ordering matters and is the reason this exists: ``cfg move-device --to
+    STATION`` fills the TOS station position attributes *from stations.cfg*, so
+    the cfg section has to be in place before the receiver is installed —
+    otherwise the fill silently no-ops. Doing both halves here from one probe
+    removes the circular "cfg needs the probe, TOS wants the cfg" shuffle.
+
+    **Why the probe lives here and not on ``tos station add``**: ``tostools``
+    never dials a receiver (its SBF modules parse archived files), and
+    ``receivers`` depends on ``tostools`` — pinned by direct URL. A ``--probe``
+    flag on the tostools verb would need tostools to import receivers, i.e. a
+    dependency cycle that makes both SHA pins unresolvable. So the orchestrator
+    sits on the receivers side, where the probe already is, and drives tostools
+    through its public CLI entry point (``tostools.tos.main``) rather than any
+    private function.
+
+    Dry-run by default in **both** halves — neither TOS nor stations.cfg is
+    written without ``--no-dry-run``. Note that a created ``land`` site is not
+    deletable in TOS, so preview first.
+    """
+    import io
+    import json as _json
+    import re
+    import sys
+    from argparse import Namespace
+    from contextlib import nullcontext, redirect_stdout
+    from datetime import date
+    from pathlib import Path
+
+    from tostools.tos import main as tos_main
+
+    from ..config.receivers_config import create_station_section
+    from ..config_utils import resolve_receiver_endpoint
+
+    sid = args.station_id.upper()
+    host = getattr(args, "probe", None)
+    dry_run = not args.no_dry_run
+    want_json = bool(getattr(args, "json", False))
+    write_cfg = not getattr(args, "no_cfg", False)
+    write_tos = not getattr(args, "no_tos", False)
+
+    def say(*parts: Any) -> None:
+        """Human-facing output. Silenced under --json so stdout stays parseable."""
+        if not want_json:
+            print(*parts)
+
+    def warn(*parts: Any) -> None:
+        """Errors and cautions. Always emitted, on stderr — never corrupts --json."""
+        print(*parts, file=sys.stderr)
+
+    if not write_cfg and not write_tos:
+        warn("❌ --no-cfg and --no-tos together leave nothing to do")
+        return 2
+
+    # ---- Resolve the cfg path + refuse an existing section early ---------
+    # Checked BEFORE the probe and before any TOS write: discovering a
+    # collision after minting an undeletable land site is the bad ordering.
+    cfg_path: Optional[Path] = None
+    if write_cfg:
+        try:
+            import gps_parser  # type: ignore
+
+            cfg_path = Path(gps_parser.ConfigParser().get_stations_config_path())
+        except Exception as exc:
+            warn(f"❌ Cannot locate stations.cfg: {exc}")
+            return 1
+        if re.search(
+            r"^\[" + re.escape(sid) + r"\]", cfg_path.read_text(), re.MULTILINE
+        ):
+            warn(f"❌ [{sid}] already exists in stations.cfg")
+            warn(f"   Use: receivers cfg reconcile {sid}  to update individual fields")
+            warn("   Or:  --no-cfg  to create only the TOS records")
+            return 1
+
+    # ---- Coordinate overrides (read before the probe) --------------------
+    # Explicit flags win — a real survey must never lose to a PVT fix. Read
+    # first so a fully-specified position can carry a probe-less run.
+    overrides = {
+        "latitude": getattr(args, "lat", None),
+        "longitude": getattr(args, "lon", None),
+        "height": getattr(args, "height", None),
+    }
+    have_all_coords = all(v is not None for v in overrides.values())
+
+    # ---- Probe (optional) ------------------------------------------------
+    fields: Dict[str, str] = {}
+    probe_ok = False
+    if host:
+        # Shim rather than passing `args` straight through:
+        # resolve_receiver_endpoint reads args.port as the RECEIVER control
+        # port, while --port here is the TOS API port (tostools convention).
+        # Handing it `args` would dial the receiver on 443.
+        probe_args = Namespace(
+            host=host,
+            receiver_type=getattr(args, "receiver_type", None) or "PolaRX5",
+            port=getattr(args, "control_port", None) or 28784,
+        )
+        station_config = resolve_receiver_endpoint(probe_args, sid)
+        # The shared probe helper prints its own progress line; swallow it under
+        # --json (logging still goes to stderr) so stdout carries only the JSON.
+        probe_sink = io.StringIO()
+        with redirect_stdout(probe_sink) if want_json else nullcontext():
+            probed = (
+                _probe_cfg_fields(sid, station_config, host) if station_config else None
+            )
+        if probed is not None:
+            _identity, fields = probed
+            probe_ok = True
+        else:
+            control_port = getattr(args, "control_port", None) or 28784
+            warn(f"⚠️  {sid}: receiver unreachable or returned no identity data")
+            warn(
+                f"   The probe uses the SBF control port ({control_port}). If the "
+                "receiver answers on\n"
+                "   HTTP but not here, that port is most likely not forwarded on "
+                "the station router."
+            )
+            if not have_all_coords:
+                warn(
+                    "   Cannot continue: no position. Either fix the port forward, "
+                    "or pass all of\n"
+                    "   --lat/--lon/--height to register TOS from surveyed "
+                    "coordinates instead."
+                )
+                return 1
+
+    if not host and not have_all_coords:
+        warn(f"❌ {sid}: nothing to go on — no --probe and no explicit position")
+        warn("   Pass --probe <IP>, or all of --lat/--lon/--height.")
+        return 2
+
+    # Without a probe there is no receiver identity, so a stations.cfg section
+    # would be a stub of ports and nothing else. Refuse rather than write one:
+    # `cfg extract` is the right tool once the receiver is reachable.
+    if not probe_ok and write_cfg:
+        warn(
+            "❌ A stations.cfg section needs receiver identity, which requires a "
+            "successful probe."
+        )
+        warn(
+            f"   Re-run with --no-cfg to register only the TOS records, then "
+            f"`receivers cfg extract {sid} --host <IP>`\n"
+            "   once the control port is reachable."
+        )
+        return 2
+
+    # ---- Coordinates -----------------------------------------------------
+    coords: Dict[str, Optional[str]] = {}
+    surveyed: Dict[str, bool] = {}
+    for cfg_key in ("latitude", "longitude", "height"):
+        override = overrides[cfg_key]
+        if override is not None:
+            coords[cfg_key] = str(override)
+            surveyed[cfg_key] = True
+            if probe_ok:
+                fields[cfg_key] = str(override)
+        else:
+            coords[cfg_key] = fields.get(cfg_key)
+            surveyed[cfg_key] = False
+
+    missing = [k for k, v in coords.items() if not v]
+    if missing:
+        warn(
+            f"❌ {sid}: no position available for {', '.join(missing)} — the probe "
+            "returned no PVT fix"
+        )
+        warn("   Supply --lat/--lon/--height explicitly.")
+        return 2
+
+    def _position_note(key: str) -> str:
+        if surveyed.get(key):
+            return "  ← supplied (surveyed)"
+        return "  ← receiver PVT fix (~metre-level) — PROVISIONAL, not surveyed"
+
+    if fields:
+        # Not _print_probed_fields(): that helper cannot tell a PVT value from a
+        # surveyed override, and the distinction is the whole point here.
+        say(f"\nFields for [{sid}]:")
+        for key, val in fields.items():
+            if key == "router_ip" and host:
+                note = "  ← probe IP — update to deployment IP if it differs"
+            elif key in _PROBE_PROVISIONAL_POSITION:
+                note = _position_note(key)
+            else:
+                note = ""
+            say(f"  {key} = {val}{note}")
+    else:
+        say(f"\nPosition for [{sid}] (no probe — TOS records only):")
+        for key in _PROBE_PROVISIONAL_POSITION:
+            say(f"  {key} = {coords[key]}{_position_note(key)}")
+
+    site_name = getattr(args, "site_name", None) or args.name
+
+    # ---- TOS: site + station + join, via the public tos CLI --------------
+    tos_result: Dict[str, Any] = {}
+    if write_tos:
+        argv = [
+            "station",
+            "add",
+            "--marker",
+            sid,
+            "--name",
+            args.name,
+            "--lat",
+            str(coords["latitude"]),
+            "--lon",
+            str(coords["longitude"]),
+            "--altitude",
+            str(coords["height"]),
+            "--date-start",
+            args.date_start,
+            "--continuity",
+            args.continuity,
+            "--location-name",
+            site_name,
+        ]
+        for flag, value in (
+            ("--subtype", getattr(args, "subtype", None)),
+            ("--operational-class", getattr(args, "operational_class", None)),
+            ("--in-network-epos", getattr(args, "in_network_epos", None)),
+            ("--server", getattr(args, "server", None)),
+        ):
+            if value:
+                argv += [flag, str(value)]
+        if getattr(args, "port", None):
+            argv += ["--port", str(args.port)]
+        if not dry_run:
+            argv.append("--no-dry-run")
+
+        say(f"\n{'🌵 [dry-run] ' if dry_run else ''}TOS: tos {' '.join(argv)}")
+        try:
+            if want_json:
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = tos_main(argv + ["--json"])
+                raw = buf.getvalue()
+                try:
+                    tos_result = _json.loads(raw)
+                except ValueError:
+                    tos_result = {"raw": raw}
+            else:
+                # Stream tostools' own output through: it carries the
+                # duplicate-marker guard, the site-reuse report and the
+                # "a land entity is NOT deletable" warning. --json would
+                # suppress exactly those, so only capture when asked.
+                rc = tos_main(argv)
+        except SystemExit as exc:  # argparse bailed on a value we built
+            rc = int(exc.code or 1)
+        if rc != 0:
+            warn(f"❌ TOS station add failed (exit {rc}) — stations.cfg left untouched")
+            return rc
+
+    # ---- stations.cfg section -------------------------------------------
+    if write_cfg and cfg_path is not None:
+        if dry_run:
+            say(f"\n🌵 [dry-run] would add [{sid}] to {cfg_path}")
+        else:
+            pos_note = (
+                "position is a receiver PVT fix (~metre-level) — replace with "
+                "surveyed coordinates when available"
+                if not all(surveyed.values())
+                else "position supplied explicitly (surveyed)"
+            )
+            source = f"receiver on {date.today().isoformat()}"
+            if host:
+                source += f" (probe IP: {host})"
+            header = (
+                f"Created by 'cfg add-tos-station' from {source}\n"
+                f"TOS site + station registered in the same run.\n"
+                f"NOTE: {pos_note}.\n"
+                f"Fill in manually: {', '.join(_EXTRACT_TODO_FIELDS)}"
+            )
+            try:
+                create_station_section(cfg_path, sid, fields, header_comment=header)
+            except ValueError as exc:
+                warn(f"❌ {exc}")
+                return 1
+            say(f"\n✅ [{sid}] added to {cfg_path}")
+
+    if want_json:
+        print(
+            _json.dumps(
+                {
+                    "station": sid,
+                    "name": args.name,
+                    "site_name": site_name,
+                    "dry_run": dry_run,
+                    "probe_host": host,
+                    "position_surveyed": surveyed,
+                    "cfg_fields": fields,
+                    "tos": tos_result,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if dry_run:
+        print("\n(dry run — nothing written to TOS or stations.cfg)")
+        print("   Re-run with --no-dry-run to commit.")
+    else:
+        print("\nNext steps:")
+        print(
+            f"   receivers cfg add-receiver --probe {host or '<IP>'} "
+            f"--date-start {args.date_start}"
+        )
+        print(
+            f"   receivers cfg move-device --serial <SN> --to {sid} "
+            f"--date {args.date_start}"
+        )
+        print(
+            f"   receivers cfg add-antenna  --station {sid} --model <IGS> "
+            f"--date-start {args.date_start}"
+        )
+        print(
+            f"   receivers cfg add-monument --station {sid} --height <m> "
+            f"--date-start {args.date_start}"
+        )
+        print("   (same --date-start throughout — a mismatch splits the TOS session)")
     return 0
 
 
@@ -4375,6 +4751,138 @@ Examples:
         help="Receiver type hint for --host mode (default: PolaRX5)",
     )
     ext.set_defaults(func=cmd_cfg_extract)
+
+    # ------------------------------------------------------------------
+    # add-tos-station — greenfield orchestrator (TOS site+station + cfg)
+    # ------------------------------------------------------------------
+    ats = cfg_subparsers.add_parser(
+        "add-tos-station",
+        help="Probe a receiver, create its TOS site + station, and write stations.cfg",
+        description=(
+            "Greenfield-station orchestrator: collapse onboarding steps 0 and 1 into "
+            "one command. Probes the receiver once for identity + PVT position, hands "
+            "the coordinates to `tos station add` (which find-or-creates the land "
+            "site, creates the station entity and joins them), then writes the "
+            "matching [STID] stations.cfg section from the same probe. "
+            "This ordering matters: `cfg move-device --to STATION` fills the TOS "
+            "position attributes FROM stations.cfg, so the cfg section must exist "
+            "before the receiver is installed or that fill silently no-ops. "
+            "Dry-run by default in both halves — a created land site is NOT "
+            "deletable in TOS, so preview before committing."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Preview everything (no TOS write, no cfg write):
+  receivers cfg add-tos-station NPSK --probe 10.6.1.71 --name "Núpskatla" \\
+      --date-start 2026-08-08
+
+  # Commit both halves:
+  receivers cfg add-tos-station NPSK --probe 10.6.1.71 --name "Núpskatla" \\
+      --date-start 2026-08-08 --no-dry-run
+
+  # Surveyed coordinates instead of the receiver's PVT fix:
+  receivers cfg add-tos-station NPSK --probe 10.6.1.71 --name "Núpskatla" \\
+      --date-start 2026-08-08 --lat 66.2 --lon -16.1 --height 12.3
+
+  # Colocated site that already exists in TOS under its own name:
+  receivers cfg add-tos-station NPSK --probe 10.6.1.71 --name "Núpskatla" \\
+      --site-name "Núpskatla SIL stöð" --date-start 2026-08-08
+
+  # TOS records only / cfg section only:
+  receivers cfg add-tos-station NPSK --probe … --name … --date-start … --no-cfg
+  receivers cfg add-tos-station NPSK --probe … --name … --date-start … --no-tos
+
+Reuse the SAME --date-start on the following add-receiver / move-device /
+add-antenna / add-monument steps — a mismatched instant splits the TOS session
+and every RINEX header comes out incomplete.
+""",
+    )
+    ats.add_argument("station_id", help="4-char station marker (e.g. NPSK)")
+    ats.add_argument(
+        "--probe",
+        metavar="IP",
+        help="Receiver IP to probe for identity + position (station need not exist yet)",
+    )
+    ats.add_argument(
+        "--name",
+        required=True,
+        help="Station name, e.g. 'Núpskatla' (also the default land-site name)",
+    )
+    ats.add_argument(
+        "--date-start",
+        required=True,
+        metavar="DATE",
+        help=(
+            "Station start date (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS). Reuse this "
+            "exact string on every co-installed device."
+        ),
+    )
+    ats.add_argument(
+        "--site-name",
+        metavar="NAME",
+        help=(
+            "Land-site name to find-or-create (default: --name). Use when the site "
+            "already exists in TOS under a different spelling, e.g. a colocated SIL "
+            "station — the match is exact and case-sensitive."
+        ),
+    )
+    ats.add_argument(
+        "--continuity",
+        default="continuous",
+        help="Measurement continuity (default: continuous)",
+    )
+    ats.add_argument("--subtype", help="Station kind attribute (TOS catalog default)")
+    ats.add_argument("--operational-class", help="Operational class (TOS default: B)")
+    ats.add_argument(
+        "--in-network-epos",
+        metavar="ja|nei",
+        help="In the EPOS network (TOS default: nei)",
+    )
+    ats.add_argument(
+        "--lat",
+        help="Override the probed latitude with a surveyed value (decimal degrees)",
+    )
+    ats.add_argument(
+        "--lon",
+        help="Override the probed longitude with a surveyed value (decimal degrees)",
+    )
+    ats.add_argument(
+        "--height", help="Override the probed height with a surveyed value (metres)"
+    )
+    ats.add_argument(
+        "--receiver-type",
+        default="PolaRX5",
+        metavar="TYPE",
+        help="Receiver type hint for the probe (default: PolaRX5)",
+    )
+    ats.add_argument(
+        "--control-port",
+        type=int,
+        metavar="PORT",
+        help="Receiver SBF control port to probe (default: 28784)",
+    )
+    ats.add_argument(
+        "--no-cfg",
+        action="store_true",
+        help="Create the TOS records only — skip the stations.cfg section",
+    )
+    ats.add_argument(
+        "--no-tos",
+        action="store_true",
+        help="Write the stations.cfg section only — skip the TOS records",
+    )
+    ats.add_argument(
+        "--no-dry-run",
+        action="store_true",
+        help="Commit both halves; without this flag nothing is written",
+    )
+    ats.add_argument("--server", help="TOS API host (default: vi-api.vedur.is)")
+    ats.add_argument("--port", type=int, help="TOS API port")
+    ats.add_argument(
+        "--json", action="store_true", help="Emit a structured JSON summary"
+    )
+    ats.set_defaults(func=cmd_cfg_add_tos_station)
 
     # ------------------------------------------------------------------
     # add-receiver — warehouse intake via tostools.device (step 6)
