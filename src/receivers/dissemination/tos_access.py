@@ -414,9 +414,7 @@ def make_history_fn(client: Any = None):
 
                 client = TOSClient()
             meta = client.get_complete_station_metadata(station)
-        except (
-            Exception
-        ) as exc:  # noqa: BLE001 - TOS failure ⇒ "" (re-checked next scan)
+        except Exception as exc:  # noqa: BLE001 - TOS failure ⇒ "" (re-checked next scan)
             logger.warning("reactive history lookup failed for %s: %s", station, exc)
             return ""
         if not meta:
@@ -491,6 +489,32 @@ def _resolve_observer_agency(owner_org: str) -> tuple[str, str]:
     return (info.observer or "").strip(), info.rinex_agency
 
 
+#: Station-level keys the header comparator needs but that live outside the
+#: device sessions.
+_STATION_COORD_KEYS = ("lat", "lon", "altitude")
+
+
+def _carry_station_coords(session: dict, meta: dict) -> None:
+    """Copy the surveyed position from station metadata into the QC session.
+
+    ``compare_rinex_to_tos`` checks APPROX POSITION XYZ against these, but ONLY
+    when lat AND lon AND altitude are all present; otherwise it skips the
+    comparison and reports neither a match nor a discrepancy. They were never
+    carried over, so ``coordinates`` sat in ``DEFAULT_BLOCKING_FIELDS`` and could
+    never fire — a gate that read as enforced and was a silent no-op fleet-wide.
+
+    It cost real data integrity: ISAK's receiver was taken off the mark for a
+    campaign survey in Aug 2016 (5 marks, up to 220 km away) and all 14 days were
+    published on the EPOS portal as ISAK, carrying ISAK's DOMES. The raw
+    validator DID refuse them at conversion time; this gate is the one that
+    should have stopped them reaching the portal.
+    """
+    for key in _STATION_COORD_KEYS:
+        value = meta.get(key)
+        if value is not None:
+            session.setdefault(key, value)
+
+
 def _owner_org_at(contacts: list[dict[str, Any]], when: datetime) -> str:
     """TOS owner organization (role 'Eigandi stöðvar') active at ``when``.
 
@@ -557,6 +581,7 @@ def make_session_provider(client: Any = None):
         # DOMES is station-level too — carried so the header finalizer can write it
         # into MARKER NUMBER (EPOS 4.1.7). Empty when the station has no DOMES.
         session.setdefault("domes", (meta.get("iers_domes_number") or "").strip())
+        _carry_station_coords(session, meta)
         # Owner organization (station-level) drives the per-station RINEX
         # OBSERVER/AGENCY via agencies.yaml. Folded into session_fingerprint so a
         # re-designation (e.g. Landmælingar→NATT) re-renders the cached header.
@@ -663,6 +688,7 @@ class TOSSesionCache:
         # compare_rinex_to_tos reads session["marker"] — it lives at station level.
         session.setdefault("marker", (meta.get("marker") or sid).upper())
         session.setdefault("domes", (meta.get("iers_domes_number") or "").strip())
+        _carry_station_coords(session, meta)
         # Date-scoped owner org (operator responsible AT observation_dt), falling
         # back to the current contact when no relationship period covers the date.
         owner_org = _owner_org_at(self._contacts.get(sid) or [], observation_dt)
