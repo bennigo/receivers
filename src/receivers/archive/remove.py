@@ -35,9 +35,18 @@ audit = logging.getLogger("receivers.audit")
 
 # Strict archive layout: YYYY/mon/STA/session/category/FILE — anchors the delete
 # to a real archive path and (as a secondary defense) admits no shell metachars.
+# The category dir may be followed by ONE known sidecar level: the dated
+# supersede/backup dirs the pipeline itself creates beside the products —
+# `superseded_rt_<YYYYMMDD>` (RT stream files replaced by a raw-derived
+# conversion), `rinex_bak/` (--backup-old) and `fix-headers_<YYYYMMDD>` under
+# rinex_archive/. Without this, cleaning up the pipeline's own leftovers had to
+# bypass the gateway and hand-run rm on the server, which is precisely what this
+# verb exists to prevent. Named exactly, so an arbitrary subdirectory is still
+# refused.
+_SIDECAR = r"(?:(?:superseded_rt_[0-9]{8}|rinex_bak|fix-headers_[0-9]{8})/)?"
 _RELPATH_RE = re.compile(
     r"^[0-9]{4}/[a-z]{3}/[A-Z0-9]{2,9}/[0-9A-Za-z_]+/"
-    r"(rinex|raw|rinex_org|rinex_archive)/[A-Za-z0-9][A-Za-z0-9._-]*$"
+    r"(rinex|raw|rinex_org|rinex_archive)/" + _SIDECAR + r"[A-Za-z0-9][A-Za-z0-9._-]*$"
 )
 
 # Characters never allowed in a target path (defense in depth over the regex).
