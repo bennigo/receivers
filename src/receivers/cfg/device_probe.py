@@ -204,6 +204,42 @@ def constellations_from_satellites(
     if not isinstance(by_system, dict):
         return frozenset()
 
+    # Truncation guard. The per-system counts come from walking the SatInfo
+    # sub-blocks, but `total` is read straight from the block header — so if the
+    # SBF block arrived short, `total` stays right while the walk stops early
+    # and quietly loses the tail. `_find_sbf_block` returns on block-ID match
+    # without waiting for its declared `length`
+    # (polarx5_tcp_extractor.py:1210), so this happens routinely.
+    #
+    # It is not random which system is lost: SatInfo runs in SVID order and
+    # BeiDou holds the highest SVIDs (201-263), so BeiDou is always first over
+    # the cliff. Measured on NPSK 2026-08-08 — 5 consecutive probes, 4 summed to
+    # 27 against `total 41` and reported no BeiDou; the one that summed to 40
+    # found 11 BeiDou satellites.
+    #
+    # The systems we DID see are still real (positive evidence survives a short
+    # read), so return them — but flag the set as possibly incomplete so the
+    # caller can say so rather than presenting a partial answer as the answer.
+    counted = 0
+    for value in by_system.values():
+        try:
+            counted += max(int(value), 0)
+        except (TypeError, ValueError):
+            continue
+    try:
+        declared = int(satellites.get("total") or 0)
+    except (TypeError, ValueError):
+        declared = 0
+    if declared and counted < declared:
+        logger.warning(
+            "constellation counts look truncated: %d satellites across %s but "
+            "the block header declares %d — the set may be missing a system "
+            "(BeiDou first). See polarx5_tcp_extractor._find_sbf_block.",
+            counted,
+            sorted(by_system),
+            declared,
+        )
+
     codes = set()
     for label, count in by_system.items():
         try:
