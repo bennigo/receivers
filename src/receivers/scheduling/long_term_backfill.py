@@ -3,7 +3,8 @@
 DB-driven and **classified**: query ``file_tracking`` / ``file_absence`` /
 ``receiver_horizon`` to build a per-station worklist bucketed as:
 
-  ``queued``             — not in archive, not confirmed gone → download (full pipeline)
+  ``queued``             — not in archive (raw *or* rinex), not confirmed gone
+                           → download (full pipeline)
   ``confirmed_gone``     — ``file_absence.terminal`` OR older than ``receiver_horizon``
                            → skip (ran off the receiver auto-delete cycle)
   ``provisional_absent`` — ``file_absence`` row, not yet terminal → low-priority retry
@@ -18,6 +19,9 @@ The classification deliberately distinguishes "couldn't reach" (no signal here �
 the health oracle gates that in the worker) from "reached and confirmed absent"
 (``confirmed_gone``): a transient connection failure never records an absence,
 so it never pollutes this worklist.
+
+Read-only: never calls ``sync_archive_to_db`` (``sync_first=False``), so it
+cannot mutate ``file_tracking``.
 """
 
 from __future__ import annotations
@@ -118,6 +122,25 @@ def _absence_counts(sid: str, session: str, start: date, end: date) -> tuple[int
         return 0, 0
 
 
+def _archived_dates(sid: str, session: str, start: date, end: date) -> set:
+    """Set of file_dates with a present status for sid/session in [start, end]."""
+    from ..health.database_factory import DatabaseConnectionFactory
+
+    try:
+        with DatabaseConnectionFactory.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT file_date FROM file_tracking "
+                "WHERE sid=%s AND session_type=%s "
+                "AND status IN ('archived','downloaded') "
+                "AND file_date BETWEEN %s AND %s",
+                (sid, session, start, end),
+            )
+            return {r[0] for r in cur.fetchall()}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("archived_dates %s/%s: %s", sid, session, e)
+        return set()
+
+
 def query_long_term_gaps(
     sid: str,
     session: str,
@@ -126,19 +149,18 @@ def query_long_term_gaps(
 ) -> LongTermGapReport:
     """Classify the long-term gap for one station/session.
 
-    Anchors ``start`` to the station's true gap start (``last_archived + 1``),
-    capped by ``lookback_days`` — NOT a fixed trailing window (the difference
-    from the 7-day subdaily backfill). Read-only; safe to run any time.
+    Scans the FULL ``lookback_days`` window (not just trailing) so mid-range
+    holes — e.g. a month missing between present data, like SARP's June — are
+    found. Read-only; safe to run any time.
 
     Args:
         sid: Station id, e.g. ``"SARP"``.
         session: Session type, e.g. ``"15s_24hr"``.
         lookback_days: Hard cap on how far back to look.
         receiver_type: Optional, passed to ``GapDetector.find_gaps`` for the
-            correct archive path/extension per receiver family.
-
-    Returns:
-        A :class:`LongTermGapReport`.
+            correct archive path/extension per receiver family. Auto-looked-up
+            from station config when None (required — the PolaRX5 default path
+            would false-gap every NetRS/NetR9 day).
     """
     from ..health.file_tracker import GapDetector
 
@@ -146,11 +168,16 @@ def query_long_term_gaps(
     last_archived = _last_archived_date(sid, session)
     horizon = _receiver_horizon(sid, session)
 
+    if receiver_type is None:
+        try:
+            from ..cli.main import get_station_config
+
+            receiver_type = (get_station_config(sid) or {}).get("receiver_type")
+        except Exception:  # noqa: BLE001
+            pass
+
     end = date.today() - timedelta(days=1)  # yesterday
     start = end - timedelta(days=lookback_days - 1)
-    # Scan the FULL window, not last_archived+1: a gap can be a mid-range hole
-    # (e.g. a month missing between present data, like SARP's June) as well as a
-    # trailing gap. find_gaps reports every expected file that's not in archive.
 
     report = LongTermGapReport(
         sid=sid,
@@ -164,33 +191,38 @@ def query_long_term_gaps(
         return report  # fully up to date
 
     # Download candidates: not in archive AND not known-missing-on-receiver.
-    # (skip_missing_on_receiver=True is the whole point — it excludes confirmed
-    # absences so we don't waste a slot re-probing files the receiver has aged out.)
+    # skip_missing_on_receiver=True excludes confirmed absences so we don't
+    # waste a slot re-probing files the receiver has aged out.
+    # A day needs downloading only if BOTH raw and rinex are absent: rinex-on-disk
+    # (even when raw was pruned from the local ring-buffer) means the data product
+    # exists, so it is not a real gap. find_gaps checks the filesystem per session,
+    # so this is robust to file_tracking's rinex rows being incomplete.
     try:
         with GapDetector() as det:
-            report.queued = det.find_gaps(
-                sid,
-                session,
-                start,
-                end,
-                receiver_type=receiver_type,
-                sync_first=True,
+            raw_gaps = det.find_gaps(
+                sid, session, start, end,
+                receiver_type=receiver_type, sync_first=False,
                 skip_missing_on_receiver=True,
+            )
+            rinex_gaps = det.find_gaps(
+                sid, f"{session}_rinex", start, end,
+                receiver_type=receiver_type, sync_first=False,
+                skip_missing_on_receiver=False,
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("find_gaps %s/%s: %s", sid, session, e)
+        raw_gaps, rinex_gaps = [], []
 
     term, prov = _absence_counts(sid, session, start, end)
     report.confirmed_gone = term
     report.provisional_absent = prov
 
-    # Days the receiver can no longer serve (older than its horizon) are gone for
-    # good — surface how many queued days fall past it, so the worker can mark
-    # them terminal instead of fetching 404s.
-    if horizon:
-        report.queued = [
-            g for g in report.queued if g.file_date >= horizon
-        ]
+    rinex_missing = {g.file_date for g in rinex_gaps}
+    horizon_floor = horizon or date.min
+    report.queued = [
+        g for g in raw_gaps
+        if g.file_date in rinex_missing and g.file_date >= horizon_floor
+    ]
 
     return report
 
