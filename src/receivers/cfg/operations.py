@@ -737,7 +737,8 @@ def add_antenna(
 def add_monument(
     writer: Optional[TOSWriter] = None,
     *,
-    station_id: str,
+    station_id: Optional[str] = None,
+    warehouse: Optional[str] = None,
     height: str = "0.0",
     serial: Optional[str] = None,
     owner: str = "Jarðeðlismælihópur",
@@ -776,29 +777,60 @@ def add_monument(
     """
     from tostools.device import build_monument_attributes, synthetic_serial
 
+    # Exactly one destination, same contract as add_antenna.
+    if (station_id is None) == (warehouse is None):
+        raise CfgOperationError(
+            "add-monument: pass either --station STID (install) OR --warehouse "
+            "LOCATION (intake), not both and not neither."
+        )
+    # The synthetic serial is built from the station marker
+    # (monument-<STID>-<YYYYMMDD>), which does not exist yet at intake — and a
+    # warehoused monument is later joined with `move-device --subtype monument
+    # --serial SN`, which matches BY SERIAL. So intake needs the real one.
+    if warehouse and (serial is None or str(serial).strip() == ""):
+        raise CfgOperationError(
+            "add-monument --warehouse: --serial is required for intake. The "
+            "synthetic monument-<STID>-<date> placeholder needs a station, and "
+            "`move-device --subtype monument` matches the unit by serial when "
+            "you later install it."
+        )
+
     w = _resolve_writer(writer, dry_run)
-    station_eid = _resolve_station(w, station_id)
+    parent_eid = (
+        _resolve_station(w, station_id)
+        if station_id is not None
+        else _b9_eid(w, warehouse=warehouse)
+    )
 
     if not date_start:
-        station_hist = w.get_entity_history(station_eid)
-        st_date = (
-            _device_attribute(station_hist, "date_start")
-            if isinstance(station_hist, dict)
-            else None
-        )
-        date_start = st_date or datetime.now().date().isoformat()
+        # At a station the monument inherits the station's own date_start so a
+        # co-install shares one TOS session; a warehouse intake has no station
+        # to inherit from, so it is simply today.
+        if station_id is not None:
+            station_hist = w.get_entity_history(parent_eid)
+            st_date = (
+                _device_attribute(station_hist, "date_start")
+                if isinstance(station_hist, dict)
+                else None
+            )
+            date_start = st_date or datetime.now().date().isoformat()
+        else:
+            date_start = datetime.now().date().isoformat()
     # Same field-work convention as cfg move-device (bare date → noon, full ISO
     # preserved) so a monument co-installed with the receiver/antenna shares one
     # TOS session — see add_antenna for the session-split rationale.
     eff_date = _visit_default_time(date_start)
 
-    open_existing = _find_open_child(w, station_eid, "monument")
-    if open_existing is not None and not force:
-        raise CfgOperationError(
-            f"{station_id} already has an open monument child "
-            f"(id_entity={open_existing}). A new height epoch should close the "
-            f"old monument first; or pass --force to add a second."
-        )
+    # One-open-monument-per-station is a station invariant; a warehouse holds
+    # as many spare marks as it likes.
+    if station_id is not None:
+        open_existing = _find_open_child(w, parent_eid, "monument")
+        if open_existing is not None and not force:
+            raise CfgOperationError(
+                f"{station_id} already has an open monument child "
+                f"(id_entity={open_existing}). A new height epoch should close the "
+                f"old monument first; or pass --force to add a second."
+            )
 
     synthetic = serial is None or str(serial).strip() == ""
     mon_serial = (
@@ -834,17 +866,17 @@ def add_monument(
     result.tos_changes["monument_create"] = resp
     mid = resp.get("id_entity") if isinstance(resp, dict) else None
     if mid is not None:
-        join = w.create_entity_connection(station_eid, int(mid), eff_date)
+        join = w.create_entity_connection(parent_eid, int(mid), eff_date)
         result.tos_changes["monument_join"] = {
             "joined": True,
-            "parent": station_eid,
+            "parent": parent_eid,
             "child": int(mid),
             "response": join,
         }
     else:
         result.tos_changes["monument_join"] = {
             "joined": False,
-            "parent": station_eid,
+            "parent": parent_eid,
         }
 
     return result
