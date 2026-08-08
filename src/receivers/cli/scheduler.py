@@ -438,6 +438,29 @@ def cmd_scheduler_backfill(args) -> int:
         return 1
 
 
+def cmd_scheduler_long_term_gaps(args) -> int:
+    """Classify a station's long-term gap (read-only) — the worklist the
+    long-term backfill would consume.
+
+    Surfaces, per station/session, the DB-driven classification: ``queued``
+    (download candidates, receiver may still hold them) vs ``confirmed_gone``
+    (ran off the receiver auto-delete cycle — skip) vs ``provisional_absent``.
+    Anchors the window to the station's true gap start (last-archived + 1), not
+    a fixed trailing window. See docs/design/long-term-backfill.md (#136).
+    """
+    from ..scheduling.long_term_backfill import format_report, query_long_term_gaps
+
+    session = getattr(args, "session", "15s_24hr")
+    lookback = getattr(args, "lookback", 365)
+    stations = [s.upper() for s in (args.stations or [])]
+    if not stations:
+        print("No --stations given (long-term gap classification is per-station).")
+        return 1
+    for sid in stations:
+        print(format_report(query_long_term_gaps(sid, session, lookback_days=lookback)))
+    return 0
+
+
 def cmd_scheduler_clean_stale_tmp(args) -> int:
     """Delete stale partial downloads from the tmp directory."""
     session = getattr(args, "session", "15s_24hr")
@@ -1383,6 +1406,24 @@ def create_scheduler_parser(subparsers):
         help="Archiving mode: bulk (download all then archive) or immediate (default: bulk)",
     )
     backfill_parser.set_defaults(func=cmd_scheduler_backfill)
+
+    # Long-term gap classification (read-only; design #136)
+    lt_gaps_parser = scheduler_subparsers.add_parser(
+        "long-term-gaps",
+        help="Classify a station's long-term gap (queued vs confirmed-gone) from the DB",
+    )
+    lt_gaps_parser.add_argument(
+        "--stations", nargs="+", required=True, help="Station id(s), e.g. SARP KOSK"
+    )
+    lt_gaps_parser.add_argument(
+        "--session",
+        default="15s_24hr",
+        choices=["15s_24hr", "1Hz_1hr", "status_1hr"],
+    )
+    lt_gaps_parser.add_argument(
+        "--lookback", type=int, default=365, help="Hard cap on days to look back"
+    )
+    lt_gaps_parser.set_defaults(func=cmd_scheduler_long_term_gaps)
 
     # Reconcile command
     reconcile_parser = scheduler_subparsers.add_parser(
