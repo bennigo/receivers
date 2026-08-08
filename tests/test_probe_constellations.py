@@ -193,3 +193,39 @@ def test_flag_is_registered_on_the_parser():
 
     default = p.parse_args(["cfg", "add-receiver", "--probe", "10.6.1.71"])
     assert default.no_constellations is False
+
+
+# ---------------------------------------------------------------------------
+# Truncation guard
+# ---------------------------------------------------------------------------
+
+
+def test_short_read_still_returns_what_was_seen_but_warns(caplog):
+    """A truncated SBF block loses the tail; the systems seen are still real."""
+    truncated = {
+        "total": 41,
+        "by_constellation": {"GPS": 11, "Galileo": 10, "GLONASS": 6},
+    }
+    with caplog.at_level("WARNING"):
+        out = constellations_from_satellites(truncated)
+    assert out == {"GPS", "GAL", "GLO"}  # positive evidence survives
+    assert "truncated" in caplog.text
+    assert "41" in caplog.text
+
+
+def test_complete_read_does_not_warn(caplog):
+    """Counts summing to the declared total is a complete block — no warning."""
+    complete = {
+        "total": 40,
+        "by_constellation": {"GPS": 10, "Galileo": 10, "GLONASS": 9, "BeiDou": 11},
+    }
+    with caplog.at_level("WARNING"):
+        out = constellations_from_satellites(complete)
+    assert out == {"GPS", "GAL", "GLO", "BDS"}
+    assert "truncated" not in caplog.text
+
+
+def test_missing_total_does_not_warn(caplog):
+    with caplog.at_level("WARNING"):
+        constellations_from_satellites({"by_constellation": {"GPS": 5}})
+    assert "truncated" not in caplog.text
