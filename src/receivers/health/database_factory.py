@@ -158,6 +158,11 @@ def _load_config_file() -> Dict[str, str]:
             "mirror_host",
             "mirror_user",
             "mirror_password",
+            # Other names for this same machine — see
+            # get_connection_params_for_host. Omitting it here silently
+            # disabled the feature: the key sat in database.cfg, the resolver
+            # read None, and every catalog write kept warning.
+            "local_aliases",
             "connect_timeout",
             "statement_timeout",
             "lock_timeout",

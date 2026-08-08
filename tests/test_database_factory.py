@@ -476,3 +476,50 @@ class TestLocalAliases:
         cfg = {**self._CFG, "local_aliases": "  ,  "}
         p = self._resolve("rek-d01.vedur.is", cfg)
         assert p["host"] == "rek-d01.vedur.is"
+
+
+class TestConfigLoaderCarriesLocalAliases:
+    """`local_aliases` must survive the real loader, not just a mocked dict.
+
+    `_load_config_file` copies an ALLOW-LIST of keys out of [postgresql].
+    `local_aliases` was missing from it, so the resolver read None, the alias
+    set was empty, and rek-d01 kept warning on every catalog write even though
+    the key was sitting in database.cfg and the resolver code was deployed.
+
+    Every other test in this file patches `_load_config_file`, which is exactly
+    why they all passed while the feature did nothing. This one writes a real
+    file and reads it back.
+    """
+
+    def _load(self, tmp_path, monkeypatch, body):
+        cfg = tmp_path / "database.cfg"
+        cfg.write_text(body)
+        import receivers.health.database_factory as dbf
+
+        monkeypatch.setattr(dbf, "_config_cache", None, raising=False)
+        monkeypatch.setenv("GPS_CONFIG_PATH", str(tmp_path))
+        return dbf._load_config_file()
+
+    _BODY = (
+        "[postgresql]\n"
+        "host = localhost\n"
+        "user = gpsops\n"
+        "mirror_host = pgdev.vedur.is\n"
+        "local_aliases = rek-d01.vedur.is, reknew\n"
+    )
+
+    def test_local_aliases_is_not_dropped(self, tmp_path, monkeypatch):
+        cfg = self._load(tmp_path, monkeypatch, self._BODY)
+        assert cfg.get("local_aliases") == "rek-d01.vedur.is, reknew"
+
+    def test_the_fqdn_then_resolves_to_the_primary(self, tmp_path, monkeypatch):
+        """End to end through the real loader: the warning case is gone."""
+        self._load(tmp_path, monkeypatch, self._BODY)
+        p = DatabaseConnectionFactory.get_connection_params_for_host("rek-d01.vedur.is")
+        assert p["host"] == "localhost"
+        assert p["user"] == "gpsops"
+
+    def test_neighbouring_keys_still_load(self, tmp_path, monkeypatch):
+        cfg = self._load(tmp_path, monkeypatch, self._BODY)
+        assert cfg.get("mirror_host") == "pgdev.vedur.is"
+        assert cfg.get("host") == "localhost"
