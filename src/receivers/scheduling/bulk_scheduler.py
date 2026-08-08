@@ -2341,6 +2341,8 @@ class BulkDownloadScheduler:
         self._schedule_local_prune()
         self._schedule_receiver_horizon_probe()
         self._schedule_morning_recovery()
+        self._schedule_long_term_backfill()
+        self._schedule_reconnection_backfill()
         self._schedule_stream_capture()
 
         # Catch up any missed daily downloads (e.g., 15s_24hr if scheduler started after midnight)
@@ -2694,6 +2696,68 @@ class BulkDownloadScheduler:
             f"Scheduled receiver horizon probe ({base_trigger.description}, "
             "immediate first run in 5 min)"
         )
+
+    def _schedule_long_term_backfill(self) -> None:
+        """Schedule the daily long-term-backfill backstop (design #136).
+
+        Disabled by default — inert until scheduler.yaml ``[long_term_backfill]
+        enabled: true``. Runs on the 'backfill' executor, max_instances=1, so it
+        never competes with live downloads and never overlaps itself.
+        """
+        cfg = self.yaml_config.get("long_term_backfill", {})
+        if not cfg.get("enabled", False):
+            self.logger.info("Long-term backfill disabled in config")
+            return
+        from .long_term_backfill import _run_long_term_backfill_job
+
+        base = parse_schedule(cfg.get("daily_schedule", "04:00"))
+        self.scheduler.add_job(
+            func=_run_long_term_backfill_job,
+            trigger=base.trigger_type,
+            kwargs={
+                "sessions": cfg.get("sessions", ["15s_24hr", "1Hz_1hr"]),
+                "lookback_days": cfg.get("lookback_days", 365),
+                "max_workers": cfg.get("max_workers", 2),
+                "max_days_per_station": cfg.get("max_days_per_station"),
+                "run_rinex": cfg.get("run_rinex", True),
+            },
+            id="long_term_backfill",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            executor="backfill",
+            **base.trigger_kwargs,
+        )
+        self.logger.info(f"Scheduled long-term backfill backstop ({base.description})")
+
+    def _schedule_reconnection_backfill(self) -> None:
+        """Schedule the reconnection trigger (#136) — recover stations that just
+        came online. Disabled by default; shares the ``[long_term_backfill]``
+        config section."""
+        cfg = self.yaml_config.get("long_term_backfill", {})
+        if not cfg.get("enabled", False):
+            return
+        from .long_term_backfill import _run_reconnection_backfill_job
+
+        base = parse_schedule(cfg.get("reconnection_schedule", "15m"))
+        self.scheduler.add_job(
+            func=_run_reconnection_backfill_job,
+            trigger=base.trigger_type,
+            kwargs={
+                "min_outage_days": cfg.get("min_outage_days", 3),
+                "lookback_days": cfg.get("lookback_days", 365),
+                "run_rinex": cfg.get("run_rinex", True),
+                "max_days_per_station": cfg.get("max_days_per_station"),
+                "reconnection_window_minutes": cfg.get("reconnection_window_minutes", 20),
+            },
+            id="reconnection_backfill",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            executor="backfill",
+            **base.trigger_kwargs,
+        )
+        self.logger.info(f"Scheduled reconnection backfill trigger ({base.description})")
 
     def _schedule_integrity_checker(self) -> None:
         """Schedule periodic file integrity checking.

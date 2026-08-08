@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 from typing import Any, Optional
 
 logger = logging.getLogger("receivers.scheduler.long_term_backfill")
@@ -309,3 +309,129 @@ def run_long_term_backfill_station(
         sid, session, recovered, failed,
     )
     return report
+
+
+def _load_monitor_overloaded() -> bool:
+    """True if the system load monitor says RT is under pressure (yield signal).
+
+    Lazy-imports the module-level monitor from bulk_scheduler; any failure is
+    treated as "not overloaded" so a missing monitor never blocks recovery.
+    """
+    try:
+        from .bulk_scheduler import _load_monitor
+
+        if _load_monitor is None:
+            return False
+        load = _load_monitor.get_load()
+        return load.cpu_load_1m > _load_monitor.max_cpu_load
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _run_long_term_backfill_job(
+    sessions=None,
+    lookback_days: int = 365,
+    max_workers: int = 2,
+    max_days_per_station: Optional[int] = None,
+    run_rinex: bool = True,
+) -> None:
+    """APScheduler **daily backstop**: classify every active station, recover gaps.
+
+    Throttled (low ``max_workers``) and yields to RT via :func:`_load_monitor_overloaded`.
+    The worker is idempotent (sync-skips present files), so a daily run is safe.
+    This is the backstop; the reconnection trigger is the primary path.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from ..cli.main import get_all_station_configs
+
+    sessions = sessions or ["15s_24hr", "1Hz_1hr"]
+    active = [
+        sid
+        for sid, cfg in get_all_station_configs().items()
+        if cfg.get("enabled", True)
+        and cfg.get("station_status") not in ("discontinued", "inactive")
+        and cfg.get("health_check") != "passive"
+    ]
+    logger.info(
+        "Long-term backfill(daily): %d stations, sessions=%s, lookback=%dd",
+        len(active), sessions, lookback_days,
+    )
+
+    def _one(sid: str, session: str):
+        if _load_monitor_overloaded():
+            logger.info("Long-term backfill: load high — deferring %s/%s", sid, session)
+            return None
+        try:
+            report = run_long_term_backfill_station(
+                sid, session, lookback_days=lookback_days, run_rinex=run_rinex,
+                max_days=max_days_per_station,
+            )
+            return len(report.queued)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Long-term backfill %s/%s: %s", sid, session, e)
+            return None
+
+    tasks = [(sid, s) for sid in active for s in sessions]
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        results = [f.result() for f in as_completed(ex.submit(_one, sid, s) for sid, s in tasks)]
+    logger.info(
+        "Long-term backfill(daily) done: %d station/session had queued gaps",
+        sum(1 for r in results if r),
+    )
+
+
+def _run_reconnection_backfill_job(
+    min_outage_days: int = 3,
+    lookback_days: int = 365,
+    run_rinex: bool = True,
+    max_days_per_station: Optional[int] = None,
+    reconnection_window_minutes: int = 20,
+) -> None:
+    """APScheduler **reconnection trigger**: recover stations that just came online.
+
+    Queries ``station_connectivity`` for stations whose ``state_since`` is in the
+    last window (recently reconnected); for each with a real outage (a queued gap
+    older than ``min_outage_days``), runs the worker. This is the primary trigger;
+    the daily job is the backstop. Yields to RT between stations.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from ..health.database_factory import DatabaseConnectionFactory
+
+    since = datetime.now(UTC) - timedelta(minutes=reconnection_window_minutes)
+    try:
+        with DatabaseConnectionFactory.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT sid FROM station_connectivity "
+                "WHERE is_online = TRUE AND state_since > %s ORDER BY sid",
+                (since,),
+            )
+            candidates = [r[0] for r in cur.fetchall()]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("reconnection_backfill: connectivity query failed: %s", e)
+        return
+
+    if not candidates:
+        return
+    logger.info(
+        "Long-term backfill(reconnect): %d station(s) came online recently: %s",
+        len(candidates), ",".join(candidates),
+    )
+
+    floor = date.today() - timedelta(days=min_outage_days)
+    for sid in candidates:
+        if _load_monitor_overloaded():
+            logger.info("Long-term backfill(reconnect): load high — deferring remaining")
+            break
+        try:
+            report = query_long_term_gaps(sid, "15s_24hr", lookback_days=lookback_days)
+            # only act on a real outage: a queued day older than min_outage_days,
+            # so a brief flap doesn't trigger a heavy multi-month recovery.
+            if report.queued and any(g.file_date <= floor for g in report.queued):
+                run_long_term_backfill_station(
+                    sid, "15s_24hr", lookback_days=lookback_days, run_rinex=run_rinex,
+                    max_days=max_days_per_station,
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Long-term backfill(reconnect) %s: %s", sid, e)
