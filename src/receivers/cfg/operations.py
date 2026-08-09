@@ -27,7 +27,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from tostools.api.tos_writer import TOSWriter
 
@@ -508,6 +508,47 @@ def _default_rinex_valid_from(install_iso: str) -> str:
     return (dt.date() + _td(days=1)).isoformat()
 
 
+#: Sentinel prefix for ``--serial``: ``default-NPSK`` means "mint the fleet
+#: synthetic serial for station NPSK" rather than "the serial is literally that".
+DEFAULT_SERIAL_PREFIX = "default-"
+
+
+def resolve_intake_serial(
+    value: Optional[str], subtype: str, eff_date: str
+) -> Tuple[Optional[str], bool]:
+    """Expand a ``default-<STID>`` sentinel into the fleet synthetic serial.
+
+    Some devices have no factory serial at all — a radome always, a steel
+    fjórfótur monument likewise, an antenna often. At a *station* the verbs
+    already synthesise ``<subtype>-<STID>-<YYYYMMDD>`` from the station they
+    are being installed at. **Warehouse intake has no station to build that
+    from**, yet it still needs a real, unique serial: TOS requires a non-empty
+    ``serial_number``, and `move-device --subtype … --serial …` matches the unit
+    by it when the device is later installed.
+
+    ``--serial default-NPSK`` closes that gap: the operator names the station
+    the unit is destined for, and the same conventional serial is minted at
+    intake that a direct station install would have produced.
+
+    Returns ``(serial, was_synthesised)``; a normal serial passes through
+    untouched.
+    """
+    from tostools.device import synthetic_serial
+
+    if not value:
+        return value, False
+    raw = str(value).strip()
+    if not raw.lower().startswith(DEFAULT_SERIAL_PREFIX):
+        return raw, False
+    station = raw[len(DEFAULT_SERIAL_PREFIX) :].strip().upper()
+    if not station:
+        raise CfgOperationError(
+            f"--serial {raw!r}: name the destination station after the prefix, "
+            f"e.g. --serial default-NPSK (mints monument-NPSK-<date>)."
+        )
+    return synthetic_serial(subtype, station, eff_date), True
+
+
 def add_antenna(
     writer: Optional[TOSWriter] = None,
     *,
@@ -580,7 +621,7 @@ def add_antenna(
     # of reparented. Require the real one.
     if warehouse and (serial is None or str(serial).strip() == ""):
         raise CfgOperationError(
-            "add-antenna --warehouse: --serial is required for intake. A "
+            "add-antenna --warehouse: --serial is required for intake — a real number, or `--serial default-<STID>` to mint the conventional antenna-<STID>-<YYYYMMDD>. A "
             "synthetic placeholder cannot be matched when the unit is later "
             "installed, so the antenna would be duplicated rather than moved."
         )
@@ -640,11 +681,14 @@ def add_antenna(
 
     igs_model = validate_model("antenna", model)
 
-    synthetic = serial is None or str(serial).strip() == ""
+    # `--serial default-<STID>` lets a warehouse intake mint the conventional
+    # placeholder for a unit with no factory serial (see resolve_intake_serial).
+    serial, from_sentinel = resolve_intake_serial(serial, "antenna", eff_date)
+    synthetic = from_sentinel or serial is None or str(serial).strip() == ""
     ant_serial = (
-        synthetic_serial("antenna", str(station_id), eff_date)
-        if synthetic
-        else str(serial).strip()
+        str(serial).strip()
+        if serial and str(serial).strip()
+        else synthetic_serial("antenna", str(station_id), eff_date)
     )
     if comment is None and synthetic:
         comment = "antenna serial unknown at install — synthetic placeholder"
@@ -706,6 +750,9 @@ def add_antenna(
     # Radome — a separate TOS device. "NONE" means no radome at this station.
     igs_radome = validate_model("radome", radome or "NONE")
     if igs_radome != "NONE":
+        radome_serial, _rad_sentinel = resolve_intake_serial(
+            radome_serial, "radome", eff_date
+        )
         rad_serial = (
             str(radome_serial).strip()
             if radome_serial and str(radome_serial).strip()
@@ -798,7 +845,10 @@ def add_monument(
         )
     if warehouse and (serial is None or str(serial).strip() == ""):
         raise CfgOperationError(
-            "add-monument --warehouse: --serial is required for intake. The "
+            "add-monument --warehouse: --serial is required for intake — pass a "
+            "real number, or `--serial default-<STID>` to mint the conventional "
+            "monument-<STID>-<YYYYMMDD> for a mark with no factory serial (a "
+            "steel fjórfótur). The "
             "synthetic monument-<STID>-<date> placeholder needs a station, and "
             "`move-device --subtype monument` matches the unit by serial when "
             "you later install it."
@@ -841,12 +891,15 @@ def add_monument(
                 f"old monument first; or pass --force to add a second."
             )
 
-    synthetic = serial is None or str(serial).strip() == ""
-    mon_serial = (
-        synthetic_serial("monument", station_id, eff_date)
-        if synthetic
-        else str(serial).strip()
-    )
+    # `--serial default-<STID>` names the station the mark is destined for, so a
+    # warehouse intake can mint the same conventional serial a station install
+    # would have. Expanded here because it needs eff_date.
+    serial, from_sentinel = resolve_intake_serial(serial, "monument", eff_date)
+    synthetic = from_sentinel or serial is None or str(serial).strip() == ""
+    if serial and str(serial).strip():
+        mon_serial = str(serial).strip()
+    else:
+        mon_serial = synthetic_serial("monument", station_id, eff_date)
     if comment is None and synthetic:
         comment = (
             "raðnúmer búið til úr skammstöfun stöðvar + dagsetningu (height epoch)"
