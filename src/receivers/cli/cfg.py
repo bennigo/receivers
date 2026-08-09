@@ -3380,6 +3380,7 @@ def cmd_cfg_add_monument(args) -> int:
             date_start=args.date_start,
             comment=args.comment,
             model=getattr(args, "model", None),
+            status=getattr(args, "status", None),
             force=args.force,
             dry_run=dry_run,
         )
@@ -8461,7 +8462,6 @@ def cmd_cfg_replace_sim(args) -> int:
             serial_number=args.serial or (probe.sim_iccid if probe else None),
             provider=args.provider or (probe.provider if probe else None),
             model=args.model,
-            status=args.status,
             owner=args.owner,
             comment=args.comment,
             extra_attrs=extra_attrs or None,
