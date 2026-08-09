@@ -511,9 +511,13 @@ def _find_rinex_file(raw_path: Path) -> Optional[Path]:
                     if candidates:
                         return candidates[0]
 
-                # Hatanaka compressed RINEX (.d.Z, .d.gz)
-                hatanaka = list(search_dir.glob(f"{doy_pattern}*d.Z"))
-                hatanaka += list(search_dir.glob(f"{doy_pattern}*d.gz"))
+                # Hatanaka compressed RINEX (.D.Z / .D.gz, legacy .d.Z / .d.gz).
+                # The type letter MUST be matched case-insensitively: producers
+                # write uppercase .D.Z (f0fe505) and Path.glob is case-sensitive
+                # on Linux, so a lowercase-only glob never finds what was just
+                # written and every file is re-converted on every sweep.
+                hatanaka = list(search_dir.glob(f"{doy_pattern}*[dD].Z"))
+                hatanaka += list(search_dir.glob(f"{doy_pattern}*[dD].gz"))
                 if hatanaka:
                     return hatanaka[0]
         else:
@@ -523,8 +527,8 @@ def _find_rinex_file(raw_path: Path) -> Optional[Path]:
                 if candidates:
                     return candidates[0]
 
-            hatanaka = list(search_dir.glob(f"{station}*d.Z"))
-            hatanaka += list(search_dir.glob(f"{station}*d.gz"))
+            hatanaka = list(search_dir.glob(f"{station}*[dD].Z"))
+            hatanaka += list(search_dir.glob(f"{station}*[dD].gz"))
             if hatanaka:
                 return hatanaka[0]
 
