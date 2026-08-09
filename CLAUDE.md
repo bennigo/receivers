@@ -738,14 +738,22 @@ A `RequiresMountsFor=/mnt/data` systemd drop-in guarantees boot ordering.
 runs as a **user-level** unit `gps-receivers-scheduler.service` (installed to
 `~gpsops/.config/systemd/user/`, unit file `deployment/systemd/gps-receivers-scheduler.service`;
 install.sh sets it up). **Linger is enabled** (`loginctl enable-linger gpsops`) so it runs
-with no active gpsops TTY. Manage it **as gpsops, no sudo** — over SSH set
-`XDG_RUNTIME_DIR=/run/user/$(id -u)` first:
+with no active gpsops TTY. Manage it **as gpsops, no sudo** — a plain
+`ssh gpsops@rek-d01.vedur.is '<cmd>'` is enough:
 ```bash
 systemctl --user restart gps-receivers-scheduler        # canonical restart
 systemctl --user status  gps-receivers-scheduler
 journalctl --user-unit   gps-receivers-scheduler -f     # live logs
 receivers scheduler stop | restart | status | load-status | backfill-status
 ```
+- **No `XDG_RUNTIME_DIR=/run/user/$(id -u)` prefix is needed** (this doc used to say it was).
+  Because linger is enabled, `/run/user/<uid>` persists and `pam_systemd` populates both
+  `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` on every SSH session, including a
+  non-interactive `ssh host 'cmd'`. Verified 2026-08-09:
+  `ssh gpsops@rek-d01.vedur.is 'systemctl --user is-active gps-receivers-scheduler'`
+  → `active`, exit 0, with `XDG_RUNTIME_DIR=/run/user/436213430` already set. The prefix is
+  only required if linger is ever turned off — if `systemctl --user` starts reporting
+  "Failed to connect to bus", check `loginctl show-user gpsops -p Linger` before adding it back.
 - `Restart=always`, `RestartSec=30s` → **never `kill` the process** (systemd respawns in 30s);
   stop/restart only via `systemctl --user` or `receivers scheduler stop` (graceful, 120s timeout).
 - **`max_workers` in `scheduler.yaml` is the single concurrency knob** — ExecStart has **no
@@ -903,7 +911,7 @@ All receivers use Phase 1 utilities by default:
 
 ---
 
-**Last updated**: 2026-02-24
+**Last updated**: 2026-08-09
 **Package version**: Development (gpslibrary_new)
 **Phase Status**: Phase 3C Complete - Distribution window optimization, midnight offset, multi-session backfill, gap detection, archive reconciler, integrity checker, archive format system, unified logging, adaptive download timeouts
 
