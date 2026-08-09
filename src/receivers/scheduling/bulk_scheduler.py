@@ -603,11 +603,23 @@ def _download_station_data_job(
     if monitor is not None:
         from .task_interface import TaskPriority as _TP
 
-        priority = _TP.STANDARD
-        if session_type == "status_1hr":
-            priority = _TP.STANDARD
-        job_priority = priority
-        if not monitor.can_start_job(job_priority):
+        # Live 1Hz acquisition is REALTIME (threshold 1.0); daily and status
+        # sessions are STANDARD (0.8), per TaskPriority's own docstring.
+        #
+        # This previously assigned STANDARD unconditionally -- the if/else was
+        # a stub whose two branches were identical -- so EVERY live download was
+        # gated at 0.8. When load_monitoring was first enabled on 2026-08-08 the
+        # whole fleet stopped downloading 19 minutes later and stayed down ~33 h,
+        # self-skipping rather than erroring.
+        #
+        # NOTE: this alone does not make load_monitoring safe to re-enable. The
+        # ceilings must first exceed the scheduler's healthy working point
+        # (rek-d01 sits at 72-208 threads and load 10-15 while healthy, against
+        # a shipped max_active_jobs=80 / max_cpu_load=8.0), and the thread check
+        # reads process-wide threading.active_count(), so the archive
+        # reconciler's own workers count against live downloads.
+        priority = _TP.REALTIME if session_type == "1Hz_1hr" else _TP.STANDARD
+        if not monitor.can_start_job(priority):
             load = monitor.get_load()
             load_msg = (
                 f"load gate: cpu={load.cpu_load_1m:.1f} threads={load.active_threads}"
