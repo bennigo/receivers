@@ -43,6 +43,16 @@ dependencies = [
     "apscheduler>=3.10.0",
     "paramiko>=3.0.0",
     "sqlalchemy>=2.0.0",
+    # psutil is NOT optional: the systemd unit's ExecStop runs
+    # `receivers scheduler stop`, whose only mechanism for finding and
+    # signalling the running scheduler is psutil.process_iter. It was declared
+    # solely in the [scheduler] extra, which `pip install -e .` (what
+    # install.sh runs) does not install — so on rek-d01 the stop hit
+    # `except ImportError: return 1` instantly, systemd waited out its full
+    # 2-minute TimeoutStopSec, then SIGKILLed a scheduler that was mid-RINEX
+    # conversion at 1.9 GB. apscheduler and sqlalchemy were promoted out of
+    # that same extra; psutil was simply missed.
+    "psutil>=5.9.0",
     "psycopg2-binary>=2.9.0",
     "gtimes @ git+https://github.com/bgo-gnss/gtimes@v0.5.1",
     # tostools master @024a775: adds TRM115000.00 (Zephyr 3 Geodetic) to
