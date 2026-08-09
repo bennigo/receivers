@@ -5387,8 +5387,13 @@ Examples:
     add_mon.add_argument(
         "--serial",
         help=(
-            "Monument serial. Omit when unknown — a synthetic "
-            "'monument-<STID>-<YYYYMMDD>' placeholder is generated."
+            "Monument serial. Omit at a --station and a synthetic "
+            "'monument-<STID>-<YYYYMMDD>' placeholder is generated. At "
+            "--warehouse intake there is no station to build that from, so pass "
+            "`default-<STID>` (e.g. --serial default-NPSK) to mint the same "
+            "conventional name for the mark's destination — a steel fjórfótur "
+            "has no factory serial, but TOS still needs a unique one and "
+            "`move-device --serial` matches the unit by it."
         ),
     )
     add_mon.add_argument(
