@@ -3415,8 +3415,10 @@ def cmd_cfg_add_monument(args) -> int:
         suffix = " (dry-run)" if result.dry_run else ""
         synth = " [synthetic serial]" if synthetic else ""
         print(
-            f"Monument @ {result.station_id}: serial={result.serial}{synth} "
-            f"height={args.height} date_start={result.date}{suffix}"
+            f"Monument @ {result.station_id or args.warehouse}: "
+            f"serial={result.serial}{synth} "
+            f"{f'height={args.height} ' if args.height is not None else ''}"
+            f"date_start={result.date}{suffix}"
         )
     if getattr(args, "commit", False) and not result.dry_run:
         _audit_log_op_creations(
@@ -5380,9 +5382,13 @@ Examples:
     )
     add_mon.add_argument(
         "--height",
-        default="0.0",
         metavar="METRES",
-        help="Mark → ARP antenna_height in metres (default: 0.0).",
+        help=(
+            "Mark → ARP monument_height in metres. Defaults to 0.0 at a "
+            "--station; REFUSED with --warehouse, where the offset does not yet "
+            "exist — set it on the install with "
+            "`move-device --subtype monument --antenna-height …`."
+        ),
     )
     add_mon.add_argument(
         "--serial",

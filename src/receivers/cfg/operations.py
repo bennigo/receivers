@@ -700,7 +700,10 @@ def add_antenna(
         date_start=eff_date,
         antenna_height=antenna_height,
     )
-    if antenna_height is None:
+    # Only meaningful for a station install. At warehouse intake the antenna has
+    # no mast to be offset above, so the absence is correct, not a gap to warn
+    # about — the height is written when it joins a station.
+    if antenna_height is None and station_id is not None:
         logger.warning(
             "%s: no antenna height supplied — antenna created without "
             "antenna_height; RINEX 'ANTENNA: DELTA H' defaults to 0.0 until "
@@ -786,7 +789,7 @@ def add_monument(
     *,
     station_id: Optional[str] = None,
     warehouse: Optional[str] = None,
-    height: str = "0.0",
+    height: Optional[str] = None,
     serial: Optional[str] = None,
     owner: str = "Jarðeðlismælihópur",
     date_start: Optional[str] = None,
@@ -836,7 +839,7 @@ def add_monument(
     # --serial SN`, which matches BY SERIAL. So intake needs the real one.
     # The mark->ARP height describes the monument AT a station; a spare mark on
     # a shelf has no such geometry. Same reasoning as add-antenna's ARP height.
-    if warehouse and height not in (None, "", "0.0"):
+    if warehouse and height is not None:
         raise CfgOperationError(
             "add-monument --warehouse: --height is meaningless for intake — the "
             "mark→ARP offset only exists once the monument is installed. Set it "
@@ -909,10 +912,16 @@ def add_monument(
         serial=mon_serial,
         owner=owner,
         date_start=eff_date,
-        monument_height=height,
+        monument_height=height if height is not None else "0.0",
         comment=comment,
         model=model,
     )
+
+    # A mark on a shelf has no mark→ARP offset: strip the attribute entirely at
+    # intake rather than recording a 0.0 that looks like a measurement. It is
+    # written when the monument joins a station (`move-device --antenna-height`).
+    if warehouse:
+        attrs = [a for a in attrs if a.get("code") != "monument_height"]
 
     result = OperationResult(
         operation="add-monument",
