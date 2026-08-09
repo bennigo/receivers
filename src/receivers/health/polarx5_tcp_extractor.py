@@ -1208,7 +1208,24 @@ class PolaRX5TCPExtractor:
             length = struct.unpack("<H", data[sync_pos + 6 : sync_pos + 8])[0]
 
             if block_id == expected_block_id:
-                return data[sync_pos:]
+                # Wait for the WHOLE block. The header declares `length`;
+                # returning as soon as the ID matched handed callers a truncated
+                # buffer whenever the block straddled a recv() boundary, and the
+                # parsers degrade silently: PVTSatCartesian takes its satellite
+                # count from the header (so `total` stayed right) while the
+                # SatInfo walk broke early on `offset + sb_length > len(...)`.
+                # SatInfo runs in SVID order and BeiDou holds the highest SVIDs
+                # (201-263), so BeiDou was ALWAYS the system that vanished —
+                # measured on NPSK as 8 short reads out of 8.
+                #
+                # Returning None here is not "not found": the caller's recv loop
+                # keeps reading and re-scans, so a block split across chunks is
+                # simply picked up on a later pass.
+                if sync_pos + length > len(data):
+                    return None
+                # Slice to the declared length rather than "everything after the
+                # sync marker", so a parser cannot read on into the next block.
+                return data[sync_pos : sync_pos + length]
 
             # Move to next potential SBF block
             pos = sync_pos + max(length, 8)
