@@ -787,6 +787,15 @@ def add_monument(
     # (monument-<STID>-<YYYYMMDD>), which does not exist yet at intake — and a
     # warehoused monument is later joined with `move-device --subtype monument
     # --serial SN`, which matches BY SERIAL. So intake needs the real one.
+    # The mark->ARP height describes the monument AT a station; a spare mark on
+    # a shelf has no such geometry. Same reasoning as add-antenna's ARP height.
+    if warehouse and height not in (None, "", "0.0"):
+        raise CfgOperationError(
+            "add-monument --warehouse: --height is meaningless for intake — the "
+            "mark→ARP offset only exists once the monument is installed. Set it "
+            "on the install: `cfg move-device --subtype monument --to STN "
+            "--antenna-height …`."
+        )
     if warehouse and (serial is None or str(serial).strip() == ""):
         raise CfgOperationError(
             "add-monument --warehouse: --serial is required for intake. The "
@@ -1493,6 +1502,82 @@ def add_station(
     return result
 
 
+#: Device subtypes that carry install-scoped geometry. A gnss_receiver has no
+#: ARP, so the fill is subtype-aware rather than blanket.
+INSTALL_SCOPED_SUBTYPES = ("antenna", "monument")
+
+#: Codes whose default of "0.0" is a genuine fleet convention rather than a
+#: guess. `antenna_height` is deliberately NOT here: a silent 0.0 there is what
+#: puts a wrong ANTENNA: DELTA H into every RINEX header.
+_OFFSET_DEFAULT_CODES = ("antenna_offset_north", "antenna_offset_east", "azimuth")
+
+
+def open_install_scoped_attrs(
+    w: TOSWriter,
+    device_id: int,
+    subtype: str,
+    eff_date: str,
+    *,
+    antenna_height: Optional[str] = None,
+    azimuth: Optional[str] = None,
+    offset_north: Optional[str] = None,
+    offset_east: Optional[str] = None,
+    dry_run: bool = True,
+) -> Dict[str, Any]:
+    """Open the install-scoped attribute periods when a device joins a station.
+
+    ``tostools.audit_missing_attributes.INSTALL_SCOPED_CODES`` —
+    ``antenna_height``, ``antenna_offset_north``, ``antenna_offset_east``,
+    ``azimuth`` — describe *a device at a mark*, not the device. (``status`` /
+    ``comment`` / ``owner`` are mutable too but describe the unit wherever it
+    is, so they stay open by design.)
+
+    The audit already polices the closing end: it flags an ``antenna_height``
+    left open after the join closed, because it "still asserts this mark's
+    geometry". Nothing opened them at the joining end — the only verbs that ever
+    wrote a height were ``add-antenna --station`` and ``replace-antenna``, both
+    of which mint the join and the attributes together. That is why a
+    warehouse-first antenna arrived at its station with no height at all.
+
+    Returns a summary dict for ``OperationResult.tos_changes``.
+
+    Height is never defaulted: an unset ARP is reported and left absent rather
+    than written as ``0.0``, because a wrong DELTA H propagates into every RINEX
+    header. The offsets and azimuth do default to ``0.0`` — that is the fleet
+    convention and what the missing-attributes audit itself suggests.
+    """
+    if subtype not in INSTALL_SCOPED_SUBTYPES:
+        return {"applicable": False, "subtype": subtype}
+
+    values: Dict[str, Optional[str]] = {
+        "antenna_height": antenna_height,
+        "antenna_offset_north": offset_north,
+        "antenna_offset_east": offset_east,
+        "azimuth": azimuth,
+    }
+    written: Dict[str, str] = {}
+    defaulted: List[str] = []
+    for code, supplied in values.items():
+        value = supplied
+        if value is None and code in _OFFSET_DEFAULT_CODES:
+            value = "0.0"
+            defaulted.append(code)
+        if value is None:
+            continue
+        w.upsert_attribute_value(device_id, code, str(value), eff_date)
+        written[code] = str(value)
+
+    summary: Dict[str, Any] = {
+        "applicable": True,
+        "written": written,
+        "defaulted": defaulted,
+        "dry_run": dry_run,
+    }
+    if antenna_height is None:
+        summary["height_missing"] = True
+    return summary
+
+
 def move_device(
     serial: Optional[str] = None,
     *,
@@ -1509,6 +1594,10 @@ def move_device(
     participants: str = "",
     device_status: Optional[str] = None,
     device_comment: Optional[str] = None,
+    antenna_height: Optional[str] = None,
+    azimuth: Optional[str] = None,
+    offset_north: Optional[str] = None,
+    offset_east: Optional[str] = None,
     dry_run: bool = True,
     writer: Optional[TOSWriter] = None,
     cfg_path: Optional[Path] = None,
@@ -1674,6 +1763,10 @@ def move_device(
             participants=participants,
             device_status=device_status,
             device_comment=device_comment,
+            antenna_height=antenna_height,
+            azimuth=azimuth,
+            offset_north=offset_north,
+            offset_east=offset_east,
             dry_run=dry_run,
             cfg_path=cfg_path,
             skip_vitjun=skip_vitjun,
@@ -1752,8 +1845,12 @@ def _move_to_station(
     participants: str,
     device_status: Optional[str],
     device_comment: Optional[str],
-    dry_run: bool,
-    cfg_path: Optional[Path],
+    antenna_height: Optional[str] = None,
+    azimuth: Optional[str] = None,
+    offset_north: Optional[str] = None,
+    offset_east: Optional[str] = None,
+    dry_run: bool = False,
+    cfg_path: Optional[Path] = None,
     skip_vitjun: bool,
     skip_cfg: bool,
     subtype: str = "gnss_receiver",
@@ -1819,6 +1916,20 @@ def _move_to_station(
         serial=serial,
         date=eff_date,
         tos_changes={"move": move},
+        dry_run=dry_run,
+    )
+
+    # Install-scoped geometry belongs to the join, so it is opened here — the
+    # moment the device arrives at the mark. See open_install_scoped_attrs.
+    result.tos_changes["install_scoped"] = open_install_scoped_attrs(
+        w,
+        device_id,
+        subtype,
+        eff_date,
+        antenna_height=antenna_height,
+        azimuth=azimuth,
+        offset_north=offset_north,
+        offset_east=offset_east,
         dry_run=dry_run,
     )
 

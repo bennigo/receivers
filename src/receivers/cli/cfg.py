@@ -3240,7 +3240,20 @@ def cmd_cfg_add_antenna(args) -> int:
         )
         return 2
 
-    if not getattr(args, "antenna_height", None):
+    # An ARP height is the antenna's offset above the monument — it exists only
+    # once the unit is on a mast. Meaningless on a shelf, so refuse it at intake
+    # rather than recording an install property against a warehouse.
+    if args.warehouse and getattr(args, "antenna_height", None):
+        print(
+            "❌ --antenna-height is meaningless for warehouse intake: the ARP "
+            "height is the offset above the monument, which only exists once "
+            "the antenna is installed.\n"
+            "   Set it on the install instead: "
+            "`cfg move-device --subtype antenna --to STN --antenna-height …`",
+            file=sys.stderr,
+        )
+        return 2
+    if args.station and not getattr(args, "antenna_height", None):
         print(
             "  ⚠️  no --antenna-height given: antenna created without a height; "
             "RINEX 'ANTENNA: DELTA H' will be 0.0 until corrected.",
@@ -6195,6 +6208,31 @@ Examples:
             "open value, keep its dates). No history."
         ),
     )
+    move.add_argument(
+        "--antenna-height",
+        metavar="METRES",
+        help=(
+            "Install-scoped ARP height, written when the device joins a STATION "
+            "(antenna/monument only). Never defaulted: an omitted height is "
+            "warned about and left absent, because a silent 0.0 becomes a wrong "
+            "ANTENNA: DELTA H in every RINEX header."
+        ),
+    )
+    move.add_argument(
+        "--azimuth",
+        metavar="DEG",
+        help="Install-scoped azimuth (antenna/monument). Defaults to 0.0.",
+    )
+    move.add_argument(
+        "--offset-north",
+        metavar="METRES",
+        help="Install-scoped marker→ARP north eccentricity. Defaults to 0.0.",
+    )
+    move.add_argument(
+        "--offset-east",
+        metavar="METRES",
+        help="Install-scoped marker→ARP east eccentricity. Defaults to 0.0.",
+    )
     _add_global_flags(move, swap_warning=True)
     move.set_defaults(func=cmd_cfg_move_device)
 
@@ -7994,6 +8032,10 @@ def cmd_cfg_move_device(args) -> int:
         )
         result = move_device(
             args.serial,
+            antenna_height=args.antenna_height,
+            azimuth=args.azimuth,
+            offset_north=args.offset_north,
+            offset_east=args.offset_east,
             subtype=args.subtype,
             id_entity=args.id_entity,
             with_radome=not args.no_radome,
