@@ -5391,6 +5391,13 @@ Examples:
         ),
     )
     add_mon.add_argument(
+        "--status",
+        help=(
+            "TOS status (Staða). Default 'virkt'. Vocabulary: virkt | bilað | "
+            "í viðgerð | ókvarðað | grunsamlegt — note 'virk' is NOT valid."
+        ),
+    )
+    add_mon.add_argument(
         "--serial",
         help=(
             "Monument serial. Omit at a --station and a synthetic "
@@ -6223,16 +6230,37 @@ Examples:
         "--antenna-height",
         metavar="METRES",
         help=(
-            "Install-scoped ARP height, written when the device joins a STATION "
-            "(antenna/monument only). Never defaulted: an omitted height is "
+            "Install-scoped ARP height (ANTENNA only; TOS 'Hæð loftnets'), "
+            "written when the device joins a STATION. Never defaulted: an "
+            "omitted height is "
             "warned about and left absent, because a silent 0.0 becomes a wrong "
             "ANTENNA: DELTA H in every RINEX header."
         ),
     )
     move.add_argument(
+        "--monument-height",
+        metavar="METRES",
+        help=(
+            "Install-scoped mark→ARP height (MONUMENT only; TOS 'Hæð "
+            "undirstöðu'). Defaults to 0.0 — often the true value, since with "
+            "no benchmark below it the monument itself is the reference point."
+        ),
+    )
+    move.add_argument(
+        "--foundation-depth",
+        metavar="METRES",
+        help=(
+            "Install-scoped foundation depth (MONUMENT only; TOS 'Dýpt "
+            "undirstöðu'). Never defaulted — it is a physical measurement."
+        ),
+    )
+    move.add_argument(
         "--azimuth",
         metavar="DEG",
-        help="Install-scoped azimuth (antenna/monument). Defaults to 0.0.",
+        help=(
+            "Install-scoped azimuth (ANTENNA only; TOS 'Áttarhorn'). "
+            "Defaults to 0.0."
+        ),
     )
     move.add_argument(
         "--offset-north",
@@ -8044,6 +8072,8 @@ def cmd_cfg_move_device(args) -> int:
         result = move_device(
             args.serial,
             antenna_height=args.antenna_height,
+            monument_height=args.monument_height,
+            foundation_depth=args.foundation_depth,
             azimuth=args.azimuth,
             offset_north=args.offset_north,
             offset_east=args.offset_east,
@@ -8431,6 +8461,7 @@ def cmd_cfg_replace_sim(args) -> int:
             serial_number=args.serial or (probe.sim_iccid if probe else None),
             provider=args.provider or (probe.provider if probe else None),
             model=args.model,
+            status=args.status,
             owner=args.owner,
             comment=args.comment,
             extra_attrs=extra_attrs or None,

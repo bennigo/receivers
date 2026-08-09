@@ -784,6 +784,10 @@ def add_antenna(
     return result
 
 
+#: Catalog default for `infrastructure_type` — the fleet's standard mark.
+_CATALOG_MONUMENT_TYPE_DEFAULT = "GPS stál-fjórfótur"
+
+
 def add_monument(
     writer: Optional[TOSWriter] = None,
     *,
@@ -795,6 +799,7 @@ def add_monument(
     date_start: Optional[str] = None,
     comment: Optional[str] = None,
     model: Optional[str] = None,
+    status: Optional[str] = None,
     force: bool = False,
     dry_run: bool = True,
 ) -> OperationResult:
@@ -914,7 +919,31 @@ def add_monument(
         date_start=eff_date,
         monument_height=height if height is not None else "0.0",
         comment=comment,
-        model=model,
+        model=None,
+    )
+    # The mark type is `infrastructure_type` (Tegund innviða), NOT `model`
+    # (Tegund tækis): build_monument_attributes writes `model`, which is the
+    # wrong code for a monument. The fleet records e.g. NYLA's fjórfótur under
+    # Tegund innviða, and the catalog carries the default there too.
+    attrs.append(
+        {
+            "code": "infrastructure_type",
+            "value": model or _CATALOG_MONUMENT_TYPE_DEFAULT,
+            "date_from": eff_date,
+            "date_to": None,
+        }
+    )
+    # `status` is gps_required_for every device subtype and nothing set it, so
+    # every monument this verb created was born flagged by the audit. Vocabulary
+    # is virkt|bilað|í viðgerð|ókvarðað|grunsamlegt — "virk" (on some legacy
+    # records, e.g. NYLA) is NOT valid.
+    attrs.append(
+        {
+            "code": "status",
+            "value": status or "virkt",
+            "date_from": eff_date,
+            "date_to": None,
+        }
     )
 
     # A mark on a shelf has no mark→ARP offset: strip the attribute entirely at
@@ -1564,14 +1593,35 @@ def add_station(
     return result
 
 
-#: Device subtypes that carry install-scoped geometry. A gnss_receiver has no
-#: ARP, so the fill is subtype-aware rather than blanket.
-INSTALL_SCOPED_SUBTYPES = ("antenna", "monument")
+#: Install-scoped attribute codes PER SUBTYPE, mirroring the catalog's
+#: ``applies_to`` in ``tostools/data/attribute_codes.yaml``. Getting this wrong
+#: is not theoretical: the first version of this helper applied the antenna set
+#: to every subtype and wrote ``antenna_height`` + ``azimuth`` onto NPSK's
+#: monument — both are ``applies_to: [antenna]`` — and TOS stored them silently.
+#:
+#: Value is (code -> default); ``None`` means "never defaulted, omit if unset".
+INSTALL_SCOPED_BY_SUBTYPE: Dict[str, Dict[str, Optional[str]]] = {
+    "antenna": {
+        # ARP height above the monument (Hæð loftnets). Never defaulted: a
+        # silent 0.0 becomes a wrong ANTENNA: DELTA H in every RINEX header.
+        "antenna_height": None,
+        "azimuth": "0.0",  # Áttarhorn
+        "antenna_offset_north": "0.0",  # Loftnetshliðrun norður
+        "antenna_offset_east": "0.0",  # Loftnetshliðrun austur
+    },
+    "monument": {
+        # Mark -> ARP (Hæð undirstöðu). 0.0 is frequently the TRUE value: with
+        # no benchmark below it, the monument itself is the reference point.
+        "monument_height": "0.0",
+        # Dýpt undirstöðu — a physical measurement, never guessed.
+        "foundation_depth": None,
+        "antenna_offset_north": "0.0",
+        "antenna_offset_east": "0.0",
+    },
+}
 
-#: Codes whose default of "0.0" is a genuine fleet convention rather than a
-#: guess. `antenna_height` is deliberately NOT here: a silent 0.0 there is what
-#: puts a wrong ANTENNA: DELTA H into every RINEX header.
-_OFFSET_DEFAULT_CODES = ("antenna_offset_north", "antenna_offset_east", "azimuth")
+#: Subtypes with any install-scoped geometry (a gnss_receiver has none).
+INSTALL_SCOPED_SUBTYPES = tuple(INSTALL_SCOPED_BY_SUBTYPE)
 
 
 def open_install_scoped_attrs(
@@ -1580,64 +1630,66 @@ def open_install_scoped_attrs(
     subtype: str,
     eff_date: str,
     *,
-    antenna_height: Optional[str] = None,
-    azimuth: Optional[str] = None,
-    offset_north: Optional[str] = None,
-    offset_east: Optional[str] = None,
+    values: Optional[Dict[str, Optional[str]]] = None,
     dry_run: bool = True,
 ) -> Dict[str, Any]:
     """Open the install-scoped attribute periods when a device joins a station.
 
-    ``tostools.audit_missing_attributes.INSTALL_SCOPED_CODES`` —
-    ``antenna_height``, ``antenna_offset_north``, ``antenna_offset_east``,
-    ``azimuth`` — describe *a device at a mark*, not the device. (``status`` /
-    ``comment`` / ``owner`` are mutable too but describe the unit wherever it
-    is, so they stay open by design.)
+    These codes describe *a device at a mark*, not the device, so they belong to
+    the join. ``status`` / ``comment`` / ``owner`` are mutable too but describe
+    the unit wherever it is, and stay open by design.
 
-    The audit already polices the closing end: it flags an ``antenna_height``
-    left open after the join closed, because it "still asserts this mark's
-    geometry". Nothing opened them at the joining end — the only verbs that ever
-    wrote a height were ``add-antenna --station`` and ``replace-antenna``, both
-    of which mint the join and the attributes together. That is why a
-    warehouse-first antenna arrived at its station with no height at all.
+    The set is **subtype-specific**, mirroring the catalog's ``applies_to``: an
+    antenna has ``antenna_height`` + ``azimuth``, a monument has
+    ``monument_height`` + ``foundation_depth``, and both carry the two offsets.
+    A code supplied for the wrong subtype raises instead of being written — TOS
+    will happily store ``azimuth`` on a monument and nothing downstream
+    complains, so the guard has to live here.
 
-    Returns a summary dict for ``OperationResult.tos_changes``.
-
-    Height is never defaulted: an unset ARP is reported and left absent rather
-    than written as ``0.0``, because a wrong DELTA H propagates into every RINEX
-    header. The offsets and azimuth do default to ``0.0`` — that is the fleet
-    convention and what the missing-attributes audit itself suggests.
+    ``values`` maps code → operator value; anything omitted falls back to the
+    per-subtype default, and codes whose default is ``None`` are left unwritten
+    and reported under ``missing``.
     """
-    if subtype not in INSTALL_SCOPED_SUBTYPES:
+    supplied = {k: v for k, v in (values or {}).items() if v is not None}
+    scoped = INSTALL_SCOPED_BY_SUBTYPE.get(subtype)
+    if scoped is None:
+        if supplied:
+            raise CfgOperationError(
+                f"{subtype} carries no install-scoped geometry, but "
+                f"{', '.join(sorted(supplied))} was supplied — those codes "
+                f"belong to {' / '.join(INSTALL_SCOPED_SUBTYPES)}."
+            )
         return {"applicable": False, "subtype": subtype}
 
-    values: Dict[str, Optional[str]] = {
-        "antenna_height": antenna_height,
-        "antenna_offset_north": offset_north,
-        "antenna_offset_east": offset_east,
-        "azimuth": azimuth,
-    }
+    wrong = sorted(set(supplied) - set(scoped))
+    if wrong:
+        raise CfgOperationError(
+            f"{', '.join(wrong)} does not apply to a {subtype} — the catalog's "
+            f"applies_to says otherwise. Valid here: {', '.join(sorted(scoped))}."
+        )
+
     written: Dict[str, str] = {}
     defaulted: List[str] = []
-    for code, supplied in values.items():
-        value = supplied
-        if value is None and code in _OFFSET_DEFAULT_CODES:
-            value = "0.0"
-            defaulted.append(code)
+    missing: List[str] = []
+    for code, default in scoped.items():
+        value = supplied.get(code)
         if value is None:
-            continue
+            if default is None:
+                missing.append(code)
+                continue
+            value = default
+            defaulted.append(code)
         w.upsert_attribute_value(device_id, code, str(value), eff_date)
         written[code] = str(value)
 
-    summary: Dict[str, Any] = {
+    return {
         "applicable": True,
+        "subtype": subtype,
         "written": written,
         "defaulted": defaulted,
+        "missing": missing,
         "dry_run": dry_run,
     }
-    if antenna_height is None:
-        summary["height_missing"] = True
-    return summary
 
 
 def move_device(
@@ -1657,6 +1709,8 @@ def move_device(
     device_status: Optional[str] = None,
     device_comment: Optional[str] = None,
     antenna_height: Optional[str] = None,
+    monument_height: Optional[str] = None,
+    foundation_depth: Optional[str] = None,
     azimuth: Optional[str] = None,
     offset_north: Optional[str] = None,
     offset_east: Optional[str] = None,
@@ -1826,6 +1880,8 @@ def move_device(
             device_status=device_status,
             device_comment=device_comment,
             antenna_height=antenna_height,
+            monument_height=monument_height,
+            foundation_depth=foundation_depth,
             azimuth=azimuth,
             offset_north=offset_north,
             offset_east=offset_east,
@@ -1908,6 +1964,8 @@ def _move_to_station(
     device_status: Optional[str],
     device_comment: Optional[str],
     antenna_height: Optional[str] = None,
+    monument_height: Optional[str] = None,
+    foundation_depth: Optional[str] = None,
     azimuth: Optional[str] = None,
     offset_north: Optional[str] = None,
     offset_east: Optional[str] = None,
@@ -1988,10 +2046,14 @@ def _move_to_station(
         device_id,
         subtype,
         eff_date,
-        antenna_height=antenna_height,
-        azimuth=azimuth,
-        offset_north=offset_north,
-        offset_east=offset_east,
+        values={
+            "antenna_height": antenna_height,
+            "monument_height": monument_height,
+            "foundation_depth": foundation_depth,
+            "azimuth": azimuth,
+            "antenna_offset_north": offset_north,
+            "antenna_offset_east": offset_east,
+        },
         dry_run=dry_run,
     )
 
