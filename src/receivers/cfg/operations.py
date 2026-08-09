@@ -919,20 +919,14 @@ def add_monument(
         date_start=eff_date,
         monument_height=height if height is not None else "0.0",
         comment=comment,
-        model=None,
+        model=model or _CATALOG_MONUMENT_TYPE_DEFAULT,
     )
-    # The mark type is `infrastructure_type` (Tegund innviða), NOT `model`
-    # (Tegund tækis): build_monument_attributes writes `model`, which is the
-    # wrong code for a monument. The fleet records e.g. NYLA's fjórfótur under
-    # Tegund innviða, and the catalog carries the default there too.
-    attrs.append(
-        {
-            "code": "infrastructure_type",
-            "value": model or _CATALOG_MONUMENT_TYPE_DEFAULT,
-            "date_from": eff_date,
-            "date_to": None,
-        }
-    )
+    # The mark type rides the `model` code. TOS renders it as "Tegund innviða"
+    # on a monument and "Tegund tækis" on an instrument — one code, two display
+    # labels. `infrastructure_type` appears in tostools' harvested attribute
+    # catalog WITH a default, but it is not a real TOS code: add_attribute_value
+    # rejects it as "not in /admin_attribute_rows". Writing it here made every
+    # new monument fail at runtime; caught by `tos audit apply` preflight.
     # `status` is gps_required_for every device subtype and nothing set it, so
     # every monument this verb created was born flagged by the audit. Vocabulary
     # is virkt|bilað|í viðgerð|ókvarðað|grunsamlegt — "virk" (on some legacy

@@ -128,11 +128,17 @@ def _codes(attrs):
     return {a["code"]: a["value"] for a in attrs}
 
 
-def test_monument_records_infrastructure_type_not_model(w):
+def test_monument_mark_type_uses_the_model_code(w):
+    """TOS renders `model` as "Tegund innviða" on a monument — one code, two labels.
+
+    `infrastructure_type` is in tostools' harvested catalog but is NOT a real
+    TOS attribute code; add_attribute_value rejects it as "not in
+    /admin_attribute_rows". Writing it made every new monument fail at runtime.
+    """
     r = add_monument(w, station_id="NPSK", date_start="2026-08-05", dry_run=False)
     got = _codes(r.tos_changes["monument_attributes"])
-    assert got["infrastructure_type"] == "GPS stál-fjórfótur"
-    assert "model" not in got, "Tegund tækis is the wrong code for a monument"
+    assert got["model"] == "GPS stál-fjórfótur"
+    assert "infrastructure_type" not in got
 
 
 def test_explicit_mark_type_wins(w):
@@ -143,7 +149,7 @@ def test_explicit_mark_type_wins(w):
         date_start="2026-08-05",
         dry_run=False,
     )
-    assert _codes(r.tos_changes["monument_attributes"])["infrastructure_type"] == (
+    assert _codes(r.tos_changes["monument_attributes"])["model"] == (
         "GPS steinsteypustöpull"
     )
 
