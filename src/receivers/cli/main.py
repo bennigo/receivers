@@ -5472,6 +5472,69 @@ def _push_reconverted(work_dir, args, logger, only_rel=None) -> Dict[str, Any]:
         return stats
     ssh_target = full.split(":", 1)[0] if ":" in full else None
 
+    # HARD RULE: never overwrite an archived product that cannot be regenerated.
+    #
+    # `--fix-headers` has enforced this since 1e0d81d (2026-07-03) via
+    # check_regenerable() + preserve_original_file() -> permanent rinex_org/.
+    # The re-rinex path built two days later (615941c, 706dd28) shipped its own
+    # `--backup-old` -> rinex_bak/ instead, which LOOKS like the same protection
+    # but is unconditional and explicitly deletable. So a re-conversion of a
+    # raw-less date overwrote an irreplaceable file with no preservation and no
+    # refusal. The rule had been written as a step inside one verb rather than
+    # as an invariant over every operation that overwrites an archived product.
+    #
+    # This gate restores the invariant for the push path: any file whose archive
+    # counterpart is NOT regenerable is dropped from the push (fail closed —
+    # skip the date, keep the run going, and surface it in the summary so it
+    # cannot pass unnoticed). Permanent rinex_org/ preservation on the archive
+    # side is the follow-up; refusing to overwrite is what stops data loss now.
+    refused_unregenerable: List[str] = []
+    gate_applies = bool(rel) and bool(
+        getattr(args, "from_archive", False) or getattr(args, "source_dir", None)
+    )
+    if gate_applies:
+        try:
+            from ..rinex.header_fix import _rinex_obs_datetime
+            from ..rinex.raw_presence import check_regenerable
+
+            src_root = Path(_reconvert_source_root(args, ""))
+            kept: List[str] = []
+            for r in rel:
+                arch = src_root / r
+                parts = r.split("/")
+                sid = parts[2] if len(parts) > 4 else ""
+                sess = parts[3] if len(parts) > 4 else None
+                obs = _rinex_obs_datetime(arch.name, sid)
+                if obs is None or not arch.exists():
+                    kept.append(r)  # nothing on the archive to lose
+                    continue
+                try:
+                    regen = check_regenerable(
+                        arch, obs, station_id=sid, session_type=sess
+                    )
+                except Exception:  # noqa: BLE001 — never fail open on an error
+                    refused_unregenerable.append(r)
+                    continue
+                if getattr(regen, "regenerable", False):
+                    kept.append(r)
+                else:
+                    refused_unregenerable.append(r)
+            if refused_unregenerable:
+                rel = kept
+                stats["refused_unregenerable"] = len(refused_unregenerable)
+                print(
+                    f"  🛡️  REFUSED to overwrite {len(refused_unregenerable)} "
+                    f"un-regenerable archive file(s) — no raw to rebuild them from. "
+                    f"Use --fix-headers (preserves to rinex_org/) or restore the raw."
+                )
+                for r in refused_unregenerable[:5]:
+                    print(f"        {r}")
+        except Exception as exc:  # noqa: BLE001
+            # The gate must never silently disappear: if it cannot run, say so.
+            print(f"  ⚠️  regenerability gate could not run ({exc}) — push aborted")
+            stats["note"] = f"regenerability gate failed: {exc}"
+            return stats
+
     # Archive-side backup-old: move the soon-to-be-overwritten archive RINEX to
     # rinex_bak/ on the archive (before the rsync lands the new file).
     if getattr(args, "backup_old", False) and ssh_target:
