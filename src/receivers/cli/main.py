@@ -5489,7 +5489,15 @@ def _push_reconverted(work_dir, args, logger, only_rel=None) -> Dict[str, Any]:
     # cannot pass unnoticed). Permanent rinex_org/ preservation on the archive
     # side is the follow-up; refusing to overwrite is what stops data loss now.
     refused_unregenerable: List[str] = []
-    gate_applies = bool(rel) and bool(
+    # NOT for --fix-headers: that path already satisfies the invariant the other
+    # way round — it calls check_regenerable() itself and copies un-regenerable
+    # originals to the permanent rinex_org/ BEFORE rewriting the header
+    # (header_fix.py:408-418), refusing if preservation fails. Gating it here
+    # too would refuse precisely the files it has just preserved, silently
+    # blocking legitimate header repairs on raw-less products. The gate is for
+    # the re-conversion path, which has no preservation of its own.
+    refuses_apply = bool(rel) and not getattr(args, "fix_headers", False)
+    gate_applies = refuses_apply and bool(
         getattr(args, "from_archive", False) or getattr(args, "source_dir", None)
     )
     if gate_applies:
