@@ -44,9 +44,22 @@ audit = logging.getLogger("receivers.audit")
 # verb exists to prevent. Named exactly, so an arbitrary subdirectory is still
 # refused.
 _SIDECAR = r"(?:(?:superseded_rt_[0-9]{8}|rinex_bak|fix-headers_[0-9]{8})/)?"
+# `rinex_bak` appears in BOTH positions because --backup-old creates it as a
+# SIBLING of the category dir, not a child: `bak = output_dir.parent /
+# "rinex_bak"` (cli/main.py) and `bakdir="$(dirname "$dir")/rinex_bak"` (the
+# remote move below). Listing it only in _SIDECAR meant every real backup path
+# —`YYYY/mon/STA/session/rinex_bak/FILE`— was refused as "invalid/unsafe", so
+# archive-rm could not delete the very leftovers it exists to clean up. That,
+# together with --del-backup walking only data_prepath and /mnt/rawgpsdata
+# being read-only on rek-d01, left NO working path to reclaim them: ~265 GB had
+# accumulated across ELDC and ISAK by 2026-08-10. superseded_rt_* and
+# fix-headers_* really are nested under the category dir, so they stay in
+# _SIDECAR only.
 _RELPATH_RE = re.compile(
     r"^[0-9]{4}/[a-z]{3}/[A-Z0-9]{2,9}/[0-9A-Za-z_]+/"
-    r"(rinex|raw|rinex_org|rinex_archive)/" + _SIDECAR + r"[A-Za-z0-9][A-Za-z0-9._-]*$"
+    r"(rinex|raw|rinex_org|rinex_archive|rinex_bak)/"
+    + _SIDECAR
+    + r"[A-Za-z0-9][A-Za-z0-9._-]*$"
 )
 
 # Characters never allowed in a target path (defense in depth over the regex).
