@@ -30,13 +30,25 @@
 --   AND serves (sid), (sid,session_type) and (sid,session_type,file_date)
 --   prefix scans. Verified free of conflicts on pgdev before writing this.
 --
--- NOTE — CREATE INDEX CONCURRENTLY is deliberately NOT used: the migrator runs
---   each file inside a transaction, where CONCURRENTLY is illegal. The table is
---   209 MB, so the plain build blocks writes for a few seconds. To avoid even
---   that, run the CREATE UNIQUE INDEX below by hand with CONCURRENTLY (outside
---   any transaction) first — the IF NOT EXISTS makes this file a no-op then.
+-- NOTE — CREATE INDEX CONCURRENTLY is deliberately NOT used here: the migrator
+--   runs each file inside a transaction, where CONCURRENTLY is illegal. The
+--   build is fast (~2-5 s at 935k rows), but the ALTER TABLE takes ACCESS
+--   EXCLUSIVE and holds it to COMMIT — and an AEL *request* parks at the head
+--   of the lock queue, so every later query on the table, readers included,
+--   queues behind it.
 --
--- Usage:
+--   On a DEDICATED host (rek-d01, scheduler stopped) that is fine: run this
+--   file normally. On the SHARED pgdev, do NOT — follow
+--   docs/deployment/apply-index-consolidation.md, which does the whole thing
+--   CONCURRENTLY with a bounded lock_timeout.
+--
+--   Hand-running only the CREATE UNIQUE INDEX does NOT make this file a no-op
+--   (an earlier version of this note claimed it did): IF NOT EXISTS neutralizes
+--   that one statement, while the ALTER and the six DROPs still take AEL. The
+--   file is a true no-op only once the CONSTRAINT exists — which is what the
+--   guard below tests.
+--
+-- Usage (dedicated host):
 --   psql -h localhost -U bgo -d gps_health -f migrations/063_file_tracking_index_consolidation.sql
 
 BEGIN;
