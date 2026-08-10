@@ -9,6 +9,7 @@ Tracks file availability and import status to:
 import hashlib
 import logging
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,44 @@ from typing import Any, Dict, List, Optional
 from ..utils.canonical_key import find_by_canonical_key
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def read_only_cursor(conn):
+    """Cursor for a read-only query that ALWAYS ends its transaction.
+
+    psycopg2 opens a transaction on the first statement — a bare ``SELECT``
+    counts — so a long-lived connection that only ever reads sits in
+    ``idle in transaction`` until something ends it. Every write path here
+    commits or rolls back; the read paths did neither, and that is the whole
+    bug. Measured on rek-d01 2026-08-10: two ``FormatResolver`` connections
+    parked for 68 and 59 minutes, plus a constant trickle from
+    ``is_file_missing``.
+
+    Why it matters more than it looks:
+
+    * an open transaction pins the vacuum ``xmin`` horizon, so VACUUM cannot
+      reclaim dead tuples on a table taking tens of millions of updates; and
+    * ``CREATE``/``DROP INDEX CONCURRENTLY`` can never finish, because it waits
+      for every transaction that could see the index and there was always one
+      open — six attempts at migration 065 died on ``lock_timeout`` until the
+      sessions were killed by hand.
+
+    ``rollback()`` rather than ``commit()`` on purpose: if a future caller ever
+    leaves a write pending on this connection, discarding it is the safer
+    failure of the two.
+
+    Use this for every read on a long-lived connection, including from outside
+    the owning class (see :meth:`FileTracker.read_cursor`).
+    """
+    with conn.cursor() as cur:
+        try:
+            yield cur
+        finally:
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001 — cleanup must never break the read
+                pass
 
 
 class FileTracker:
@@ -142,6 +181,15 @@ class FileTracker:
             logger.warning(f"Database connection failed: {e} - file tracking disabled")
             return False
 
+    def read_cursor(self):
+        """Read cursor on this tracker's long-lived connection.
+
+        Public so callers that reach in for ``tracker._conn`` (the integrity
+        checker does) get the same transaction hygiene. See
+        :func:`read_only_cursor` for why a read must end its transaction.
+        """
+        return read_only_cursor(self._conn)
+
     def is_file_missing(
         self,
         station_id: str,
@@ -165,7 +213,7 @@ class FileTracker:
                 return False  # Can't check, don't skip
 
         try:
-            with self._conn.cursor() as cur:
+            with self.read_cursor() as cur:
                 cur.execute(
                     "SELECT is_file_missing(%s, %s, %s, %s::smallint, %s)",
                     (
@@ -206,7 +254,7 @@ class FileTracker:
                 return False  # Can't check, allow import
 
         try:
-            with self._conn.cursor() as cur:
+            with self.read_cursor() as cur:
                 # First check if marked as imported in tracking table
                 cur.execute(
                     "SELECT is_health_imported(%s, %s, %s)",
@@ -605,7 +653,7 @@ class FileTracker:
                 return {}
 
         try:
-            with self._conn.cursor() as cur:
+            with self.read_cursor() as cur:
                 if station_id:
                     cur.execute(
                         """
@@ -690,7 +738,7 @@ class FileTracker:
                 return {}
 
         try:
-            with self._conn.cursor() as cur:
+            with self.read_cursor() as cur:
                 # Get latest successful download
                 cur.execute(
                     """
@@ -1154,13 +1202,15 @@ class FormatResolver:
 
     def _load_formats(self) -> None:
         """Load all archive_format rows into memory."""
-        with self._conn.cursor() as cur:
-            cur.execute("""SELECT format_id, session_type, file_category, receiver_type,
+        with read_only_cursor(self._conn) as cur:
+            cur.execute(
+                """SELECT format_id, session_type, file_category, receiver_type,
                           frequency, rinex_version, naming_convention, hatanaka,
                           compression, file_extension, dir_template,
                           filename_template, description
                    FROM archive_format
-                   ORDER BY format_id""")
+                   ORDER BY format_id"""
+            )
             self._formats = {}
             for row in cur.fetchall():
                 fmt = ArchiveFormat(
@@ -1184,12 +1234,14 @@ class FormatResolver:
 
     def _load_locations(self) -> None:
         """Load all storage_location rows into memory."""
-        with self._conn.cursor() as cur:
-            cur.execute("""SELECT location_id, name, base_path, location_type,
+        with read_only_cursor(self._conn) as cur:
+            cur.execute(
+                """SELECT location_id, name, base_path, location_type,
                           is_primary, enabled
                    FROM storage_location
                    WHERE enabled = true
-                   ORDER BY location_id""")
+                   ORDER BY location_id"""
+            )
             self._locations = {}
             for row in cur.fetchall():
                 loc = StorageLocation(

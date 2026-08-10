@@ -203,7 +203,7 @@ def _run_content_hash_fill(
     from ..utils.content_hash import CorruptArchiveFileError, content_sha256
 
     try:
-        with tracker._conn.cursor() as cur:
+        with tracker.read_cursor() as cur:
             cur.execute(
                 """SELECT sid, session_type, file_date, file_hour, filename
                 FROM file_tracking
@@ -601,7 +601,7 @@ def _is_file_tracked(
         return False
 
     try:
-        with tracker._conn.cursor() as cur:
+        with tracker.read_cursor() as cur:
             if file_hour is None:
                 cur.execute(
                     """SELECT 1 FROM file_tracking
@@ -642,7 +642,7 @@ def _size_consistency_check(
         return result
 
     try:
-        with tracker._conn.cursor() as cur:
+        with tracker.read_cursor() as cur:
             # Get all file sizes for this station/session in the date range
             cur.execute(
                 """SELECT file_date, file_hour, file_size

@@ -229,12 +229,14 @@ def cmd_db_status(args: argparse.Namespace) -> int:
             print(f"Connected to: {db} @ {addr or 'localhost'}:{port or 5432}\n")
 
             # Table row counts
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT relname AS table_name, n_live_tup AS rows
                 FROM pg_stat_user_tables
                 WHERE schemaname = 'public'
                 ORDER BY n_live_tup DESC
-            """)
+            """
+            )
             rows = cur.fetchall()
             if rows:
                 print("Tables:")
@@ -245,10 +247,12 @@ def cmd_db_status(args: argparse.Namespace) -> int:
                 print("No tables found.")
 
             # Views
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT table_name FROM information_schema.views
                 WHERE table_schema = 'public' ORDER BY table_name
-            """)
+            """
+            )
             views = [r[0] for r in cur.fetchall()]
             if views:
                 print(f"\nViews ({len(views)}):")
@@ -273,6 +277,142 @@ def cmd_db_status(args: argparse.Namespace) -> int:
         print(f"Error: {e}")
         conn.close()
         return 1
+
+
+#: Tables whose primary↔mirror divergence has actually bitten us. Counted by
+#: default; ``--tables`` overrides, ``--all`` sweeps every public table.
+PARITY_TABLES = ("file_tracking", "file_absence", "archive_catalog")
+
+
+def _count_rows(host: str | None, tables: list[str]) -> dict[str, int | None]:
+    """Exact row counts for ``tables`` on one host. None where the table is absent."""
+    counts: dict[str, int | None] = {}
+    conn = db_connection(host)
+    try:
+        with conn.cursor() as cur:
+            for t in tables:
+                cur.execute("SELECT to_regclass(%s) IS NOT NULL", (f"public.{t}",))
+                if not cur.fetchone()[0]:
+                    counts[t] = None
+                    continue
+                # Identifier is from a curated list / an explicit operator flag,
+                # never untrusted input — but quote it anyway.
+                cur.execute(f'SELECT count(*) FROM "{t}"')
+                counts[t] = cur.fetchone()[0]
+        conn.rollback()  # reads must not park the connection in a transaction
+    finally:
+        conn.close()
+    return counts
+
+
+def cmd_db_parity(args: argparse.Namespace) -> int:
+    """Compare row counts between the primary and the dual-write mirror.
+
+    The mirror is best-effort: `_DualCursor` logs a failed mirror leg and drops
+    the statement — no retry, no queue, no reconciliation. So every pgdev blip
+    is a permanent, silent divergence, and it drifts in BOTH directions
+    (maintenance run with single_host=True deletes on the primary only, leaving
+    orphans on the mirror). Measured 2026-08-10: file_tracking 961,020 vs
+    936,423.
+
+    This does not fix that — it makes it visible. Exits non-zero past the
+    tolerance so cron or Icinga can alarm on it.
+    """
+    from ..health.database_factory import _load_config_file
+
+    cfg = _load_config_file()
+    mirror = getattr(args, "mirror", None) or cfg.get("mirror_host")
+    primary = resolve_db_host(getattr(args, "host", None))
+
+    if not mirror:
+        print("No mirror_host configured — nothing to compare.")
+        return 0
+    if mirror == primary:
+        print(f"Mirror and primary are the same host ({primary}) — nothing to compare.")
+        return 0
+
+    if getattr(args, "all", False):
+        conn = db_connection(primary)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT relname FROM pg_stat_user_tables "
+                    "WHERE schemaname = 'public' ORDER BY relname"
+                )
+                tables = [r[0] for r in cur.fetchall()]
+            conn.rollback()
+        finally:
+            conn.close()
+    elif getattr(args, "tables", None):
+        tables = [t.strip() for t in args.tables.split(",") if t.strip()]
+    else:
+        tables = list(PARITY_TABLES)
+
+    try:
+        pri = _count_rows(primary, tables)
+        mir = _count_rows(mirror, tables)
+    except Exception as e:
+        print(f"Cannot compare: {e}")
+        return 1
+
+    tolerance = float(getattr(args, "tolerance_pct", 0.5) or 0.5)
+    rows = []
+    breached = False
+    for t in tables:
+        p, m = pri.get(t), mir.get(t)
+        if p is None or m is None:
+            rows.append((t, p, m, None, None, "absent"))
+            continue
+        delta = m - p
+        pct = (abs(delta) / p * 100) if p else (0.0 if not delta else 100.0)
+        over = pct > tolerance
+        breached = breached or over
+        rows.append((t, p, m, delta, pct, "OVER" if over else "ok"))
+
+    if getattr(args, "json", False):
+        import json as _json
+
+        print(
+            _json.dumps(
+                {
+                    "primary": primary,
+                    "mirror": mirror,
+                    "tolerance_pct": tolerance,
+                    "breached": breached,
+                    "tables": [
+                        {
+                            "table": t,
+                            "primary": p,
+                            "mirror": m,
+                            "delta": d,
+                            "pct": None if pct is None else round(pct, 3),
+                            "status": s,
+                        }
+                        for t, p, m, d, pct, s in rows
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return 1 if breached else 0
+
+    print(f"=== Mirror parity: {primary} (primary) vs {mirror} (mirror) ===\n")
+    print(f"{'table':<22}{'primary':>13}{'mirror':>13}{'delta':>11}{'pct':>9}  status")
+    for t, p, m, d, pct, s in rows:
+        if s == "absent":
+            print(
+                f"{t:<22}{'—' if p is None else f'{p:,}':>13}"
+                f"{'—' if m is None else f'{m:,}':>13}{'':>11}{'':>9}  absent on a host"
+            )
+            continue
+        print(f"{t:<22}{p:>13,}{m:>13,}{d:>+11,}{pct:>8.2f}%  {s}")
+
+    if breached:
+        print(
+            f"\nDivergence above {tolerance}%. The mirror has no reconciliation "
+            "path — see vault todo #142 (sweep vs real replication)."
+        )
+    return 1 if breached else 0
 
 
 def cmd_db_dump(args: argparse.Namespace) -> int:
@@ -401,12 +541,14 @@ def cmd_db_drop_station(args: argparse.Namespace) -> int:
                 return 1
 
             # Find all tables with a sid column (except stations itself)
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT table_name FROM information_schema.columns
                 WHERE column_name = 'sid' AND table_schema = 'public'
                   AND table_name != 'stations'
                 ORDER BY table_name
-            """)
+            """
+            )
             tables = [row[0] for row in cur.fetchall()]
 
             # Count rows per table. The table names come from information_schema,
@@ -491,12 +633,14 @@ def cmd_db_list_suppressed(args: argparse.Namespace) -> int:
 
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT sid, station_name, receiver_type, updated_at
                 FROM stations
                 WHERE station_status = 'suppressed'
                 ORDER BY updated_at DESC
-                """)
+                """
+            )
             rows = cur.fetchall()
 
         if not rows:
@@ -604,6 +748,31 @@ def create_db_parser(subparsers) -> None:
         "--host", help="PostgreSQL host (default: from config)"
     )
     list_sup_parser.set_defaults(func=cmd_db_list_suppressed)
+
+    # parity
+    parity_parser = db_subparsers.add_parser(
+        "parity",
+        help="Compare row counts between the primary and the dual-write mirror",
+    )
+    parity_parser.add_argument(
+        "--tables",
+        help=f"Comma-separated tables (default: {','.join(PARITY_TABLES)})",
+    )
+    parity_parser.add_argument(
+        "--all", action="store_true", help="Compare every public table"
+    )
+    parity_parser.add_argument(
+        "--tolerance-pct",
+        type=float,
+        default=0.5,
+        help="Exit non-zero above this divergence (default: 0.5)",
+    )
+    parity_parser.add_argument("--json", action="store_true", help="JSON output")
+    parity_parser.add_argument(
+        "--mirror", help="Mirror host (default: mirror_host from database.cfg)"
+    )
+    parity_parser.add_argument("--host", help="Primary host (default: from config)")
+    parity_parser.set_defaults(func=cmd_db_parity)
 
     # drop-station
     drop_parser = db_subparsers.add_parser(
