@@ -16,6 +16,7 @@ from receivers.rinex.async_converter import (
     _on_conversion_done,
     _rinex_worker,
     shutdown_rinex_pool,
+    submit_file_rinex,
     submit_rinex_conversion,
 )
 
@@ -83,6 +84,109 @@ class TestSubmitRinexConversion:
         )
 
         assert result is None
+
+
+@pytest.mark.unit
+class TestBrokenPoolRecovery:
+    """A killed worker breaks the ProcessPoolExecutor singleton for good.
+
+    On rek-d01 (2026-08-09) an OOM-killed RINEX worker left the pool broken; every
+    later ``submit_rinex_conversion`` silently failed until the scheduler was
+    restarted at 21:22. These tests lock in the reset-and-retry self-heal.
+    """
+
+    @patch("receivers.rinex.async_converter._get_executor")
+    def test_broken_pool_is_reset_and_submit_retried(self, mock_get_executor):
+        """First submit raises BrokenProcessPool → reset + retry succeeds."""
+        from concurrent.futures.process import BrokenProcessPool
+
+        broken = MagicMock()
+        broken.submit.side_effect = BrokenProcessPool("worker died")
+        fresh = MagicMock()
+        fresh_future = MagicMock()
+        fresh.submit.return_value = fresh_future
+        mock_get_executor.side_effect = [broken, fresh]
+
+        with patch("receivers.rinex.async_converter._reset_executor") as mock_reset:
+            future = submit_rinex_conversion(
+                "ELDC", "15s_24hr",
+                datetime(2026, 3, 1), datetime(2026, 3, 2),
+            )
+
+        assert future is fresh_future
+        mock_reset.assert_called_once()  # broken pool torn down before retry
+        assert broken.submit.call_count == 1
+        assert fresh.submit.call_count == 1  # exactly one retry
+
+    @patch("receivers.rinex.async_converter._get_executor")
+    def test_broken_pool_gives_up_after_one_retry(self, mock_get_executor):
+        """If the fresh pool is also broken, do not loop forever."""
+        from concurrent.futures.process import BrokenProcessPool
+
+        dead = MagicMock()
+        dead.submit.side_effect = BrokenProcessPool("still dead")
+        mock_get_executor.side_effect = [dead, dead]
+
+        with patch("receivers.rinex.async_converter._reset_executor"):
+            result = submit_rinex_conversion(
+                "ELDC", "15s_24hr",
+                datetime(2026, 3, 1), datetime(2026, 3, 2),
+            )
+
+        assert result is None
+        assert dead.submit.call_count == 2  # one try + one retry, then stop
+
+    @patch("receivers.rinex.async_converter._get_executor")
+    def test_file_submit_also_recovers_from_broken_pool(self, mock_get_executor):
+        """submit_file_rinex (the per-file inline callback) self-heals too."""
+        from concurrent.futures.process import BrokenProcessPool
+
+        broken = MagicMock()
+        broken.submit.side_effect = BrokenProcessPool("worker died")
+        fresh = MagicMock()
+        fresh_future = MagicMock()
+        fresh.submit.return_value = fresh_future
+        mock_get_executor.side_effect = [broken, fresh]
+
+        with patch("receivers.rinex.async_converter._reset_executor"):
+            future = submit_file_rinex(
+                "THOB", "1Hz_1hr", "/data/THOB202603011400b.sbf.gz"
+            )
+
+        assert future is fresh_future
+        assert fresh.submit.call_count == 1
+
+    def test_reset_executor_is_idempotent_and_locks(self):
+        """Resetting a None executor is a no-op; resetting twice is safe."""
+        import receivers.rinex.async_converter as mod
+
+        mod._executor = None
+        mod._reset_executor()  # no-op, must not raise
+        mod._reset_executor()  # still safe
+
+    def test_done_callback_resets_on_broken_pool(self, caplog):
+        """A future that failed with BrokenProcessPool triggers a pool reset."""
+        from concurrent.futures.process import BrokenProcessPool
+
+        mock_future = MagicMock()
+        mock_future.exception.return_value = BrokenProcessPool("worker died")
+
+        with patch("receivers.rinex.async_converter._reset_executor") as mock_reset:
+            with caplog.at_level(logging.ERROR, logger="receivers.rinex.async"):
+                _on_conversion_done(mock_future, "ELDC", "15s_24hr")
+
+        assert "RINEX failed: ELDC" in caplog.text
+        mock_reset.assert_called_once()
+
+    def test_done_callback_does_not_reset_on_other_errors(self):
+        """A normal conversion error must NOT tear down the whole pool."""
+        mock_future = MagicMock()
+        mock_future.exception.return_value = RuntimeError("sbf2rin crashed")
+
+        with patch("receivers.rinex.async_converter._reset_executor") as mock_reset:
+            _on_conversion_done(mock_future, "ELDC", "15s_24hr")
+
+        mock_reset.assert_not_called()
 
 
 @pytest.mark.unit
