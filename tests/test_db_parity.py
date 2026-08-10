@@ -22,7 +22,14 @@ from receivers.cli.db import PARITY_TABLES, cmd_db_parity
 
 def _args(**kw):
     ns = argparse.Namespace(
-        tables=None, all=False, tolerance_pct=0.5, json=False, mirror=None, host=None
+        tables=None,
+        all=False,
+        tolerance_pct=0.5,
+        json=False,
+        mirror=None,
+        host=None,
+        by=None,  # no grouping unless a test asks for it
+        no_group=False,
     )
     for k, v in kw.items():
         setattr(ns, k, v)
@@ -31,20 +38,33 @@ def _args(**kw):
 
 @pytest.fixture
 def counts():
-    """Patch the per-host counter; returns the dict the test can populate."""
-    per_host = {}
+    """Patch the per-host counters; returns the dicts a test can populate.
+
+    ``counts[host][table]`` -> total; ``groups[host][table]`` -> {group: n}.
+    """
+
+    class _Counts(dict):
+        """dict of totals, with the per-group counts hung off `.groups`."""
+
+    per_host = _Counts()
+    per_group = {}
 
     def _fake(host, tables):
         return {t: per_host.get(host, {}).get(t) for t in tables}
 
+    def _fake_grouped(host, tables, by):
+        return {t: per_group.get(host, {}).get(t) for t in tables}
+
     with (
         patch("receivers.cli.db._count_rows", side_effect=_fake),
+        patch("receivers.cli.db._count_rows_grouped", side_effect=_fake_grouped),
         patch("receivers.cli.db.resolve_db_host", return_value="rek-d01"),
         patch(
             "receivers.health.database_factory._load_config_file",
             return_value={"mirror_host": "pgdev"},
         ),
     ):
+        per_host.groups = per_group  # attach so tests reach it off one fixture
         yield per_host
 
 
@@ -130,7 +150,7 @@ def test_json_output_carries_the_verdict(counts, capsys):
     assert payload["breached"] is True
     assert payload["primary"] == "rek-d01" and payload["mirror"] == "pgdev"
     ft = next(t for t in payload["tables"] if t["table"] == "file_tracking")
-    assert ft["delta"] == -100 and ft["status"] == "OVER"
+    assert ft["net"] == -100 and ft["divergence"] == 100 and ft["status"] == "OVER"
 
 
 def test_explicit_tables_override_the_default_set(counts):
@@ -138,6 +158,107 @@ def test_explicit_tables_override_the_default_set(counts):
     counts["pgdev"] = {"stations": 173}
 
     assert cmd_db_parity(_args(tables="stations")) == 0
+
+
+# ── Grouping: the whole point — opposite drift must not cancel ────────────────
+#
+# Real numbers, measured on rek-d01 vs pgdev 2026-08-10. Per session_type the
+# divergence is 32,340 rows; the whole-table delta reads 24,598. Counting the
+# table understates the truth by 24% because pgdev is AHEAD on the daily
+# sessions and BEHIND on the hourly ones.
+REAL_PRIMARY = {
+    "status_1hr": 367_822,
+    "1Hz_1hr": 279_310,
+    "1Hz_1hr_rinex": 270_210,
+    "15s_24hr": 18_830,
+    "15s_24hr_rinex": 24_848,
+}
+REAL_MIRROR = {
+    "status_1hr": 342_476,
+    "1Hz_1hr": 276_334,
+    "1Hz_1hr_rinex": 270_063,
+    "15s_24hr": 21_659,
+    "15s_24hr_rinex": 25_890,
+}
+
+
+def test_grouping_reports_true_divergence_not_the_net(counts, capsys):
+    """The measured case: 32,340 real vs 24,598 net."""
+    counts["rek-d01"] = {"file_tracking": sum(REAL_PRIMARY.values())}
+    counts["pgdev"] = {"file_tracking": sum(REAL_MIRROR.values())}
+    counts.groups["rek-d01"] = {"file_tracking": REAL_PRIMARY}
+    counts.groups["pgdev"] = {"file_tracking": REAL_MIRROR}
+
+    rc = cmd_db_parity(_args(tables="file_tracking", by="session_type", json=True))
+    import json
+
+    ft = json.loads(capsys.readouterr().out)["tables"][0]
+
+    assert ft["divergence"] == 32_340, "Σ|delta| per group is the honest number"
+    assert ft["net"] == -24_598, "the net is what a whole-table count would show"
+    assert ft["divergence"] > abs(ft["net"])
+    assert rc == 1
+
+
+def test_fully_cancelling_drift_is_caught_by_grouping(counts):
+    """The failure mode that makes whole-table counting unsafe.
+
+    Mirror short 500 rows in one session and long 500 in another: totals match
+    exactly, so an ungrouped check reports 'ok' on a database that is wrong on
+    both sides. Grouping must still flag it.
+    """
+    pri = {"a": 1000, "b": 1000}
+    mir = {"a": 500, "b": 1500}
+
+    counts["rek-d01"] = {"file_tracking": 2000}
+    counts["pgdev"] = {"file_tracking": 2000}
+    counts.groups["rek-d01"] = {"file_tracking": pri}
+    counts.groups["pgdev"] = {"file_tracking": mir}
+
+    # Ungrouped: totals are identical, so it says everything is fine.
+    assert cmd_db_parity(_args(tables="file_tracking")) == 0
+    # Grouped: 1000 rows are in the wrong place and it says so.
+    assert cmd_db_parity(_args(tables="file_tracking", by="session_type")) == 1
+
+
+def test_no_group_flag_forces_whole_table_counts(counts):
+    pri = {"a": 1000, "b": 1000}
+    mir = {"a": 500, "b": 1500}
+    counts["rek-d01"] = {"file_tracking": 2000}
+    counts["pgdev"] = {"file_tracking": 2000}
+    counts.groups["rek-d01"] = {"file_tracking": pri}
+    counts.groups["pgdev"] = {"file_tracking": mir}
+
+    assert (
+        cmd_db_parity(_args(tables="file_tracking", by="session_type", no_group=True))
+        == 0
+    )
+
+
+def test_table_without_the_group_column_falls_back_not_dropped(counts, capsys):
+    """A table lacking session_type must still be compared, just ungrouped."""
+    counts["rek-d01"] = {"archive_catalog": 1000}
+    counts["pgdev"] = {"archive_catalog": 900}
+    counts.groups["rek-d01"] = {"archive_catalog": None}  # column absent
+    counts.groups["pgdev"] = {"archive_catalog": None}
+
+    rc = cmd_db_parity(_args(tables="archive_catalog", by="session_type", json=True))
+    import json
+
+    row = json.loads(capsys.readouterr().out)["tables"][0]
+
+    assert rc == 1
+    assert row["divergence"] == 100
+    assert row["grouped_by"] is None, "must report that it could not group"
+
+
+def test_group_present_on_only_one_host_counts_as_divergence(counts):
+    counts["rek-d01"] = {"file_tracking": 1000}
+    counts["pgdev"] = {"file_tracking": 1200}
+    counts.groups["rek-d01"] = {"file_tracking": {"a": 1000}}
+    counts.groups["pgdev"] = {"file_tracking": {"a": 1000, "orphan_session": 200}}
+
+    assert cmd_db_parity(_args(tables="file_tracking", by="session_type")) == 1
 
 
 # ── _count_rows: the SQL the tests above mock away ────────────────────────────
@@ -198,6 +319,74 @@ def test_count_rows_skips_absent_tables_and_quotes_identifiers():
     assert counts_sql == [
         'SELECT count(*) FROM "file_tracking"'
     ], "the identifier must be quoted, and an absent table must never be counted"
+
+
+class _GroupConn:
+    """Connection double for _count_rows_grouped: column probe, then GROUP BY."""
+
+    def __init__(self, has_column, rows=()):
+        self.has_column = has_column
+        self.rows = rows
+        self.executed: list = []
+        self.rollbacks = 0
+        self.closed = False
+        self._pending = None
+        self._pending_all = []
+
+    def cursor(self):
+        conn = self
+
+        class _Cur:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def execute(self, sql, params=None):
+                conn.executed.append((sql, params))
+                if "information_schema.columns" in sql:
+                    conn._pending = (conn.has_column,)
+                else:
+                    conn._pending_all = list(conn.rows)
+
+            def fetchone(self):
+                return conn._pending
+
+            def fetchall(self):
+                return conn._pending_all
+
+        return _Cur()
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        self.closed = True
+
+
+def test_count_rows_grouped_returns_none_when_the_column_is_absent():
+    """Signals 'cannot group' so the caller falls back instead of dropping it."""
+    from receivers.cli.db import _count_rows_grouped
+
+    conn = _GroupConn(has_column=False)
+    with patch("receivers.cli.db.db_connection", return_value=conn):
+        got = _count_rows_grouped("somehost", ["archive_catalog"], "session_type")
+
+    assert got["archive_catalog"] is None
+    assert not [s for s, _ in conn.executed if "GROUP BY" in s]
+
+
+def test_count_rows_grouped_labels_null_groups():
+    """A NULL group must be a visible bucket, not silently merged or dropped."""
+    from receivers.cli.db import _count_rows_grouped
+
+    conn = _GroupConn(has_column=True, rows=[("1Hz_1hr", 10), (None, 3)])
+    with patch("receivers.cli.db.db_connection", return_value=conn):
+        got = _count_rows_grouped("somehost", ["file_tracking"], "session_type")
+
+    assert got["file_tracking"] == {"1Hz_1hr": 10, "∅": 3}
+    assert conn.rollbacks == 1 and conn.closed is True
 
 
 def test_count_rows_ends_its_transaction_and_closes():

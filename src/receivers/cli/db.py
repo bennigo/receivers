@@ -284,6 +284,16 @@ def cmd_db_status(args: argparse.Namespace) -> int:
 PARITY_TABLES = ("file_tracking", "file_absence", "archive_catalog")
 
 
+#: Grouping column used by default where a table has it. A whole-table count
+#: is a MISLEADING parity signal: drift in opposite directions cancels out.
+#: Measured on the real hosts 2026-08-10 — per session_type the divergence in
+#: file_tracking was 32,340 rows (rek-d01 ahead on status_1hr/1Hz, pgdev ahead
+#: on 15s_24hr), while the whole-table delta read 24,598. The plain count
+#: understated it by 24%, and a fully cancelling drift would have read "ok" on
+#: a table that was wrong on both sides.
+PARITY_GROUP_COLUMN = "session_type"
+
+
 def _count_rows(host: str | None, tables: list[str]) -> dict[str, int | None]:
     """Exact row counts for ``tables`` on one host. None where the table is absent."""
     counts: dict[str, int | None] = {}
@@ -303,6 +313,39 @@ def _count_rows(host: str | None, tables: list[str]) -> dict[str, int | None]:
     finally:
         conn.close()
     return counts
+
+
+def _count_rows_grouped(
+    host: str | None, tables: list[str], by: str
+) -> dict[str, dict[str, int] | None]:
+    """Per-group counts for ``tables`` on one host, keyed by ``by``.
+
+    Returns ``None`` for a table that is absent OR that lacks the grouping
+    column, so the caller can fall back to a whole-table count for it rather
+    than dropping it from the report.
+    """
+    out: dict[str, dict[str, int] | None] = {}
+    conn = db_connection(host)
+    try:
+        with conn.cursor() as cur:
+            for t in tables:
+                cur.execute(
+                    """SELECT EXISTS (
+                           SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = 'public'
+                             AND table_name = %s AND column_name = %s
+                       )""",
+                    (t, by),
+                )
+                if not cur.fetchone()[0]:
+                    out[t] = None
+                    continue
+                cur.execute(f'SELECT "{by}"::text, count(*) FROM "{t}" GROUP BY 1')
+                out[t] = {(g if g is not None else "∅"): n for g, n in cur.fetchall()}
+        conn.rollback()
+    finally:
+        conn.close()
+    return out
 
 
 def cmd_db_parity(args: argparse.Namespace) -> int:
@@ -348,9 +391,15 @@ def cmd_db_parity(args: argparse.Namespace) -> int:
     else:
         tables = list(PARITY_TABLES)
 
+    by = getattr(args, "by", PARITY_GROUP_COLUMN)
+    if getattr(args, "no_group", False):
+        by = None
+
     try:
         pri = _count_rows(primary, tables)
         mir = _count_rows(mirror, tables)
+        gpri = _count_rows_grouped(primary, tables, by) if by else {}
+        gmir = _count_rows_grouped(mirror, tables, by) if by else {}
     except Exception as e:
         print(f"Cannot compare: {e}")
         return 1
@@ -361,13 +410,61 @@ def cmd_db_parity(args: argparse.Namespace) -> int:
     for t in tables:
         p, m = pri.get(t), mir.get(t)
         if p is None or m is None:
-            rows.append((t, p, m, None, None, "absent"))
+            rows.append(
+                {
+                    "table": t,
+                    "primary": p,
+                    "mirror": m,
+                    "status": "absent",
+                    "net": None,
+                    "divergence": None,
+                    "pct": None,
+                    "groups": [],
+                }
+            )
             continue
-        delta = m - p
-        pct = (abs(delta) / p * 100) if p else (0.0 if not delta else 100.0)
+
+        gp, gm = gpri.get(t), gmir.get(t)
+        if gp is not None and gm is not None:
+            # Group-level truth: opposite-direction drift must NOT cancel.
+            worst = []
+            divergence = 0
+            for key in sorted(set(gp) | set(gm)):
+                d = gm.get(key, 0) - gp.get(key, 0)
+                if d:
+                    divergence += abs(d)
+                    worst.append(
+                        {
+                            "group": key,
+                            "primary": gp.get(key, 0),
+                            "mirror": gm.get(key, 0),
+                            "delta": d,
+                        }
+                    )
+            worst.sort(key=lambda g: abs(g["delta"]), reverse=True)
+            grouped = True
+        else:
+            divergence = abs(m - p)
+            worst = []
+            grouped = False
+
+        net = m - p
+        pct = (divergence / p * 100) if p else (0.0 if not divergence else 100.0)
         over = pct > tolerance
         breached = breached or over
-        rows.append((t, p, m, delta, pct, "OVER" if over else "ok"))
+        rows.append(
+            {
+                "table": t,
+                "primary": p,
+                "mirror": m,
+                "net": net,
+                "divergence": divergence,
+                "pct": pct,
+                "grouped_by": by if grouped else None,
+                "groups": worst,
+                "status": "OVER" if over else "ok",
+            }
+        )
 
     if getattr(args, "json", False):
         import json as _json
@@ -377,18 +474,15 @@ def cmd_db_parity(args: argparse.Namespace) -> int:
                 {
                     "primary": primary,
                     "mirror": mirror,
+                    "grouped_by": by,
                     "tolerance_pct": tolerance,
                     "breached": breached,
                     "tables": [
                         {
-                            "table": t,
-                            "primary": p,
-                            "mirror": m,
-                            "delta": d,
-                            "pct": None if pct is None else round(pct, 3),
-                            "status": s,
+                            **r,
+                            "pct": None if r["pct"] is None else round(r["pct"], 3),
                         }
-                        for t, p, m, d, pct, s in rows
+                        for r in rows
                     ],
                 },
                 indent=2,
@@ -396,21 +490,42 @@ def cmd_db_parity(args: argparse.Namespace) -> int:
         )
         return 1 if breached else 0
 
-    print(f"=== Mirror parity: {primary} (primary) vs {mirror} (mirror) ===\n")
-    print(f"{'table':<22}{'primary':>13}{'mirror':>13}{'delta':>11}{'pct':>9}  status")
-    for t, p, m, d, pct, s in rows:
-        if s == "absent":
+    print(f"=== Mirror parity: {primary} (primary) vs {mirror} (mirror) ===")
+    if by:
+        print(f"    grouped by {by} — divergence is Σ|delta| per group, not the net\n")
+    else:
+        print("    whole-table counts — opposite drift CANCELS, see --by\n")
+    print(
+        f"{'table':<20}{'primary':>13}{'mirror':>13}{'net':>10}"
+        f"{'divergence':>12}{'pct':>8}  status"
+    )
+    for r in rows:
+        if r["status"] == "absent":
+            p, m = r["primary"], r["mirror"]
             print(
-                f"{t:<22}{'—' if p is None else f'{p:,}':>13}"
-                f"{'—' if m is None else f'{m:,}':>13}{'':>11}{'':>9}  absent on a host"
+                f"{r['table']:<20}{'—' if p is None else f'{p:,}':>13}"
+                f"{'—' if m is None else f'{m:,}':>13}{'':>10}{'':>12}{'':>8}"
+                "  absent on a host"
             )
             continue
-        print(f"{t:<22}{p:>13,}{m:>13,}{d:>+11,}{pct:>8.2f}%  {s}")
+        print(
+            f"{r['table']:<20}{r['primary']:>13,}{r['mirror']:>13,}"
+            f"{r['net']:>+10,}{r['divergence']:>12,}{r['pct']:>7.2f}%  {r['status']}"
+        )
+        # The groups are the actionable part: they say WHERE it drifted.
+        for g in r["groups"][:5]:
+            print(
+                f"    {g['group']:<16}{g['primary']:>13,}{g['mirror']:>13,}"
+                f"{g['delta']:>+10,}"
+            )
+        if len(r["groups"]) > 5:
+            print(f"    … {len(r['groups']) - 5} more group(s)")
 
     if breached:
         print(
-            f"\nDivergence above {tolerance}%. The mirror has no reconciliation "
-            "path — see vault todo #142 (sweep vs real replication)."
+            f"\nDivergence above {tolerance}%. This only REPORTS — the mirror has no "
+            "reconciliation path, so nothing here syncs anything. See vault todo "
+            "#142 (sweep vs real replication)."
         )
     return 1 if breached else 0
 
@@ -766,6 +881,20 @@ def create_db_parser(subparsers) -> None:
         type=float,
         default=0.5,
         help="Exit non-zero above this divergence (default: 0.5)",
+    )
+    parity_parser.add_argument(
+        "--by",
+        default=PARITY_GROUP_COLUMN,
+        help=(
+            f"Group counts by this column where a table has it "
+            f"(default: {PARITY_GROUP_COLUMN}). Grouping is the honest signal — "
+            "a whole-table count lets opposite drift cancel out"
+        ),
+    )
+    parity_parser.add_argument(
+        "--no-group",
+        action="store_true",
+        help="Whole-table counts only (understates divergence; see --by)",
     )
     parity_parser.add_argument("--json", action="store_true", help="JSON output")
     parity_parser.add_argument(
