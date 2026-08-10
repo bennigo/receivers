@@ -138,3 +138,75 @@ def test_explicit_tables_override_the_default_set(counts):
     counts["pgdev"] = {"stations": 173}
 
     assert cmd_db_parity(_args(tables="stations")) == 0
+
+
+# ── _count_rows: the SQL the tests above mock away ────────────────────────────
+
+
+class _CountConn:
+    """Connection double answering to_regclass probes then count(*)."""
+
+    def __init__(self, existing):
+        self.existing = existing
+        self.executed: list = []
+        self.rollbacks = 0
+        self.closed = False
+        self._pending = None
+
+    def cursor(self):
+        conn = self
+
+        class _Cur:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def execute(self, sql, params=None):
+                conn.executed.append((sql, params))
+                if "to_regclass" in sql:
+                    table = params[0].split(".", 1)[1]
+                    conn._pending = (table in conn.existing,)
+                else:
+                    conn._pending = (len(conn.existing),)
+
+            def fetchone(self):
+                return conn._pending
+
+        return _Cur()
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        self.closed = True
+
+
+def test_count_rows_skips_absent_tables_and_quotes_identifiers():
+    """A table missing on one host must not raise — and must not be counted."""
+    from receivers.cli.db import _count_rows
+
+    conn = _CountConn(existing={"file_tracking"})
+    with patch("receivers.cli.db.db_connection", return_value=conn):
+        got = _count_rows("somehost", ["file_tracking", "gone_table"])
+
+    assert got["gone_table"] is None
+    assert got["file_tracking"] == 1
+
+    counts_sql = [s for s, _ in conn.executed if "count(*)" in s]
+    assert counts_sql == [
+        'SELECT count(*) FROM "file_tracking"'
+    ], "the identifier must be quoted, and an absent table must never be counted"
+
+
+def test_count_rows_ends_its_transaction_and_closes():
+    """Parity is a read — it must not park a connection, per todo #141."""
+    from receivers.cli.db import _count_rows
+
+    conn = _CountConn(existing={"file_tracking"})
+    with patch("receivers.cli.db.db_connection", return_value=conn):
+        _count_rows("somehost", ["file_tracking"])
+
+    assert conn.rollbacks == 1
+    assert conn.closed is True
