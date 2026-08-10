@@ -12,7 +12,9 @@ to ArchiveFileChecker + filesystem glob when format data is unavailable.
 """
 
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
@@ -26,6 +28,31 @@ logger = logging.getLogger("receivers.scheduler.reconciler")
 # suggested operator actions) at sweep end instead of cluttering the per-file
 # stream. Reset at each sweep start; single-threaded within a sweep.
 _SWEEP_REFUSALS: list = []
+_SWEEP_LOCK: threading.Lock = threading.Lock()
+
+
+def _yield_to_load_gate(caller: str = "reconciler") -> None:
+    """Pause the reconciler if the load gate is blocking STANDARD jobs.
+
+    The reconciler runs on the backfill executor (low priority). If the load
+    gate is blocking STANDARD jobs (network/CPU/thread saturation), we pause
+    so real-time downloads and conversions can proceed. Checks every 5 s, up
+    to 120 s total.
+    """
+    try:
+        from .bulk_scheduler import _get_load_monitor
+
+        lm = _get_load_monitor()
+        if lm is None or not lm.enabled:
+            return
+        waited = 0
+        while waited < 120 and not lm.can_start_job():
+            time.sleep(5)
+            waited += 5
+        if waited:
+            logger.debug("%s: yielded %ds for load gate", caller, waited)
+    except Exception:
+        pass
 
 
 def _get_format_resolver():
@@ -106,22 +133,69 @@ def _run_archive_reconciler_job(
 
         end_date = date.today() - timedelta(days=1)
         start_date = end_date - timedelta(days=days_back - 1)
+        station_ids = sorted(convertible_stations)
 
-        for station_id in sorted(convertible_stations):
-            receiver_type = convertible_stations[station_id]
+        # --- Tiered priority: yesterday → last 7 days → deep history ---
+        # Each tier processes ALL stations before moving to the next tier,
+        # so yesterday's data for every station is done before any historical
+        # backfill consumes the reconciler window.
+
+        yesterday = end_date
+        day7 = end_date - timedelta(days=6)
+
+        tiers = [
+            ("yesterday", yesterday, yesterday),
+            ("last-7-days", day7, yesterday - timedelta(days=1)),
+            ("deep-history", start_date, day7 - timedelta(days=1)),
+        ]
+
+        for tier_name, tier_start, tier_end in tiers:
+            if tier_start > tier_end:
+                continue  # empty tier
+            _yield_to_load_gate(f"reconciler-{tier_name}")
+            logger.info(
+                f"Reconciler tier {tier_name}: {tier_start} → {tier_end} "
+                f"({len(station_ids)} stations)"
+            )
+
+            # Process sessions in two phases: 15s (fast, 1 file/day) first,
+            # then 1Hz (slow, 24 files/day).  All 15s jobs complete before
+            # any 1Hz job starts, so yesterday data for all stations is done
+            # in one fast batch.
             for session_type in session_types:
-                missing, converted, errors = _reconcile_station_session(
-                    station_id,
-                    session_type,
-                    start_date,
-                    end_date,
-                    checker,
-                    resolver,
-                    receiver_type=receiver_type,
-                )
-                total_missing += missing
-                total_converted += converted
-                total_errors += errors
+                _yield_to_load_gate(f"reconciler-{tier_name}-{session_type}")
+                max_pool = min(len(station_ids), 8)
+                with ThreadPoolExecutor(
+                    max_workers=max_pool, thread_name_prefix="recon"
+                ) as pool:
+                    futures = {}
+                    for station_id in station_ids:
+                        receiver_type = convertible_stations[station_id]
+                        fut = pool.submit(
+                            _reconcile_station_session,
+                            station_id,
+                            session_type,
+                            tier_start,
+                            tier_end,
+                            checker,
+                            resolver,
+                            receiver_type=receiver_type,
+                        )
+                        futures[fut] = (station_id, session_type)
+
+                    for fut in as_completed(futures):
+                        station_id, session_type = futures[fut]
+                        try:
+                            missing, converted, errors = fut.result()
+                        except Exception as e:
+                            logger.warning(
+                                f"Reconciler {station_id}/{session_type}: {e}"
+                            )
+                            errors = 1
+                            missing = converted = 0
+                        total_missing += missing
+                        total_converted += converted
+                        total_errors += errors
 
         duration = time.time() - start_time
         logger.info(
@@ -132,7 +206,7 @@ def _run_archive_reconciler_job(
         try:
             from ..rinex.converter_base import validation_epilog
 
-            epilog = validation_epilog(_SWEEP_REFUSALS)
+            epilog = validation_epilog(list(_SWEEP_REFUSALS))
             if epilog:
                 logger.warning(epilog)
         except Exception:  # noqa: BLE001 - epilog must never fail the sweep
@@ -595,7 +669,8 @@ def _convert_raw_to_rinex(
             if getattr(result, "validation_category", None):
                 # Gate refusal: compact line already logged by the converter —
                 # collect for the sweep-end epilog, don't repeat the detail.
-                _SWEEP_REFUSALS.append(result)
+                with _SWEEP_LOCK:
+                    _SWEEP_REFUSALS.append(result)
             else:
                 logger.warning(
                     f"RINEX conversion failed for {raw_path.name}: {result.message}"
