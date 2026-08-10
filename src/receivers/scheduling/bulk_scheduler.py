@@ -1063,6 +1063,26 @@ def _run_rinex_conversion(
         station_config: Station configuration dictionary
         logger: Logger instance
     """
+    # Backfill RINEX is low-priority recovery of OLD data. Yield to live
+    # downloads + inline RINEX when the box is under load — the raw converts on
+    # the next backfill pass or the 6h reconciler once load drops. This function
+    # is called only from the backfill path (never the inline submit_rinex_*
+    # pool), so deferring here cannot stall a live download. Without this gate a
+    # big historical backlog (e.g. the 2026-08-09 reconnection recovery) saturates
+    # the box, the live load-gate then skips ~285 downloads/hour, and today's
+    # data never arrives to be RINEX'd at all.
+    monitor = _get_load_monitor()
+    if monitor is not None:
+        from .task_interface import TaskPriority
+
+        if not monitor.can_start_job(TaskPriority.BACKFILL):
+            load = monitor.get_load()
+            logger.info(
+                f"⏳ Backfill RINEX deferred: {station_id} ({session_type}) — "
+                f"load high (cpu={load.cpu_load_1m:.1f}), will retry next pass"
+            )
+            return
+
     try:
         from .task_interface import TaskConfig, TaskFrequency, TaskType
         from .tasks.rinex_task import RINEXTask
