@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -103,6 +104,35 @@ def submit_rinex_conversion(
         )
         return future
 
+    except BrokenProcessPool as e:
+        # A worker died (OOM-killed, etc.). The singleton stays broken until
+        # replaced, so every later submit would fail too. Reset once and retry;
+        # if the fresh pool also dies immediately we give up rather than loop.
+        logger.warning(
+            f"RINEX pool broken for {station_id} ({session_type}); "
+            f"resetting and retrying: {e}"
+        )
+        _reset_executor()
+        try:
+            executor = _get_executor()
+            future = executor.submit(
+                _rinex_worker, station_id, session_type, start_time, end_time
+            )
+            future.add_done_callback(
+                lambda f: _on_conversion_done(f, station_id, session_type)
+            )
+            logger.info(
+                f"🔄 RINEX queued (after pool reset): {station_id} ({session_type}) "
+                f"{start_time:%Y-%m-%d} → {end_time:%Y-%m-%d}"
+            )
+            return future
+        except Exception as e2:  # noqa: BLE001
+            logger.error(
+                f"RINEX pool could not be recovered for {station_id} "
+                f"({session_type}): {e2}"
+            )
+            return None
+
     except Exception as e:
         logger.warning(f"Failed to submit RINEX job for {station_id}: {e}")
         return None
@@ -145,9 +175,57 @@ def submit_file_rinex(
         )
         return future
 
+    except BrokenProcessPool as e:
+        logger.warning(
+            f"RINEX pool broken for {station_id} ({session_type}); "
+            f"resetting and retrying: {e}"
+        )
+        _reset_executor()
+        try:
+            executor = _get_executor()
+            future = executor.submit(
+                _single_file_worker, station_id, session_type, archive_path
+            )
+            future.add_done_callback(
+                lambda f: _on_conversion_done(f, station_id, session_type)
+            )
+            logger.info(
+                f"🔄 RINEX queued (after pool reset): {station_id} ({session_type}) "
+                f"{Path(archive_path).name}"
+            )
+            return future
+        except Exception as e2:  # noqa: BLE001
+            logger.error(
+                f"RINEX pool could not be recovered for {station_id} "
+                f"({session_type}): {e2}"
+            )
+            return None
+
     except Exception as e:
         logger.warning(f"Failed to submit RINEX file job for {station_id}: {e}")
         return None
+
+
+def _reset_executor() -> None:
+    """Shut down and discard the current executor.
+
+    Called when the pool is broken — a worker was killed (e.g. by the memory
+    cgroup) and ``ProcessPoolExecutor`` has no self-heal: once broken, every
+    later ``submit()`` raises ``BrokenProcessPool``, so the dead singleton must
+    be replaced or all inline RINEX silently stops until a full scheduler
+    restart. Idempotent and lock-protected; safe to call from multiple
+    submit/callback threads concurrently.
+    """
+    global _executor
+    with _executor_lock:
+        if _executor is None:
+            return
+        try:
+            _executor.shutdown(wait=False)
+        except Exception:  # noqa: BLE001 — best-effort teardown of a dead pool
+            pass
+        _executor = None
+        logger.warning("RINEX process pool was broken and has been reset")
 
 
 def shutdown_rinex_pool(wait: bool = True) -> None:
@@ -173,6 +251,11 @@ def _on_conversion_done(future: Future, station_id: str, session_type: str) -> N
                 f"❌ RINEX failed: {station_id} ({session_type}) — "
                 f"{type(exc).__name__}: {exc}"
             )
+            # A dead worker breaks the whole pool for every later submit.
+            # Reset proactively so the next download's submit gets a fresh pool
+            # instead of waiting for a BrokenProcessPool on submit.
+            if isinstance(exc, BrokenProcessPool):
+                _reset_executor()
         else:
             result = future.result()
             converted = result.get("converted", 0)

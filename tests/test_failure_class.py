@@ -72,6 +72,24 @@ class TestPermanentSignatures:
         ):
             assert classify_failure(msg).kind == PERMANENT, msg
 
+    def test_runpkr00_exit_30_is_permanent(self):
+        """runpkr00 reading a Trimble .T02 and exiting non-zero is a data
+        problem, not subprocess pressure — a retry reads the same bad file. exit
+        30 was the fleet-wide runaway on the 2026-08-09 backfill (1367 files /
+        83 stations, each retried ~2x, burning CPU that then load-gated live
+        downloads)."""
+        c = classify_failure("/usr/local/bin/runpkr00 failed with exit code 30")
+        assert c.kind == PERMANENT
+        assert not c.retryable
+        assert "archive-rm" in c.reason
+
+    def test_runpkr00_other_exit_stays_transient_until_known(self):
+        """Conservative by design: an unenumerated runpkr00 code is still
+        retried (fold new permanent codes in explicitly as they surface)."""
+        assert (
+            classify_failure("runpkr00 failed with exit code 1").kind == TRANSIENT
+        )
+
 
 class TestTransientSignatures:
     def test_the_eley_compress_failure(self):
