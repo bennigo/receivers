@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import logging
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -466,28 +466,38 @@ def cmd_db_parity(args: argparse.Namespace) -> int:
             }
         )
 
+    payload = {
+        "checked_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "primary": primary,
+        "mirror": mirror,
+        "grouped_by": by,
+        "tolerance_pct": tolerance,
+        "breached": breached,
+        "tables": [
+            {**r, "pct": None if r["pct"] is None else round(r["pct"], 3)} for r in rows
+        ],
+    }
+
+    # A trend is the input to the sweep-vs-replication decision (todo #142), and
+    # journalctl is not readable by gpsops OR bgo on rek-d01 (neither is in adm
+    # / systemd-journal), so a journal-only run would be write-only. One JSON
+    # object per line, appended.
+    append_to = getattr(args, "append_json", None)
+    if append_to:
+        import json as _json
+
+        try:
+            path = Path(append_to).expanduser()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a") as fh:
+                fh.write(_json.dumps(payload) + "\n")
+        except Exception as exc:  # noqa: BLE001 — logging must not break the check
+            logger.warning("Could not append parity result to %s: %s", append_to, exc)
+
     if getattr(args, "json", False):
         import json as _json
 
-        print(
-            _json.dumps(
-                {
-                    "primary": primary,
-                    "mirror": mirror,
-                    "grouped_by": by,
-                    "tolerance_pct": tolerance,
-                    "breached": breached,
-                    "tables": [
-                        {
-                            **r,
-                            "pct": None if r["pct"] is None else round(r["pct"], 3),
-                        }
-                        for r in rows
-                    ],
-                },
-                indent=2,
-            )
-        )
+        print(_json.dumps(payload, indent=2))
         return 1 if breached else 0
 
     print(f"=== Mirror parity: {primary} (primary) vs {mirror} (mirror) ===")
@@ -959,6 +969,11 @@ def create_db_parser(subparsers) -> None:
         help="Whole-table counts only (understates divergence; see --by)",
     )
     parity_parser.add_argument("--json", action="store_true", help="JSON output")
+    parity_parser.add_argument(
+        "--append-json",
+        metavar="PATH",
+        help="append the result as one JSON line (trend history for todo #142)",
+    )
     parity_parser.add_argument(
         "--icinga",
         action="store_true",

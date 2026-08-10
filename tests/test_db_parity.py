@@ -314,6 +314,33 @@ def test_icinga_failure_never_breaks_the_check(counts):
         assert cmd_db_parity(_args_icinga()) == 1, "exit code must still report"
 
 
+def test_append_json_writes_one_timestamped_line(counts, tmp_path):
+    """The trend history. journalctl is unreadable by gpsops AND bgo on rek-d01,
+    so without this the daily timer would be write-only."""
+    import json
+
+    counts["rek-d01"] = {t: 1000 for t in PARITY_TABLES}
+    counts["pgdev"] = {**{t: 1000 for t in PARITY_TABLES}, "file_tracking": 900}
+    log = tmp_path / "logs" / "mirror_parity.jsonl"
+
+    cmd_db_parity(_args(append_json=str(log)))
+    cmd_db_parity(_args(append_json=str(log)))
+
+    lines = log.read_text().strip().splitlines()
+    assert len(lines) == 2, "appends, never truncates — the history is the point"
+    rec = json.loads(lines[0])
+    assert rec["checked_at"] and rec["breached"] is True
+    assert any(t["table"] == "file_tracking" for t in rec["tables"])
+
+
+def test_append_json_failure_never_breaks_the_check(counts):
+    """An unwritable path must not swallow the divergence verdict."""
+    counts["rek-d01"] = {t: 1000 for t in PARITY_TABLES}
+    counts["pgdev"] = {**{t: 1000 for t in PARITY_TABLES}, "file_tracking": 900}
+
+    assert cmd_db_parity(_args(append_json="/proc/nope/parity.jsonl")) == 1
+
+
 def test_no_icinga_push_unless_asked(counts):
     counts["rek-d01"] = {t: 1000 for t in PARITY_TABLES}
     counts["pgdev"] = {**{t: 1000 for t in PARITY_TABLES}, "file_tracking": 900}

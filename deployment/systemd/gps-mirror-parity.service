@@ -40,7 +40,16 @@ Environment="LANG=en_US.UTF-8"
 Environment="GPS_CONFIG_PATH=/home/gpsops/.config/gpsconfig"
 # --ttl 172800 = 2x the daily cadence: Icinga marks it stale only after two
 # consecutive missed runs, so one blip is not an alarm but a dead timer is.
-ExecStart=/home/bgo/git/receivers/venv/bin/receivers db parity --icinga --icinga-host rek-d01 --ttl 172800
+# --append-json is not optional decoration: journalctl is readable by NEITHER
+# gpsops NOR bgo on rek-d01 (neither is in adm/systemd-journal), and the Icinga
+# service object does not exist yet — so without the JSONL this timer would be
+# write-only. It is also the trend history that todo #142's sweep-vs-replication
+# decision needs. The existing `*.jsonl` logrotate stanza keeps 90 days, but it
+# rotates DAILY — with one line per run the history spreads across the rotated
+# files, so read the trend with a glob:
+#   zcat -f ~gpsops/.cache/gps_receivers/logs/mirror_parity.jsonl* \
+#     | jq -r '[.checked_at, (.tables[]|select(.table=="file_tracking").divergence)]|@tsv'
+ExecStart=/home/bgo/git/receivers/venv/bin/receivers db parity --icinga --icinga-host rek-d01 --ttl 172800 --append-json /home/gpsops/.cache/gps_receivers/logs/mirror_parity.jsonl
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=gps-mirror-parity
