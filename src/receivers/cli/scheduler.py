@@ -729,7 +729,7 @@ def cmd_scheduler_horizon_probe(args) -> int:
 
         tracker = FileTracker()
         if tracker.connect():
-            with tracker._conn.cursor() as cur:
+            with tracker.read_cursor() as cur:
                 if station_filter:
                     cur.execute(
                         "SELECT sid, session_type, oldest_date, oldest_hour "

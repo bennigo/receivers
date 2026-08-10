@@ -9,52 +9,21 @@ Tracks file availability and import status to:
 import hashlib
 import logging
 import os
-from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from ..db.tx import read_only_cursor as _read_only_cursor
 from ..utils.canonical_key import find_by_canonical_key
 
 logger = logging.getLogger(__name__)
 
 
-@contextmanager
-def read_only_cursor(conn):
-    """Cursor for a read-only query that ALWAYS ends its transaction.
-
-    psycopg2 opens a transaction on the first statement — a bare ``SELECT``
-    counts — so a long-lived connection that only ever reads sits in
-    ``idle in transaction`` until something ends it. Every write path here
-    commits or rolls back; the read paths did neither, and that is the whole
-    bug. Measured on rek-d01 2026-08-10: two ``FormatResolver`` connections
-    parked for 68 and 59 minutes, plus a constant trickle from
-    ``is_file_missing``.
-
-    Why it matters more than it looks:
-
-    * an open transaction pins the vacuum ``xmin`` horizon, so VACUUM cannot
-      reclaim dead tuples on a table taking tens of millions of updates; and
-    * ``CREATE``/``DROP INDEX CONCURRENTLY`` can never finish, because it waits
-      for every transaction that could see the index and there was always one
-      open — six attempts at migration 065 died on ``lock_timeout`` until the
-      sessions were killed by hand.
-
-    ``rollback()`` rather than ``commit()`` on purpose: if a future caller ever
-    leaves a write pending on this connection, discarding it is the safer
-    failure of the two.
-
-    Use this for every read on a long-lived connection, including from outside
-    the owning class (see :meth:`FileTracker.read_cursor`).
-    """
-    with conn.cursor() as cur:
-        try:
-            yield cur
-        finally:
-            try:
-                conn.rollback()
-            except Exception:  # noqa: BLE001 — cleanup must never break the read
-                pass
+# The implementation lives in receivers.db.tx so modules outside `health`
+# can use it without importing this one — archive/, db/, cli/ and
+# monitoring/ all need it. Re-exported here because callers and tests
+# already import it from this module.
+read_only_cursor = _read_only_cursor
 
 
 class FileTracker:

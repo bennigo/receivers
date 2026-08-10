@@ -30,6 +30,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from ..db.tx import read_only_cursor
+
 logger = logging.getLogger("receivers.archive.prune")
 audit = logging.getLogger("receivers.audit")
 
@@ -172,7 +174,7 @@ def _month_dirs_upto(root: Path, cutoff: date) -> Iterator[tuple[Path, int, int]
 
 def _archived_keys(conn, storage_location: str, session: str, category: str) -> set:
     """canonical_keys confirmed in archive_catalog for the long-term archive."""
-    with conn.cursor() as cur:
+    with read_only_cursor(conn) as cur:
         cur.execute(
             """SELECT canonical_key FROM archive_catalog
                WHERE storage_location = %s AND session_type = %s

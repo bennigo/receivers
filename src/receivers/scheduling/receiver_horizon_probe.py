@@ -40,6 +40,8 @@ from ftplib import FTP
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
+from ..db.tx import read_only_cursor
+
 logger = logging.getLogger("receivers.scheduler.horizon")
 
 # A probe result per session: the oldest (date, hour) still on the receiver.
@@ -157,7 +159,7 @@ def _sessions_by_receiver_type(conn) -> Dict[str, List[str]]:
     ``missing_on_receiver`` uses), so the probe scope matches the differential.
     Falls back to the static seed map on any error."""
     try:
-        with conn.cursor() as cur:
+        with read_only_cursor(conn) as cur:
             cur.execute(
                 "SELECT lower(receiver_type), session_type FROM receiver_buffer_depth"
             )
