@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .file_tracker import read_only_cursor
+
 logger = logging.getLogger(__name__)
 
 
@@ -281,7 +283,7 @@ class HealthJsonImporter:
         query += " ORDER BY timestamp"
 
         try:
-            with self._conn.cursor() as cur:
+            with read_only_cursor(self._conn) as cur:
                 cur.execute(query, params)
                 rows = cur.fetchall()
 
@@ -304,12 +306,14 @@ class HealthJsonImporter:
 
                 sample = {
                     "time": timestamp.isoformat() + "Z",
-                    "voltage": {"value": voltage, "unit": "V", "status": "ok"}
-                    if voltage
-                    else {},
-                    "temperature": {"value": temperature, "unit": "C"}
-                    if temperature
-                    else {},
+                    "voltage": (
+                        {"value": voltage, "unit": "V", "status": "ok"}
+                        if voltage
+                        else {}
+                    ),
+                    "temperature": (
+                        {"value": temperature, "unit": "C"} if temperature else {}
+                    ),
                     "cpu_load": metrics.get("cpu_load", {}),
                     "disk_usage": metrics.get("disk", {}),
                     "satellites": metrics.get("satellites", {}),
