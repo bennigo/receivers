@@ -1256,6 +1256,25 @@ gpsops_systemctl daemon-reload
 gpsops_systemctl enable --now gps-host-monitor.timer >/dev/null
 ok "Host disk + liveness alert timer installed as gpsops user unit (every 5 min → Icinga)"
 
+# Mirror parity timer — daily 05:20, pushes a passive check to Icinga
+# (rek-d01.gps.vedur.is!Mirror parity). The dual-write mirror is best-effort:
+# _DualCursor logs a failed mirror leg and DROPS the statement, so every pgdev
+# blip is a permanent divergence that nothing noticed until someone looked
+# (32,330 rows adrift in file_tracking when first measured, 2026-08-10). This
+# only REPORTS — the fix (sweep vs real replication) is still open. Same gpsops
+# USER-unit model as the two timers above; the ExecStart is the console script,
+# not `python -m`, so the sed patches the venv bin dir rather than the python.
+MP_SVC="$USER_UNIT_DIR/gps-mirror-parity.service"
+MP_TIMER="$USER_UNIT_DIR/gps-mirror-parity.timer"
+sed -e "s|ExecStart=.*/bin/receivers |ExecStart=$VENV_DIR/bin/receivers |" \
+    "$INSTALL_DIR/deployment/systemd/gps-mirror-parity.service" > "$MP_SVC"
+install -m 644 "$INSTALL_DIR/deployment/systemd/gps-mirror-parity.timer" "$MP_TIMER"
+chown "$SERVICE_USER:$SERVICE_GROUP" "$MP_SVC" "$MP_TIMER"
+chmod 644 "$MP_SVC" "$MP_TIMER"
+gpsops_systemctl daemon-reload
+gpsops_systemctl enable --now gps-mirror-parity.timer >/dev/null
+ok "Mirror parity timer installed as gpsops user unit (daily 05:20 → Icinga)"
+
 # Logrotate
 if [[ -f "$INSTALL_DIR/deployment/logrotate.d/gps-receivers" ]]; then
     # Patch log path to match this installation

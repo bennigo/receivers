@@ -527,7 +527,69 @@ def cmd_db_parity(args: argparse.Namespace) -> int:
             "reconciliation path, so nothing here syncs anything. See vault todo "
             "#142 (sweep vs real replication)."
         )
+
+    if getattr(args, "icinga", False):
+        _push_parity_to_icinga(
+            rows,
+            breached=breached,
+            tolerance=tolerance,
+            icinga_host=getattr(args, "icinga_host", None) or "rek-d01",
+            ttl=getattr(args, "ttl", None),
+        )
+
     return 1 if breached else 0
+
+
+def _push_parity_to_icinga(
+    rows: list[dict],
+    *,
+    breached: bool,
+    tolerance: float,
+    icinga_host: str,
+    ttl: int | None,
+) -> bool:
+    """Push the parity verdict to Icinga as a passive check. Best-effort.
+
+    Without this the timer's finding lands only in the journal, which nobody
+    reads — the same "silent" failure mode the check exists to end. ``ttl``
+    makes Icinga flag the service stale if the timer itself stops, so a dead
+    check is distinguishable from a healthy one.
+    """
+    try:
+        from ..monitoring.icinga_client import CheckResult, IcingaClient
+
+        compared = [r for r in rows if r["status"] != "absent"]
+        worst = max(compared, key=lambda r: r["pct"], default=None)
+        if worst is None:
+            status, output = 3, "parity: no comparable tables"
+        elif breached:
+            status = 1  # WARNING: divergence is chronic, not an outage
+            output = (
+                f"mirror divergence {worst['pct']:.2f}% on {worst['table']} "
+                f"({worst['divergence']:,} rows) — above {tolerance}%"
+            )
+        else:
+            status = 0
+            output = f"mirror within {tolerance}% (worst {worst['pct']:.2f}%)"
+
+        perf = " ".join(f"{r['table']}_divergence={r['divergence']}" for r in compared)
+        resp = IcingaClient().send_check_result(
+            CheckResult(
+                station=icinga_host,
+                check_name="Mirror parity",
+                exit_status=status,
+                plugin_output=output,
+                performance_data=perf,
+                ttl=ttl,
+            )
+        )
+        ok = bool(resp.get("success")) if isinstance(resp, dict) else bool(resp)
+        if not ok:
+            logger.warning("Icinga parity push did not succeed: %s", resp)
+        return ok
+    except Exception as exc:  # noqa: BLE001 — alerting must never break the check
+        logger.warning("Icinga parity push failed: %s", exc)
+        return False
 
 
 def cmd_db_dump(args: argparse.Namespace) -> int:
@@ -897,6 +959,19 @@ def create_db_parser(subparsers) -> None:
         help="Whole-table counts only (understates divergence; see --by)",
     )
     parity_parser.add_argument("--json", action="store_true", help="JSON output")
+    parity_parser.add_argument(
+        "--icinga",
+        action="store_true",
+        help="also push the verdict to Icinga as a passive check",
+    )
+    parity_parser.add_argument(
+        "--icinga-host", default="rek-d01", help="Icinga host object (default: rek-d01)"
+    )
+    parity_parser.add_argument(
+        "--ttl",
+        type=int,
+        help="Icinga staleness TTL in seconds — flags the service if the timer dies",
+    )
     parity_parser.add_argument(
         "--mirror", help="Mirror host (default: mirror_host from database.cfg)"
     )

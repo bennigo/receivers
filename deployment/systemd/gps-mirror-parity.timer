@@ -1,0 +1,19 @@
+[Unit]
+Description=Run the gps_health mirror parity check daily
+
+[Timer]
+# 05:20 UTC — quiet window. Deliberately NOT on the hour: it avoids the :00-:06
+# live-download burst and the 06:00 stream_config_refresh, and the check does
+# count(*) over archive_catalog (8.7M rows on each host), which is a real scan.
+# Daily is the right cadence: divergence accrues at roughly 7-8 lost writes an
+# hour, so nothing is learned by looking more often.
+OnCalendar=*-*-* 05:20:00
+# Spread against any other job that happens to land on the same minute.
+RandomizedDelaySec=300
+# Catch up a run missed while the host was down — a skipped day would otherwise
+# leave a silent gap in exactly the metric being trended.
+Persistent=true
+
+[Install]
+# User-level timers.target (a `systemctl --user` timer owned by gpsops).
+WantedBy=timers.target

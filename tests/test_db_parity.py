@@ -261,6 +261,71 @@ def test_group_present_on_only_one_host_counts_as_divergence(counts):
     assert cmd_db_parity(_args(tables="file_tracking", by="session_type")) == 1
 
 
+# ── Icinga push: without it the daily timer's finding dies in the journal ─────
+
+
+def _args_icinga(**kw):
+    return _args(icinga=True, icinga_host="rek-d01", ttl=172_800, **kw)
+
+
+def test_icinga_push_warns_on_divergence(counts):
+    """WARNING, not CRITICAL: the drift is chronic and known, not an outage."""
+    counts["rek-d01"] = {t: 1000 for t in PARITY_TABLES}
+    counts["pgdev"] = {**{t: 1000 for t in PARITY_TABLES}, "file_tracking": 900}
+
+    sent = []
+    with patch(
+        "receivers.monitoring.icinga_client.IcingaClient.send_check_result",
+        side_effect=lambda c: sent.append(c) or {"success": True},
+    ):
+        assert cmd_db_parity(_args_icinga()) == 1
+
+    assert len(sent) == 1
+    assert sent[0].exit_status == 1
+    assert sent[0].check_name == "Mirror parity"
+    assert sent[0].ttl == 172_800, "a TTL is what makes a DEAD timer visible"
+    assert "file_tracking" in sent[0].plugin_output
+    assert "file_tracking_divergence=100" in sent[0].performance_data
+
+
+def test_icinga_push_reports_ok_when_in_sync(counts):
+    counts["rek-d01"] = {t: 1000 for t in PARITY_TABLES}
+    counts["pgdev"] = {t: 1000 for t in PARITY_TABLES}
+
+    sent = []
+    with patch(
+        "receivers.monitoring.icinga_client.IcingaClient.send_check_result",
+        side_effect=lambda c: sent.append(c) or {"success": True},
+    ):
+        assert cmd_db_parity(_args_icinga()) == 0
+
+    assert sent[0].exit_status == 0
+
+
+def test_icinga_failure_never_breaks_the_check(counts):
+    """Alerting is best-effort — a dead Icinga must not hide the divergence."""
+    counts["rek-d01"] = {t: 1000 for t in PARITY_TABLES}
+    counts["pgdev"] = {**{t: 1000 for t in PARITY_TABLES}, "file_tracking": 900}
+
+    with patch(
+        "receivers.monitoring.icinga_client.IcingaClient.send_check_result",
+        side_effect=Exception("icinga unreachable"),
+    ):
+        assert cmd_db_parity(_args_icinga()) == 1, "exit code must still report"
+
+
+def test_no_icinga_push_unless_asked(counts):
+    counts["rek-d01"] = {t: 1000 for t in PARITY_TABLES}
+    counts["pgdev"] = {**{t: 1000 for t in PARITY_TABLES}, "file_tracking": 900}
+
+    with patch(
+        "receivers.monitoring.icinga_client.IcingaClient.send_check_result"
+    ) as send:
+        cmd_db_parity(_args())
+
+    send.assert_not_called()
+
+
 # ── _count_rows: the SQL the tests above mock away ────────────────────────────
 
 

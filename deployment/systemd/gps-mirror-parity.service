@@ -1,0 +1,46 @@
+[Unit]
+# Daily primary↔mirror parity check for gps_health. The dual-write mirror is
+# best-effort by construction: _DualCursor logs a failed mirror leg and DROPS
+# the statement — no retry, no queue, no reconciliation. So every pgdev blip is
+# a permanent divergence, and nothing in the system noticed until someone went
+# looking. Measured 2026-08-10: file_tracking off by 32,330 rows (3.35%).
+#
+# This check does NOT sync anything — it makes the drift visible and pushes the
+# verdict to Icinga so it is seen. The actual fix (reconciliation sweep vs real
+# streaming replication) is vault todo #142, still open.
+#
+# Grouped by session_type on purpose: a whole-table count lets drift in
+# opposite directions cancel (pgdev is AHEAD on the daily sessions from
+# single_host maintenance, BEHIND on the hourly ones from dropped writes). The
+# ungrouped number read 24,598 where the truth was 32,340 — and a fully
+# cancelling drift would have reported "ok" on a database wrong on both sides.
+#
+# This is a USER-LEVEL unit, installed at
+#   ~gpsops/.config/systemd/user/gps-mirror-parity.{service,timer}
+# managed by gpsops with NO sudo (same model as gps-receivers-scheduler):
+#   systemctl --user enable --now gps-mirror-parity.timer
+#   systemctl --user list-timers gps-mirror-parity.timer
+#   journalctl --user-unit gps-mirror-parity -n 30
+# Linger (already enabled for gpsops) lets it fire with no active session.
+#
+# Needs the Icinga service object `rek-d01.gps.vedur.is!Mirror parity` to exist
+# for alerts to fire; until then the push logs "Service not found" harmlessly
+# and the journal still records the verdict.
+Description=gps_health primary↔mirror parity check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Exit 1 means "divergence above tolerance" — a valid finding delivered via the
+# Icinga push, NOT a unit failure. Leaving the unit "failed" would be a second,
+# confusing signal for a condition that is currently chronic and expected.
+SuccessExitStatus=1
+Environment="LANG=en_US.UTF-8"
+Environment="GPS_CONFIG_PATH=/home/gpsops/.config/gpsconfig"
+# --ttl 172800 = 2x the daily cadence: Icinga marks it stale only after two
+# consecutive missed runs, so one blip is not an alarm but a dead timer is.
+ExecStart=/home/bgo/git/receivers/venv/bin/receivers db parity --icinga --icinga-host rek-d01 --ttl 172800
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gps-mirror-parity
