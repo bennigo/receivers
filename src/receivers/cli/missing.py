@@ -22,6 +22,8 @@ import json
 import logging
 from pathlib import Path
 
+from ..db.tx import read_only_cursor
+
 logger = logging.getLogger("receivers.cli.missing")
 
 # worklist key -> (view name, column list). One place to add a worklist.
@@ -96,7 +98,7 @@ def _count(conn, view, *, stations, sessions) -> int:
         where.append("session_type = ANY(%s)")
         params.append(list(sessions))
     clause = (" WHERE " + " AND ".join(where)) if where else ""
-    with conn.cursor() as cur:
+    with read_only_cursor(conn) as cur:
         cur.execute(f"SELECT count(*) FROM {view}{clause}", params)
         return cur.fetchone()[0]
 

@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
+from ..db.tx import read_only_cursor
+
 logger = logging.getLogger("receivers.monitoring.archive_sync_check")
 
 NAGIOS_OK = 0
@@ -148,7 +150,7 @@ def evaluate_archive_sync(
 def _count_missing_15s_yesterday(conn) -> Optional[int]:
     """Count 15s_24hr files still 'missing' for yesterday (UTC). None on error."""
     try:
-        with conn.cursor() as cur:
+        with read_only_cursor(conn) as cur:
             cur.execute(
                 """SELECT count(*) FROM file_tracking
                    WHERE session_type = '15s_24hr'

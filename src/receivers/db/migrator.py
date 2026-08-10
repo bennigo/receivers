@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from .connection import get_connection
+from .tx import read_only_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ class Migrator:
 
     def _has_migrations_table(self, conn) -> bool:
         """Check if schema_migrations table exists."""
-        with conn.cursor() as cur:
+        with read_only_cursor(conn) as cur:
             cur.execute(
                 """
                 SELECT EXISTS (
@@ -92,7 +93,7 @@ class Migrator:
 
     def _has_any_tables(self, conn) -> bool:
         """Check if any application tables exist (not just schema_migrations)."""
-        with conn.cursor() as cur:
+        with read_only_cursor(conn) as cur:
             cur.execute(
                 """
                 SELECT EXISTS (
@@ -108,7 +109,7 @@ class Migrator:
         """Get set of already-applied migration names."""
         if not self._has_migrations_table(conn):
             return set()
-        with conn.cursor() as cur:
+        with read_only_cursor(conn) as cur:
             cur.execute("SELECT migration_name FROM schema_migrations")
             return {row[0] for row in cur.fetchall()}
 

@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from ..db.tx import read_only_cursor
 from ..utils.canonical_key import canonical_key
 from ..utils.content_hash import (
     CorruptArchiveFileError,
@@ -394,7 +395,18 @@ def preflight_catalog_hosts(
 def _existing_sha(
     conn, storage_location: str, session_type: str, file_category: str, key: str
 ) -> Optional[str]:
-    """Return the current content_sha256 for the catalog row, or None."""
+    """Return the current content_sha256 for the catalog row, or None.
+
+    Deliberately a plain cursor, NOT :func:`~receivers.db.tx.read_only_cursor`
+    — the one read in this module that must not end its transaction. It is
+    called from inside the per-file loop (see the ``_existing_sha`` call around
+    line 133), which upserts catalog rows on the same connection and commits in
+    batches. Rolling back here would discard the caller's pending upserts.
+
+    The rule for the helper is "safe iff the read is the first statement on the
+    connection", and here it is not. ``tests/test_transaction_audit.py`` carries
+    this file in its allowlist so the audit stays green without hiding it.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """SELECT content_sha256 FROM archive_catalog
@@ -459,7 +471,7 @@ def _load_done_keys(
     predicate = "content_sha256 IS NOT NULL"
     if require_compressed:
         predicate += " AND compressed_sha256 IS NOT NULL"
-    with conn.cursor() as cur:
+    with read_only_cursor(conn) as cur:
         cur.execute(
             f"""SELECT session_type, file_category, canonical_key
                FROM archive_catalog

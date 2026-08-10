@@ -12,12 +12,14 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
+from ..db.tx import read_only_cursor
+
 logger = logging.getLogger(__name__)
 
 
 def get_last_success(conn, target_name: str) -> Optional[datetime]:
     """Return the target's last fully-synced frontier, or ``None`` if never."""
-    with conn.cursor() as cur:
+    with read_only_cursor(conn) as cur:
         cur.execute(
             "SELECT last_success_ts FROM sync_state WHERE target = %s",
             (target_name,),
