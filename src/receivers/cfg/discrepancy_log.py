@@ -355,7 +355,7 @@ def list_open(
         params.append(list(verdicts))
     sql += " ORDER BY station_id, cfg_key"
 
-    with DatabaseConnectionFactory.connection() as conn:
+    with DatabaseConnectionFactory.connection(single_host=True) as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
             return [_row_to_record(row) for row in cur.fetchall()]
@@ -391,7 +391,7 @@ def get_history(
     sql += " ORDER BY detected_at DESC LIMIT %s"
     params.append(limit)
 
-    with DatabaseConnectionFactory.connection() as conn:
+    with DatabaseConnectionFactory.connection(single_host=True) as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
             return [_row_to_record(row) for row in cur.fetchall()]

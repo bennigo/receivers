@@ -240,10 +240,19 @@ def _is_id_keyed_dml(query: Any) -> bool:
 
 
 class _DualCursor:
-    """Cursor wrapper that executes writes on both primary and mirror.
+    """Cursor wrapper that executes statements on both primary and mirror.
 
     Reads (fetch*) only return results from the primary.
     Mirror failures are logged but never raised.
+
+    **This fans out EVERY statement, not just writes** — it cannot tell them
+    apart, because a write here is often spelled ``SELECT upsert_file_tracking
+    (…)``.  A pure ``SELECT`` therefore also runs on the mirror and its result
+    is thrown away.  That is how one unindexed reconciler lookup billed
+    22.6M executions x 24 ms to the SHARED pgdev server for nothing
+    (2026-08-10).  Read-only work must say so at the call site:
+    ``DatabaseConnectionFactory.connection(single_host=True)`` — which skips
+    the mirror leg entirely, connection and all.
 
     **id-keyed writes are not fanned out.**  See :data:`_ID_KEYED_DML_RE`: an
     ``UPDATE/DELETE … WHERE id = %s`` addresses a different row on the mirror,

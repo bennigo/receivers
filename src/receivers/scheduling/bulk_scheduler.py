@@ -176,7 +176,7 @@ def _retry_failed_daily_job(session_type: str) -> None:
         # if the PG session tz isn't UTC, the date filter would slip.
         yesterday_utc = (today_midnight - timedelta(days=1)).date()
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 # Pull last failure reason per station for context in log messages.
                 cur.execute(
@@ -254,7 +254,7 @@ def _retry_failed_daily_job(session_type: str) -> None:
                 )
                 # Confirm success via file_tracking (download_station_data_job logs
                 # per-station success/failure; we just need the aggregate for summary)
-                with DatabaseConnectionFactory.connection() as _conn:
+                with DatabaseConnectionFactory.connection(single_host=True) as _conn:
                     with _conn.cursor() as _cur:
                         _cur.execute(
                             """
@@ -2780,7 +2780,9 @@ class BulkDownloadScheduler:
                 "lookback_days": cfg.get("lookback_days", 365),
                 "run_rinex": cfg.get("run_rinex", True),
                 "max_days_per_station": cfg.get("max_days_per_station"),
-                "reconnection_window_minutes": cfg.get("reconnection_window_minutes", 20),
+                "reconnection_window_minutes": cfg.get(
+                    "reconnection_window_minutes", 20
+                ),
             },
             id="reconnection_backfill",
             replace_existing=True,
@@ -2789,7 +2791,9 @@ class BulkDownloadScheduler:
             executor="backfill",
             **base.trigger_kwargs,
         )
-        self.logger.info(f"Scheduled reconnection backfill trigger ({base.description})")
+        self.logger.info(
+            f"Scheduled reconnection backfill trigger ({base.description})"
+        )
 
     def _schedule_integrity_checker(self) -> None:
         """Schedule periodic file integrity checking.
@@ -3096,7 +3100,7 @@ class BulkDownloadScheduler:
 
             max_days = self.yaml_config.get("recovery", {}).get("max_recovery_days", 30)
 
-            with DatabaseConnectionFactory.connection() as conn:
+            with DatabaseConnectionFactory.connection(single_host=True) as conn:
                 with conn.cursor() as cur:
                     # Per-station gap: find the station furthest behind.
                     # Uses 5th-percentile to be robust against single-station

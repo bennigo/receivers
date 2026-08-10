@@ -69,7 +69,10 @@ def _last_archived_date(sid: str, session: str) -> Optional[date]:
     from ..health.database_factory import DatabaseConnectionFactory
 
     try:
-        with DatabaseConnectionFactory.connection() as conn, conn.cursor() as cur:
+        with (
+            DatabaseConnectionFactory.connection(single_host=True) as conn,
+            conn.cursor() as cur,
+        ):
             cur.execute(
                 "SELECT max(file_date) FROM file_tracking "
                 "WHERE sid=%s AND session_type=%s "
@@ -88,7 +91,10 @@ def _receiver_horizon(sid: str, session: str) -> Optional[date]:
     from ..health.database_factory import DatabaseConnectionFactory
 
     try:
-        with DatabaseConnectionFactory.connection() as conn, conn.cursor() as cur:
+        with (
+            DatabaseConnectionFactory.connection(single_host=True) as conn,
+            conn.cursor() as cur,
+        ):
             cur.execute(
                 "SELECT oldest_date FROM receiver_horizon "
                 "WHERE sid=%s AND session_type=%s "
@@ -107,7 +113,10 @@ def _absence_counts(sid: str, session: str, start: date, end: date) -> tuple[int
     from ..health.database_factory import DatabaseConnectionFactory
 
     try:
-        with DatabaseConnectionFactory.connection() as conn, conn.cursor() as cur:
+        with (
+            DatabaseConnectionFactory.connection(single_host=True) as conn,
+            conn.cursor() as cur,
+        ):
             cur.execute(
                 "SELECT count(*) FILTER (WHERE terminal), "
                 "       count(*) FILTER (WHERE NOT terminal) "
@@ -127,7 +136,10 @@ def _archived_dates(sid: str, session: str, start: date, end: date) -> set:
     from ..health.database_factory import DatabaseConnectionFactory
 
     try:
-        with DatabaseConnectionFactory.connection() as conn, conn.cursor() as cur:
+        with (
+            DatabaseConnectionFactory.connection(single_host=True) as conn,
+            conn.cursor() as cur,
+        ):
             cur.execute(
                 "SELECT file_date FROM file_tracking "
                 "WHERE sid=%s AND session_type=%s "
@@ -200,13 +212,21 @@ def query_long_term_gaps(
     try:
         with GapDetector() as det:
             raw_gaps = det.find_gaps(
-                sid, session, start, end,
-                receiver_type=receiver_type, sync_first=False,
+                sid,
+                session,
+                start,
+                end,
+                receiver_type=receiver_type,
+                sync_first=False,
                 skip_missing_on_receiver=True,
             )
             rinex_gaps = det.find_gaps(
-                sid, f"{session}_rinex", start, end,
-                receiver_type=receiver_type, sync_first=False,
+                sid,
+                f"{session}_rinex",
+                start,
+                end,
+                receiver_type=receiver_type,
+                sync_first=False,
                 skip_missing_on_receiver=False,
             )
     except Exception as e:  # noqa: BLE001
@@ -220,7 +240,8 @@ def query_long_term_gaps(
     rinex_missing = {g.file_date for g in rinex_gaps}
     horizon_floor = horizon or date.min
     report.queued = [
-        g for g in raw_gaps
+        g
+        for g in raw_gaps
         if g.file_date in rinex_missing and g.file_date >= horizon_floor
     ]
 
@@ -269,18 +290,27 @@ def run_long_term_backfill_station(
         dry_run: classify only, no downloads.
         max_days: cap how many queued days to process this run (throttle).
     """
-    report = query_long_term_gaps(sid, session, lookback_days, receiver_type=receiver_type)
+    report = query_long_term_gaps(
+        sid, session, lookback_days, receiver_type=receiver_type
+    )
     n = len(report.queued)
     if n == 0:
         logger.info(
-            "Long-term backfill %s/%s: nothing queued — %s", sid, session, report.summary()
+            "Long-term backfill %s/%s: nothing queued — %s",
+            sid,
+            session,
+            report.summary(),
         )
         return report
 
     queued = report.queued if not max_days else report.queued[:max_days]
     logger.info(
         "Long-term backfill %s/%s: %d/%d day(s) to recover%s",
-        sid, session, len(queued), n, " [DRY RUN]" if dry_run else "",
+        sid,
+        session,
+        len(queued),
+        n,
+        " [DRY RUN]" if dry_run else "",
     )
     if dry_run:
         return report
@@ -306,7 +336,10 @@ def run_long_term_backfill_station(
             )
     logger.info(
         "Long-term backfill %s/%s done: recovered=%d failed=%d",
-        sid, session, recovered, failed,
+        sid,
+        session,
+        recovered,
+        failed,
     )
     return report
 
@@ -355,7 +388,9 @@ def _run_long_term_backfill_job(
     ]
     logger.info(
         "Long-term backfill(daily): %d stations, sessions=%s, lookback=%dd",
-        len(active), sessions, lookback_days,
+        len(active),
+        sessions,
+        lookback_days,
     )
 
     def _one(sid: str, session: str):
@@ -364,7 +399,10 @@ def _run_long_term_backfill_job(
             return None
         try:
             report = run_long_term_backfill_station(
-                sid, session, lookback_days=lookback_days, run_rinex=run_rinex,
+                sid,
+                session,
+                lookback_days=lookback_days,
+                run_rinex=run_rinex,
                 max_days=max_days_per_station,
             )
             return len(report.queued)
@@ -374,7 +412,10 @@ def _run_long_term_backfill_job(
 
     tasks = [(sid, s) for sid in active for s in sessions]
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        results = [f.result() for f in as_completed(ex.submit(_one, sid, s) for sid, s in tasks)]
+        results = [
+            f.result()
+            for f in as_completed(ex.submit(_one, sid, s) for sid, s in tasks)
+        ]
     logger.info(
         "Long-term backfill(daily) done: %d station/session had queued gaps",
         sum(1 for r in results if r),
@@ -401,7 +442,10 @@ def _run_reconnection_backfill_job(
 
     since = datetime.now(UTC) - timedelta(minutes=reconnection_window_minutes)
     try:
-        with DatabaseConnectionFactory.connection() as conn, conn.cursor() as cur:
+        with (
+            DatabaseConnectionFactory.connection(single_host=True) as conn,
+            conn.cursor() as cur,
+        ):
             cur.execute(
                 "SELECT sid FROM station_connectivity "
                 "WHERE is_online = TRUE AND state_since > %s ORDER BY sid",
@@ -416,13 +460,16 @@ def _run_reconnection_backfill_job(
         return
     logger.info(
         "Long-term backfill(reconnect): %d station(s) came online recently: %s",
-        len(candidates), ",".join(candidates),
+        len(candidates),
+        ",".join(candidates),
     )
 
     floor = date.today() - timedelta(days=min_outage_days)
     for sid in candidates:
         if _load_monitor_overloaded():
-            logger.info("Long-term backfill(reconnect): load high — deferring remaining")
+            logger.info(
+                "Long-term backfill(reconnect): load high — deferring remaining"
+            )
             break
         try:
             report = query_long_term_gaps(sid, "15s_24hr", lookback_days=lookback_days)
@@ -430,7 +477,10 @@ def _run_reconnection_backfill_job(
             # so a brief flap doesn't trigger a heavy multi-month recovery.
             if report.queued and any(g.file_date <= floor for g in report.queued):
                 run_long_term_backfill_station(
-                    sid, "15s_24hr", lookback_days=lookback_days, run_rinex=run_rinex,
+                    sid,
+                    "15s_24hr",
+                    lookback_days=lookback_days,
+                    run_rinex=run_rinex,
                     max_days=max_days_per_station,
                 )
         except Exception as e:  # noqa: BLE001

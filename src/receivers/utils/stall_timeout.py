@@ -60,7 +60,7 @@ def _load_overrides() -> Dict[str, int]:
     try:
         from ..health.database_factory import DatabaseConnectionFactory
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT sid, stall_timeout_override FROM stations "
@@ -142,7 +142,7 @@ def compute_adaptive_timeout(
     try:
         from ..health.database_factory import DatabaseConnectionFactory
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """SELECT AVG(avg_speed_bps), AVG(file_size), COUNT(*)
@@ -417,7 +417,7 @@ def _query_health_gate(
     try:
         from ..health.database_factory import DatabaseConnectionFactory
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 # Check latest metrics (satellites, disk)
                 cur.execute(
@@ -545,7 +545,7 @@ def _query_consecutive_failures(station_id: str) -> bool:
     try:
         from ..health.database_factory import DatabaseConnectionFactory
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """SELECT outcome FROM download_log
@@ -609,7 +609,7 @@ def _query_packet_loss_factor(station_id: str) -> float:
     try:
         from ..health.database_factory import DatabaseConnectionFactory
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """SELECT packet_loss FROM station_connectivity

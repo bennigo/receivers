@@ -717,7 +717,7 @@ def _load_tracked_rinex(
     try:
         from ..health.database_factory import DatabaseConnectionFactory
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """SELECT file_date, file_hour, filename FROM file_tracking
@@ -780,7 +780,7 @@ def _ensure_rinex_tracked(
         else:
             from ..health.database_factory import DatabaseConnectionFactory
 
-            with DatabaseConnectionFactory.connection() as conn:
+            with DatabaseConnectionFactory.connection(single_host=True) as conn:
                 with conn.cursor() as cur:
                     if file_hour is None:
                         cur.execute(

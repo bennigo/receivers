@@ -227,7 +227,7 @@ def main() -> None:
     try:
         from ..health.database_factory import DatabaseConnectionFactory
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             result = evaluate_archive_sync(
                 conn,
                 target=args.target,

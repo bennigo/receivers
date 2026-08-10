@@ -205,7 +205,7 @@ def _check_health_ping_online(station_id: str) -> bool | None:
     try:
         from ..health.database_factory import DatabaseConnectionFactory
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
