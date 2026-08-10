@@ -345,7 +345,7 @@ class TestTimeoutOptions:
 
         assert "statement_timeout=5min" in params["options"]
 
-    def test_migrations_are_exempt(self):
+    def test_migrations_are_exempt_from_the_statement_ceiling(self):
         """DDL on a live 8.5M-row table must not abort at the app-wide ceiling."""
         from receivers.db.migrator import Migrator
 
@@ -355,7 +355,33 @@ class TestTimeoutOptions:
 
         executed = [c.args[0] for c in conn.cursor().__enter__().execute.call_args_list]
         assert "SET statement_timeout = 0" in executed
-        assert "SET lock_timeout = 0" in executed
+
+    def test_migrations_are_NOT_exempt_from_the_lock_ceiling(self):
+        """The lock wait must stay bounded even though the statement wait is not.
+
+        This assertion used to be ``"SET lock_timeout = 0" in executed`` — the
+        two ceilings were treated as one exemption. They are not the same
+        animal. A long DDL statement only costs time; an unbounded ACCESS
+        EXCLUSIVE *request* parks at the head of the lock queue, and from that
+        moment every later query on the table -- readers included -- queues
+        behind it. On pgdev, shared with other teams, that is how a deploy
+        takes down a server it was never meant to touch.
+
+        Bounded is the safer failure: each migration file runs in its own
+        transaction, so a lock timeout rolls it back whole and the operator
+        retries in a quiet moment.
+        """
+        from receivers.db.migrator import Migrator
+
+        conn = MagicMock()
+        with patch("receivers.db.migrator.get_connection", return_value=conn):
+            Migrator()._get_conn()
+
+        calls = conn.cursor().__enter__().execute.call_args_list
+        lock = [c for c in calls if "lock_timeout" in c.args[0]]
+        assert lock, "lock_timeout must be set explicitly, not left to the role default"
+        assert "= 0" not in lock[0].args[0]
+        assert lock[0].args[1] == ("5s",)
 
     def test_zero_disables(self):
         with (

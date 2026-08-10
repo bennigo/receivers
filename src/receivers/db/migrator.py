@@ -8,6 +8,7 @@ consolidated schema (000) and marks all individual migrations as done.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -42,44 +43,65 @@ class Migrator:
         # Single-host: schema/seed writes must never fan out to the pgdev
         # mirror (a mirrored DDL/seed is a silent cross-host mutation).
         conn = get_connection(host_override=self.host_override, single_host=True)
-        # Migrations are exempt from the app-wide statement/lock timeouts
+        # Migrations are exempt from the app-wide STATEMENT timeout
         # (database_factory adds statement_timeout=600s, lock_timeout=30s to
         # every connection). DDL on a live 8.5M-row table legitimately runs
-        # long and legitimately waits for ACCESS EXCLUSIVE while the scheduler
-        # writes — a timeout there aborts the migration MID-DEPLOY, which is a
-        # far worse failure than the slow query the ceiling exists to bound.
+        # long — a statement ceiling there aborts the migration MID-DEPLOY,
+        # which is a far worse failure than the slow query the ceiling bounds.
+        #
+        # The LOCK timeout is a different animal and must stay bounded. This
+        # used to be `SET lock_timeout = 0`, reasoning that DDL "legitimately
+        # waits for ACCESS EXCLUSIVE while the scheduler writes". It does —
+        # but an unbounded AEL *request* parks at the head of the lock queue,
+        # and from that moment EVERY later query on the table queues behind
+        # it, readers included. One idle-in-transaction session upstream and a
+        # routine index swap silently freezes the table for everybody. On
+        # pgdev, which is shared with other teams, that is how a deploy takes
+        # down a server it was never supposed to touch.
+        #
+        # Bounded is strictly better: each migration file runs in its own
+        # transaction, so a lock timeout rolls that file back cleanly with
+        # nothing half-applied, and the operator retries in a quiet moment.
+        # "Retry later" beats "wedge the shared box". Override with
+        # MIGRATION_LOCK_TIMEOUT (e.g. '0' to restore the old behaviour on a
+        # dedicated host, or '30s' for a heavily-written table).
+        lock_timeout = os.getenv("MIGRATION_LOCK_TIMEOUT", "5s")
         try:
             with conn.cursor() as cur:
                 cur.execute("SET statement_timeout = 0")
-                cur.execute("SET lock_timeout = 0")
+                cur.execute("SET lock_timeout = %s", (lock_timeout,))
             conn.commit()
         except Exception as exc:  # noqa: BLE001 - non-fatal; keep the defaults
-            logger.warning("could not clear migration timeouts: %s", exc)
+            logger.warning("could not set migration timeouts: %s", exc)
             conn.rollback()
         return conn
 
     def _has_migrations_table(self, conn) -> bool:
         """Check if schema_migrations table exists."""
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT EXISTS (
                     SELECT 1 FROM information_schema.tables
                     WHERE table_schema = 'public'
                       AND table_name = 'schema_migrations'
                 )
-            """)
+            """
+            )
             return cur.fetchone()[0]
 
     def _has_any_tables(self, conn) -> bool:
         """Check if any application tables exist (not just schema_migrations)."""
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT EXISTS (
                     SELECT 1 FROM information_schema.tables
                     WHERE table_schema = 'public'
                       AND table_name = 'stations'
                 )
-            """)
+            """
+            )
             return cur.fetchone()[0]
 
     def _get_applied(self, conn) -> set[str]:
