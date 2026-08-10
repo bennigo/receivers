@@ -54,6 +54,17 @@ _PERMANENT_SIGNATURES: tuple[tuple[str, str], ...] = (
     ("not in gzip format", "not the compressed format the name claims"),
     ("invalid block type", "corrupt compressed stream"),
     ("crc check failed", "corrupt compressed stream"),
+    # --- unconvertable raw (converter exits non-zero on bad data) ----------
+    # runpkr00 reads a Trimble .T02/.T00 and extracts a .dat intermediate; a
+    # non-zero exit is a data problem (corrupt/incompatible raw), not the
+    # subprocess pressure that makes `compress` flaky, so a retry reads the same
+    # bad file. exit 30 is the observed fleet-wide case (1367 files / 83
+    # stations on the 2026-08-09 backfill run). Other runpkr00 codes are folded
+    # in as they surface — they are data failures, not transient load.
+    (
+        "runpkr00 failed with exit code 30",
+        "Trimble raw unconvertable (runpkr00 exit 30) — archive-rm",
+    ),
     # --- metadata gaps, need a human ------------------------------------
     ("no tos session covers", "TOS has no session for this date — fix TOS"),
     # --- deliberate fail-safes, must never be retried away ---------------
