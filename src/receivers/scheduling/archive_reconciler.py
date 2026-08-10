@@ -319,6 +319,15 @@ def _reconcile_station_session(
             receiver_type=receiver_type,
         )
 
+    # One indexed range query for the whole station/session window, instead of
+    # a per-file point lookup. The old per-hour check filtered on `filename`
+    # (unindexed) and opened its own connection: 22.6M calls at 24 ms each on
+    # pgdev, 151 h of server CPU, and the bulk of file_tracking's 46M seq
+    # scans. Slot-keyed prefetch makes the sweep O(1) queries per station.
+    tracked_rinex = _load_tracked_rinex(
+        station_id, f"{session_type}_rinex", start_date, end_date
+    )
+
     try:
         # Iterate newest-first so recent files (1-3 days old) get converted first
         current = end_date
@@ -364,6 +373,8 @@ def _reconcile_station_session(
                         station_id,
                         session_type,
                         rinex_path,
+                        tracked=tracked_rinex,
+                        tracked_window=(start_date, end_date),
                     )
                     continue
 
@@ -685,35 +696,109 @@ def _convert_raw_to_rinex(
         return False
 
 
-def _ensure_rinex_tracked(
+def _load_tracked_rinex(
     station_id: str,
-    session_type: str,
-    rinex_path: Path,
-) -> None:
-    """Ensure an existing RINEX file is recorded in file_tracking.
+    rinex_session: str,
+    start_date: date,
+    end_date: date,
+) -> Optional[Dict[Tuple[date, Optional[int]], str]]:
+    """Load the tracked RINEX filenames for one station/session window.
 
-    Checks whether the file is already tracked under '{session_type}_rinex'.
-    If not, inserts a tracking record so Grafana dashboards can see it.
+    Keyed by the file_tracking uniqueness slot — (file_date, file_hour) —
+    so a caller can answer "is this file already tracked?" without a query
+    per file. Ranges over (sid, session_type, file_date), which is exactly
+    what the composite index serves.
+
+    Returns:
+        {(file_date, file_hour): filename}, or None if the lookup failed —
+        callers must treat None as "unknown" and fall back to a point query,
+        never as "nothing is tracked" (that would re-upsert the whole window).
     """
     try:
-        from .bulk_scheduler import _track_rinex_output_files
-
-        rinex_session = f"{session_type}_rinex"
-
-        # Quick check: is it already tracked?
         from ..health.database_factory import DatabaseConnectionFactory
 
         with DatabaseConnectionFactory.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT 1 FROM file_tracking
+                    """SELECT file_date, file_hour, filename FROM file_tracking
                        WHERE sid = %s AND session_type = %s
-                         AND filename = %s
-                       LIMIT 1""",
-                    (station_id, rinex_session, rinex_path.name),
+                         AND file_date BETWEEN %s AND %s""",
+                    (station_id, rinex_session, start_date, end_date),
                 )
-                if cur.fetchone():
-                    return  # Already tracked
+                return {(row[0], row[1]): row[2] for row in cur.fetchall()}
+    except Exception as e:
+        logger.debug(f"Could not prefetch tracked RINEX for {station_id}: {e}")
+        return None
+
+
+def _ensure_rinex_tracked(
+    station_id: str,
+    session_type: str,
+    rinex_path: Path,
+    tracked: Optional[Dict[Tuple[date, Optional[int]], str]] = None,
+    tracked_window: Optional[Tuple[date, date]] = None,
+) -> None:
+    """Ensure an existing RINEX file is recorded in file_tracking.
+
+    Checks whether the file is already tracked under '{session_type}_rinex'.
+    If not, inserts a tracking record so Grafana dashboards can see it.
+
+    The check is keyed on (sid, session_type, file_date, file_hour) — the
+    table's uniqueness slot — not on `filename`, which carries no index. The
+    filename is still compared so a renamed file (.o.Z → .d.Z, R2 → R3) still
+    re-upserts and corrects the recorded name.
+
+    Args:
+        tracked: Optional prefetched {(file_date, file_hour): filename} map
+            from :func:`_load_tracked_rinex`. Avoids a query per file; None
+            falls back to a single indexed point lookup.
+        tracked_window: (start_date, end_date) the map covers. A file whose
+            name parses OUTSIDE it — a stray, a DOY/year glob artifact — is
+            absent from the map for the wrong reason, and trusting that miss
+            would re-upsert it on every sweep. Such files take the point
+            query instead.
+    """
+    try:
+        from .bulk_scheduler import _parse_rinex_filename, _track_rinex_output_files
+
+        rinex_session = f"{session_type}_rinex"
+        file_date, file_hour = _parse_rinex_filename(rinex_path.name, station_id)
+
+        if file_date is None:
+            # Unparseable name — let the tracker's own parser log and skip it.
+            _track_rinex_output_files(
+                station_id, session_type, [str(rinex_path)], logger
+            )
+            return
+
+        in_window = tracked_window is None or (
+            tracked_window[0] <= file_date <= tracked_window[1]
+        )
+        if tracked is not None and in_window:
+            if tracked.get((file_date, file_hour)) == rinex_path.name:
+                return  # Already tracked under this exact name
+        else:
+            from ..health.database_factory import DatabaseConnectionFactory
+
+            with DatabaseConnectionFactory.connection() as conn:
+                with conn.cursor() as cur:
+                    if file_hour is None:
+                        cur.execute(
+                            """SELECT filename FROM file_tracking
+                               WHERE sid = %s AND session_type = %s
+                                 AND file_date = %s AND file_hour IS NULL""",
+                            (station_id, rinex_session, file_date),
+                        )
+                    else:
+                        cur.execute(
+                            """SELECT filename FROM file_tracking
+                               WHERE sid = %s AND session_type = %s
+                                 AND file_date = %s AND file_hour = %s""",
+                            (station_id, rinex_session, file_date, file_hour),
+                        )
+                    row = cur.fetchone()
+                    if row and row[0] == rinex_path.name:
+                        return  # Already tracked
 
         # Not tracked — register it
         _track_rinex_output_files(
@@ -722,6 +807,8 @@ def _ensure_rinex_tracked(
             [str(rinex_path)],
             logger,
         )
+        if tracked is not None and in_window:
+            tracked[(file_date, file_hour)] = rinex_path.name
         logger.debug(f"Tracked existing RINEX: {station_id}/{rinex_path.name}")
 
     except Exception as e:
