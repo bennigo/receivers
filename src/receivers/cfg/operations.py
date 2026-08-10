@@ -103,6 +103,10 @@ class OperationResult:
     cfg_changes: Dict[str, str] = field(default_factory=dict)
     vitjun_id: Optional[Union[int, str]] = None
     dry_run: bool = True
+    # Non-fatal advisories surfaced to the operator alongside the plan — e.g. a
+    # period boundary that lands on the same day as a sibling attribute's
+    # boundary but at a different time. Never blocks the write.
+    warnings: List[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +142,71 @@ def _visit_default_time(date_arg: Optional[str]) -> str:
     if "T" not in date_arg:
         return f"{date_arg}T12:00:00"
     return date_arg
+
+
+def _sibling_boundary_warnings(
+    writer: TOSWriter,
+    device_id: int,
+    code: str,
+    effective: str,
+) -> List[str]:
+    """Flag a period boundary that lands on a sibling's day but not its time.
+
+    Attribute periods on one device are frequently *chained* — a Septentrio's
+    ``software_version`` should turn over on exactly the same instant as its
+    ``firmware_version``, a radome's period should follow its antenna's. When a
+    boundary is derived from another record like that, the time must be COPIED,
+    not defaulted.
+
+    A bare ``--date`` resolves to noon (see :func:`_visit_default_time`), so
+    mirroring ``firmware_version``'s ``2025-01-06T00:00:00`` with a bare
+    ``--date 2025-01-06`` silently produces ``T12:00:00`` — a 12-hour window in
+    which the two chains disagree about which version was in force. Nothing
+    downstream errors; the RINEX headers and station.info for those hours are
+    simply wrong, and a date-only view of TOS looks perfectly correct.
+
+    This is advisory only. Same day + different time is a strong hint of an
+    un-copied boundary, but a genuine same-day-different-time change is
+    legitimate (two events one afternoon), so it must never block the write.
+    """
+    warnings: List[str] = []
+    if "T" not in (effective or ""):
+        return warnings
+    eff_day, _, eff_time = effective.partition("T")
+
+    try:
+        history = writer.get_entity_history(device_id) or {}
+        attrs = history.get("attributes") or []
+    except Exception:  # noqa: BLE001 — advisory only, never break the write
+        return warnings
+
+    seen: set = set()
+    for a in attrs:
+        other = a.get("code")
+        if not other or other == code:
+            continue
+        for bound in ("date_from", "date_to"):
+            raw = a.get(bound)
+            if not raw or "T" not in str(raw):
+                continue
+            day, _, tod = str(raw).partition("T")
+            if day != eff_day or tod == eff_time:
+                continue
+            # Dedupe on (attribute, time-of-day), not on the boundary role:
+            # adjacent periods share an instant, so date_to of one and
+            # date_from of the next are the same moment and the suggested fix
+            # is identical. Reporting both is noise.
+            key = (other, tod)
+            if key in seen:
+                continue
+            seen.add(key)
+            warnings.append(
+                f"boundary {effective} lands on the same day as "
+                f"{other} ({eff_day}T{tod}) but at a different time — if this "
+                f"period is being mirrored from that one, pass the exact "
+                f"timestamp (--date {eff_day}T{tod}) instead of a bare date."
+            )
+    return warnings
 
 
 def _visit_default_end_time(date_arg: Optional[str]) -> Optional[str]:
@@ -3877,8 +3946,17 @@ def set_device_attribute(
         )
     else:
         result.tos_changes["mode"] = "change"
+        effective = _visit_default_time(date)
+        # A Pattern 2 boundary is the thing most often copied from a sibling
+        # chain (software_version from firmware_version, radome from antenna).
+        # Warn — never block — when it shares a day with a sibling boundary but
+        # not its time, which is the signature of a bare date silently
+        # promoted to noon.
+        result.warnings.extend(
+            _sibling_boundary_warnings(w, device_id, code, effective)
+        )
         result.tos_changes["write"] = w.transition_attribute_value(
-            device_id, code, value, _visit_default_time(date)
+            device_id, code, value, effective
         )
     return result
 

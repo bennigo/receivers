@@ -3688,6 +3688,26 @@ def cmd_cfg_add_station(args) -> int:
     return 0
 
 
+def _resolve_marker_for_host(host: str) -> Optional[str]:
+    """Reverse-lookup the station marker whose router_ip/ip_address is ``host``.
+
+    Lets ``discover-phone`` label its follow-up hint when only ``--host`` was
+    passed (no ``--station``). Returns the marker on a unique match, else None
+    (no match, or an ambiguous one so we never guess wrong).
+    """
+    try:
+        from .main import get_all_station_configs
+
+        matches = [
+            marker
+            for marker, cfg in get_all_station_configs().items()
+            if host in (cfg.get("router_ip"), cfg.get("ip_address"))
+        ]
+        return matches[0] if len(matches) == 1 else None
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # cmd_cfg_discover_phone — reveal a router SIM's own phone number (MSISDN)
 # ---------------------------------------------------------------------------
@@ -3795,6 +3815,17 @@ def cmd_cfg_discover_phone(args) -> int:
         print(
             f"   Check {to}: the SENDER number of that message is this SIM's own "
             f"phone number."
+        )
+        # Surface the ready-to-paste command to record the discovered MSISDN on
+        # the SIM. The number isn't known until the operator reads the catcher
+        # phone, so it stays a placeholder. For a brand-new SIM that also needs
+        # its IP recorded, use `cfg replace-sim` instead of `set-attr`.
+        marker = args.station or _resolve_marker_for_host(host)
+        station_arg = f"--station {marker}" if marker else "--station <MARKER>"
+        print(
+            "   Once you read the sender number, record it on the SIM:\n"
+            f"     receivers cfg set-attr {station_arg} --subtype sim_card "
+            "--field phone_number --value <SENDER_NUMBER> --no-dry-run"
         )
     return 0
 
@@ -7853,6 +7884,7 @@ def _print_result_summary(result, *, json_output: bool, dry_run: bool) -> None:
             "vitjun_id": result.vitjun_id,
             "cfg_changes": result.cfg_changes,
             "dry_run": result.dry_run,
+            "warnings": list(getattr(result, "warnings", None) or []),
             "tos_changes_summary": {
                 k: type(v).__name__ for k, v in result.tos_changes.items()
             },
@@ -7895,6 +7927,12 @@ def _print_result_summary(result, *, json_output: bool, dry_run: bool) -> None:
             print(f"     {k}: {old!r} → {new!r}")
     elif edit_diff == {}:
         print("   (no field changes — payload identical to current state)")
+    # Advisories (e.g. a period boundary that shares a day with a sibling
+    # attribute's boundary but not its time). Printed last so they are the
+    # final thing on screen before the operator decides to re-run with
+    # --no-dry-run.
+    for warning in getattr(result, "warnings", None) or []:
+        print(f"   ⚠️  {warning}")
 
 
 def _compute_visit_edit_diff(before: dict, after: dict) -> dict:
