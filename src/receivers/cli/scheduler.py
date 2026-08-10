@@ -375,7 +375,7 @@ def cmd_scheduler_backfill(args) -> int:
             station_ids = [s.upper() for s in stations]
         else:
             # Get stations from backfill_progress table
-            with DatabaseConnectionFactory.connection() as conn:
+            with DatabaseConnectionFactory.connection(single_host=True) as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
@@ -473,10 +473,14 @@ def cmd_scheduler_long_term_backfill(args) -> int:
     run_rinex = not getattr(args, "no_rinex", False)
     dry_run = getattr(args, "dry_run", False)
     max_days = getattr(args, "max_days", None)
-    for sid in (args.stations or []):
+    for sid in args.stations or []:
         report = run_long_term_backfill_station(
-            sid.upper(), session, lookback_days=lookback,
-            run_rinex=run_rinex, dry_run=dry_run, max_days=max_days,
+            sid.upper(),
+            session,
+            lookback_days=lookback,
+            run_rinex=run_rinex,
+            dry_run=dry_run,
+            max_days=max_days,
         )
         print(format_report(report))
     return 0
@@ -948,7 +952,7 @@ def cmd_scheduler_backfill_status(args) -> int:
 
         session = getattr(args, "session", None)
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 if session:
                     cur.execute(
@@ -963,13 +967,15 @@ def cmd_scheduler_backfill_status(args) -> int:
                         (session,),
                     )
                 else:
-                    cur.execute("""
+                    cur.execute(
+                        """
                         SELECT sid, session_type, status, next_date, backfill_end,
                                files_found, files_imported, files_missing, files_error,
                                last_run
                         FROM backfill_progress
                         ORDER BY session_type, status, last_run ASC NULLS FIRST
-                    """)
+                    """
+                    )
 
                 rows = cur.fetchall()
 
@@ -1456,9 +1462,15 @@ def create_scheduler_parser(subparsers):
         "--session", default="15s_24hr", choices=["15s_24hr", "1Hz_1hr", "status_1hr"]
     )
     lt_bf_parser.add_argument("--lookback", type=int, default=365)
-    lt_bf_parser.add_argument("--max-days", type=int, help="Cap days to recover this run")
-    lt_bf_parser.add_argument("--no-rinex", action="store_true", help="Raw only (skip RINEX)")
-    lt_bf_parser.add_argument("--dry-run", action="store_true", help="Classify only; no downloads")
+    lt_bf_parser.add_argument(
+        "--max-days", type=int, help="Cap days to recover this run"
+    )
+    lt_bf_parser.add_argument(
+        "--no-rinex", action="store_true", help="Raw only (skip RINEX)"
+    )
+    lt_bf_parser.add_argument(
+        "--dry-run", action="store_true", help="Classify only; no downloads"
+    )
     lt_bf_parser.set_defaults(func=cmd_scheduler_long_term_backfill)
 
     # Reconcile command

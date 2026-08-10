@@ -304,6 +304,44 @@ class TestConnectionContextManager:
             assert ppool.returned == [(primary, False)]
             assert mpool.returned == [(mirror, False)]
 
+    def test_single_host_never_touches_the_mirror(self):
+        """``single_host=True`` opens no mirror connection at all.
+
+        This is the escape hatch read-only work must use. _DualCursor fans out
+        EVERY statement, not just writes -- it cannot tell them apart, because
+        a write here is often spelled ``SELECT upsert_file_tracking(...)``. So
+        a pure SELECT also executes on the shared pgdev mirror and its result
+        is discarded: one unindexed reconciler lookup billed 22.6M executions
+        x 24 ms to that server for nothing (2026-08-10).
+        """
+        primary = _live_conn()
+        ppool = _FakePool([primary])
+        mirror_pool_calls = []
+
+        def _record_mirror_pool(*args, **kwargs):
+            mirror_pool_calls.append(args)
+            raise AssertionError("single_host=True must not open a mirror pool")
+
+        with (
+            patch.object(
+                DatabaseConnectionFactory, "_primary_pool", return_value=ppool
+            ),
+            patch.object(
+                DatabaseConnectionFactory,
+                "_mirror_pool",
+                side_effect=_record_mirror_pool,
+            ),
+            patch(
+                "receivers.health.database_factory._load_config_file",
+                return_value={"mirror_host": "mirror.example.com"},
+            ),
+        ):
+            with DatabaseConnectionFactory.connection(single_host=True) as conn:
+                assert not isinstance(conn, _DualConnection)
+                assert conn is primary
+
+        assert mirror_pool_calls == []
+
     def test_connection_string_bypasses_pool(self):
         """A full-DSN connection is not pooled — opened and closed directly."""
         mock_conn = MagicMock()

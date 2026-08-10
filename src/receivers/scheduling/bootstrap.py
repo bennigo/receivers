@@ -38,7 +38,7 @@ def detect_cold_start(sessions: Optional[List[str]] = None) -> bool:
     try:
         from ..health.database_factory import DatabaseConnectionFactory
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 if sessions:
                     # Include both raw and rinex variants

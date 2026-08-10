@@ -96,7 +96,7 @@ def _pick_backfill_stations(session_type: str, limit: int, strategy: str) -> lis
         if rows:
             return rows
 
-    with DatabaseConnectionFactory.connection() as conn:
+    with DatabaseConnectionFactory.connection(single_host=True) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -274,7 +274,7 @@ def _pick_station_by_gap_count(
     try:
         from ..health.database_factory import DatabaseConnectionFactory
 
-        with DatabaseConnectionFactory.connection() as conn:
+        with DatabaseConnectionFactory.connection(single_host=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """

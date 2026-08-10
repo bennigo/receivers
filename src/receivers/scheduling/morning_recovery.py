@@ -115,7 +115,7 @@ def _query_stations_missing_yesterday(
       GROUP BY bucket
     """
     buckets: dict[str, tuple[list[str], int]] = {}
-    with DatabaseConnectionFactory.connection() as conn:
+    with DatabaseConnectionFactory.connection(single_host=True) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 sql,
@@ -174,7 +174,7 @@ def _confirm_recovered(sid: str, session: str, target_date: date) -> bool:
     """True if `file_tracking` shows the file as downloaded/archived after retry."""
     from ..health.database_factory import DatabaseConnectionFactory
 
-    with DatabaseConnectionFactory.connection() as conn:
+    with DatabaseConnectionFactory.connection(single_host=True) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
