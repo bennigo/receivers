@@ -157,6 +157,94 @@ class TrimbleNativeConverter(RawToRinexConverter):
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return False
 
+    #: Grace between SIGTERM and SIGKILL when a conversion overruns. The wedged
+    #: processes observed on 2026-08-11 ignored SIGTERM entirely and only died to
+    #: SIGKILL, so the KILL is not a formality — it is the one that works.
+    _KILL_GRACE_S = 5
+
+    def _run_group_killable(
+        self, cmd: List[str], timeout: int
+    ) -> subprocess.CompletedProcess:
+        """Run ``cmd`` in its own process group and kill the WHOLE GROUP on timeout.
+
+        ``subprocess.run(timeout=...)`` kills only its direct child. Everywhere
+        else in this package that is the converter itself, so the timeout works.
+        Not here: this path launches wine, and the real ``convertToRinex.exe``
+        runs as a grandchild **in a different process group**. Killing the direct
+        child therefore reaps the launcher and leaves the worker running.
+
+        Measured on rek-d01 2026-08-11 — one live conversion, two processes::
+
+            pid 864860  ppid=860296  pgid=860296  cpu=0.1%   <- wine launcher
+            pid 864904  ppid=864881  pgid=864904  cpu=77.4%  <- the real worker
+
+        With the old code a 600 s timeout killed 864860 and orphaned 864904 at
+        100% CPU, forever. The raised ConversionError then triggered a retry,
+        which leaked another orphan: four had accumulated on one truncated input
+        (``KISA202607170000a.T02``, 167 KB where a normal day is ~3.35 MB), two of
+        them 2h24m old, holding ~400% CPU and dragging loadavg past 12. That in
+        turn made ``auto_workers`` throttle unrelated jobs to a single worker.
+
+        ``start_new_session=True`` puts the launcher in a NEW process group that
+        wine's children inherit, so one ``killpg`` reaches the whole tree.
+
+        Raises:
+            subprocess.TimeoutExpired: after the group has been killed, so the
+                caller's existing handler still sees a timeout — but nothing is
+                left running behind it.
+        """
+        import signal
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.logger.error(
+                "conversion exceeded %ss — killing process group of pid %s",
+                timeout,
+                proc.pid,
+            )
+            self._kill_group(proc, signal.SIGTERM)
+            try:
+                out, err = proc.communicate(timeout=self._KILL_GRACE_S)
+            except subprocess.TimeoutExpired:
+                self._kill_group(proc, signal.SIGKILL)
+                try:
+                    out, err = proc.communicate(timeout=self._KILL_GRACE_S)
+                except subprocess.TimeoutExpired:
+                    # A survivor still holds the inherited stdout/stderr pipes,
+                    # so communicate() would block on THEM, not on the process.
+                    # Found the hard way: with the group-kill removed, this
+                    # method hung for the orphan's full lifetime instead of
+                    # returning. Never block a worker thread on a process we
+                    # have already given up on — surface it and move on.
+                    self.logger.error(
+                        "pid %s did not release its pipes after SIGKILL — "
+                        "something in its tree survived; abandoning the read",
+                        proc.pid,
+                    )
+            raise
+        return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+    def _kill_group(self, proc: subprocess.Popen, sig: int) -> None:
+        """Signal the child's whole process group, falling back to the child."""
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except (ProcessLookupError, PermissionError, OSError) as exc:
+            # Already gone, or we lost the right to signal it — still make sure
+            # the direct child does not survive us.
+            self.logger.debug("killpg(%s) failed (%s); killing child only", sig, exc)
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
     def _run_conversion(
         self,
         raw_file: Path,
@@ -284,12 +372,10 @@ class TrimbleNativeConverter(RawToRinexConverter):
             self.logger.info(f"Running Trimble native conversion for {raw_file.name}")
             self.logger.debug(f"Docker command: {' '.join(cmd)}")
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600,  # 10 minute timeout
-            )
+            # NOT subprocess.run: its timeout kills only the DIRECT child, and
+            # on this path that child is the wine launcher, not the converter.
+            # See _run_group_killable.
+            result = self._run_group_killable(cmd, timeout=600)
 
             if result.returncode != 0:
                 raise ConversionError(
