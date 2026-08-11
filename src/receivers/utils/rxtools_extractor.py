@@ -9,6 +9,8 @@ without needing to manually parse the binary format.
 """
 
 import csv
+import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -18,11 +20,30 @@ from typing import Dict, List, Optional
 
 from .compression_detector import CompressionConverter, CompressionDetector
 
+logger = logging.getLogger(__name__)
+
 # GPS epoch: January 6, 1980 00:00:00 UTC
 GPS_EPOCH = datetime(1980, 1, 6, 0, 0, 0)
 
 # RxTools bin2asc location - find from PATH or fallback to default
 BIN2ASC_PATH = shutil.which("bin2asc") or "/usr/local/rxtools/bin/bin2asc"
+
+# Wall-clock ceilings for RxTools subprocesses.
+#
+# bin2asc can wedge on an input it does not like and never exit — observed
+# 2026-08-11 on rek-d01, where DiskStatus blocks from one firmware revision
+# left 77 bin2asc processes running for up to 2.9 h.  Without a ceiling the
+# caller blocks forever holding a health worker, the 5-minute health cycle
+# spawns more on top, and the pile-up starves the whole pipeline (health
+# checks went ~3 h stale fleet-wide).  Always pass one of these.
+#
+# Two values because the call sites differ by orders of magnitude: a full
+# daily SBF (~4 MB) legitimately takes a while, a single TCP-fetched block
+# is a few dozen bytes and should be instant.
+RXTOOLS_TIMEOUT_S = float(os.environ.get("RECEIVERS_RXTOOLS_TIMEOUT_S", "300"))
+RXTOOLS_BYTES_TIMEOUT_S = float(
+    os.environ.get("RECEIVERS_RXTOOLS_BYTES_TIMEOUT_S", "30")
+)
 
 
 def gps_time_to_datetime(tow_seconds: float, wnc: int) -> datetime:
@@ -31,7 +52,10 @@ def gps_time_to_datetime(tow_seconds: float, wnc: int) -> datetime:
 
 
 def extract_sbf_message(
-    sbf_file: Path, message_name: str, output_dir: Optional[Path] = None
+    sbf_file: Path,
+    message_name: str,
+    output_dir: Optional[Path] = None,
+    timeout: Optional[float] = None,
 ) -> Path:
     """
     Extract a specific SBF message type to CSV using bin2asc.
@@ -43,12 +67,13 @@ def extract_sbf_message(
         sbf_file: Path to SBF file (compressed or uncompressed)
         message_name: SBF message name (e.g., 'PowerStatus', 'ReceiverStatus2')
         output_dir: Optional output directory (default: temp directory)
+        timeout: Seconds to allow bin2asc (default: RXTOOLS_TIMEOUT_S)
 
     Returns:
         Path to the generated CSV file
 
     Raises:
-        RuntimeError: If bin2asc fails
+        RuntimeError: If bin2asc fails, or exceeds *timeout*
         FileNotFoundError: If bin2asc is not installed or file not found
     """
     if not Path(BIN2ASC_PATH).exists():
@@ -106,12 +131,32 @@ def extract_sbf_message(
         ]
 
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=RXTOOLS_TIMEOUT_S if timeout is None else timeout,
+            )
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
                 f"bin2asc failed for {message_name}:\n"
                 f"  Command: {' '.join(cmd)}\n"
                 f"  Error: {e.stderr}"
+            )
+        except subprocess.TimeoutExpired as e:
+            # subprocess.run has already killed the child by the time this
+            # is raised. Surface it as RuntimeError so every existing caller
+            # degrades the same way it does for a bin2asc failure.
+            logger.warning(
+                "bin2asc timed out after %ss for %s (%s) — killed",
+                e.timeout,
+                message_name,
+                file_to_process.name,
+            )
+            raise RuntimeError(
+                f"bin2asc timed out after {e.timeout}s for {message_name}:\n"
+                f"  Command: {' '.join(cmd)}"
             )
 
         # Find output file
@@ -472,11 +517,18 @@ def parse_sbf_bytes(sbf_data: bytes, message_name: str) -> List[Dict]:
         sbf_path = Path(tmp_dir) / "data.sbf"
         sbf_path.write_bytes(sbf_data)
 
-        csv_file = extract_sbf_message(sbf_path, message_name, output_dir=Path(tmp_dir))
+        csv_file = extract_sbf_message(
+            sbf_path,
+            message_name,
+            output_dir=Path(tmp_dir),
+            # A single fetched block is tens of bytes; anything that takes
+            # longer than this is wedged, not working.
+            timeout=RXTOOLS_BYTES_TIMEOUT_S,
+        )
         data = parse_csv_to_dict(csv_file)
         _enrich_rows_with_datetime(data)
         return data
-    except (RuntimeError, subprocess.CalledProcessError):
+    except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return []
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -493,7 +545,13 @@ def list_available_messages() -> List[str]:
         raise FileNotFoundError(f"RxTools bin2asc not found at {BIN2ASC_PATH}")
 
     cmd = [BIN2ASC_PATH, "-l"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=RXTOOLS_BYTES_TIMEOUT_S
+        )
+    except subprocess.TimeoutExpired as e:
+        logger.warning("bin2asc -l timed out after %ss — killed", e.timeout)
+        return []
 
     # Parse output to get message names
     messages = []
@@ -557,7 +615,23 @@ def detect_blocks_in_file(sbf_file: Path) -> List[str]:
     try:
         # Run sbfanalyzer to list blocks
         cmd = [sbfanalyzer_path, str(file_to_process)]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=RXTOOLS_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as e:
+            logger.warning(
+                "sbfanalyzer timed out after %ss for %s — killed",
+                e.timeout,
+                file_to_process.name,
+            )
+            raise RuntimeError(
+                f"sbfanalyzer timed out after {e.timeout}s for {file_to_process.name}"
+            )
 
         # Parse output to extract block names
         # Output format varies, but typically shows block names

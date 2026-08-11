@@ -16,7 +16,11 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..utils.rxtools_extractor import detect_blocks_in_file, extract_block_with_metadata
+from ..utils.rxtools_extractor import (
+    RXTOOLS_TIMEOUT_S,
+    detect_blocks_in_file,
+    extract_block_with_metadata,
+)
 
 
 class BlockJsonWriter:
@@ -137,9 +141,22 @@ class BlockJsonWriter:
                         str(temp_path),
                         "-t",
                     ]
-                    result = subprocess.run(
-                        cmd, capture_output=True, text=True, check=False
-                    )
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            timeout=RXTOOLS_TIMEOUT_S,
+                        )
+                    except subprocess.TimeoutExpired as e:
+                        # Unbounded here let wedged bin2asc processes accumulate
+                        # until the box was starved — see rxtools_extractor.
+                        self.logger.warning(
+                            f"bin2asc timed out after {e.timeout}s for "
+                            f"{sbf_file.name} — killed"
+                        )
+                        continue
 
                     if result.returncode != 0:
                         self.logger.warning(
