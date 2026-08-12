@@ -655,6 +655,7 @@ def cmd_archive_rm(args: argparse.Namespace) -> int:
         dest_root=dest_root,
         max_size=max_size,
         execute=execute,
+        prune_empty_dirs=not getattr(args, "keep_empty_dirs", False),
     )
 
     print()
@@ -672,6 +673,10 @@ def cmd_archive_rm(args: argparse.Namespace) -> int:
         print(f"   ✅ DELETED ({sz} bytes): {rel}")
     for rel, sz in res.failed:
         print(f"   ❌ FAILED to delete: {rel}")
+    for d in res.dirs_would_remove:
+        print(f"   🗀  would remove emptied dir: {d}")
+    for d in res.dirs_removed:
+        print(f"   🗀  removed emptied dir: {d}")
 
     # Catalog consistency: after real deletes, drop their catalog rows on EVERY
     # catalog host (the identical-DB set) so no integrity-verify later flags them
@@ -752,6 +757,16 @@ def create_archive_rm_parser(subparsers) -> argparse.ArgumentParser:
         help="Delete only files with size ≤ BYTES (server-side re-check). "
         "Default 0 = empty only. Raise it (bounded) to remove known-tiny broken "
         "files, e.g. --max-size 8 for 3-byte truncated RINEX.",
+    )
+    parser.add_argument(
+        "--keep-empty-dirs",
+        action="store_true",
+        help="Leave behind any directory this run empties. By DEFAULT an "
+        "emptied directory is removed with rmdir (which refuses a non-empty "
+        "one, so it can never destroy data) — otherwise clearing e.g. a "
+        "station's rinex_bak leaves dozens of empty dirs to sweep by hand on "
+        "the gateway, which is what this verb exists to avoid. Parent dirs are "
+        "never climbed; only the directory the deleted files were in.",
     )
     parser.add_argument(
         "--catalog-host",

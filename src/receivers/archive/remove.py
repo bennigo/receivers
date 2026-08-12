@@ -97,14 +97,31 @@ def validate_archive_relpath(rel: str) -> bool:
     return bool(_RELPATH_RE.match(rel))
 
 
-# Remote script: reads root/empty_only/execute as $1..$3, then the paths as $@.
+# Remote script: reads root/maxsize/execute/prune as $1..$4, then the paths as $@.
 # Paths arrive as ARGV — the shell never parses them as code. Quoted heredoc.
+#
+# The prune pass (rmdir of directories this call emptied) runs LAST, in the same
+# round trip. It exists because deleting files left the directory shells behind:
+# clearing ELDC's rinex_bak on 2026-08-12 removed 4,425 files and left 76 empty
+# `rinex_bak/` dirs that then had to be swept by hand on the gateway — precisely
+# the hand-run rm this verb exists to prevent.
+#
+# `rmdir` is the whole safety argument: it removes ONLY an empty directory and
+# refuses anything else, so the prune cannot destroy data even if the candidate
+# list were wrong. Candidates are further limited to the parents of files THIS
+# call actually deleted — never an arbitrary path, never a walk.
+#
+# It deliberately does NOT climb to parents. An empty `15s_24hr/` or station dir
+# is a structural part of the archive layout that other tooling globs over;
+# only the category dir we just emptied is removed.
 _REMOTE_SCRIPT = r"""
 set -u
 root="$1"; shift
 maxsize="$1"; shift
 execute="$1"; shift
+prune="$1"; shift
 case "$root" in "~/"*) root="$HOME/${root#\~/}";; "~") root="$HOME";; esac
+touched=""
 for rel in "$@"; do
   f="$root/$rel"
   if [ ! -e "$f" ]; then echo "MISSING|$rel|0"; continue; fi
@@ -114,11 +131,33 @@ for rel in "$@"; do
     echo "SKIP_TOOBIG|$rel|$sz"; continue
   fi
   if [ "$execute" = "1" ]; then
-    if rm -- "$f"; then echo "DELETED|$rel|$sz"; else echo "FAIL|$rel|$sz"; fi
+    if rm -- "$f"; then
+      echo "DELETED|$rel|$sz"
+      touched="$touched
+$(dirname "$rel")"
+    else echo "FAIL|$rel|$sz"; fi
   else
     echo "WOULD_DELETE|$rel|$sz"
+    touched="$touched
+$(dirname "$rel")"
   fi
 done
+if [ "$prune" = "1" ] && [ -n "$touched" ]; then
+  printf '%s\n' "$touched" | sort -u | while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    [ -d "$root/$d" ] || continue
+    if [ "$execute" = "1" ]; then
+      # rmdir refuses a non-empty dir — that refusal IS the guard.
+      if rmdir "$root/$d" 2>/dev/null; then echo "DIR_REMOVED|$d|0"; fi
+    else
+      # Dry-run: report only a dir that WOULD be left empty, i.e. it holds
+      # nothing this run is not already deleting.
+      left=$(ls -A "$root/$d" 2>/dev/null | wc -l)
+      here=$(printf '%s\n' "$touched" | grep -c "^$d$")
+      [ "$left" -le "$here" ] && echo "WOULD_REMOVE_DIR|$d|0"
+    fi
+  done
+fi
 """
 
 
@@ -131,6 +170,8 @@ class RemoveResult:
     not_file: list = field(default_factory=list)  # rel
     failed: list = field(default_factory=list)  # (rel, size)
     invalid: list = field(default_factory=list)  # rel
+    dirs_removed: list = field(default_factory=list)  # dir rel — emptied by this call
+    dirs_would_remove: list = field(default_factory=list)  # dir rel (dry-run)
 
     @property
     def ok(self) -> bool:
@@ -144,6 +185,7 @@ def remove_archive_files(
     dest_root: str,
     max_size: int = 0,
     execute: bool = False,
+    prune_empty_dirs: bool = True,
     timeout: int = 300,
 ) -> RemoveResult:
     """Delete (or dry-run) archive files via the rawdata SSH gateway.
@@ -155,6 +197,12 @@ def remove_archive_files(
         max_size: only delete files with ``size <= max_size`` bytes (server-side
             re-check). Default 0 = empty only; bounded even when raised.
         execute: actually delete; False (default) = dry-run.
+        prune_empty_dirs: after deleting, ``rmdir`` any directory THIS call
+            emptied (default True). Safe by construction — ``rmdir`` removes
+            only an empty directory and refuses everything else — and limited
+            to the parents of files actually deleted. Does not climb to parent
+            directories: an empty session or station dir is part of the archive
+            layout other tooling globs over.
     """
     res = RemoveResult()
     valid: list[str] = []
@@ -178,6 +226,7 @@ def remove_archive_files(
         dest_root,
         str(int(max_size)),
         "1" if execute else "0",
+        "1" if prune_empty_dirs else "0",
         *valid,
     ]
     proc = subprocess.run(
@@ -206,6 +255,11 @@ def remove_archive_files(
         elif status == "FAIL":
             res.failed.append((rel, sz))
             logger.error("archive-rm FAILED to delete %s", rel)
+        elif status == "DIR_REMOVED":
+            res.dirs_removed.append(rel)
+            audit.info("archive-rm removed emptied dir %s", rel)
+        elif status == "WOULD_REMOVE_DIR":
+            res.dirs_would_remove.append(rel)
     if proc.returncode != 0 and not (res.deleted or res.would_delete):
         logger.error(
             "ssh gateway error (rc=%s): %s",
