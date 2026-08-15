@@ -286,9 +286,16 @@ def open_catalog_conns(
                         exc,
                     )
                     break
+                # Deliberately does NOT say "unreachable": this fires for ANY
+                # connection failure, and an auth failure is by far the more
+                # common one (an expired LDAP/domain password reads as a dead
+                # host otherwise, sending the reader to check the network while
+                # the port is wide open). Lead with the driver's own error.
                 log.error(
-                    "catalog fan-out: secondary host %s unreachable — routine "
-                    "writes will SKIP it and the catalogs may DIVERGE (%s)",
+                    "catalog fan-out: could not connect to secondary host %s "
+                    "(auth or network — read the error below before assuming "
+                    "the host is down) — routine writes will SKIP it and the "
+                    "catalogs may DIVERGE: %s",
                     label,
                     exc,
                 )
