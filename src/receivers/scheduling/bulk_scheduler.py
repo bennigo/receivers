@@ -1377,6 +1377,34 @@ def _status_check_job(
     except Exception as e:
         logger.error(f"❌ Health check failed: {station_id} - {type(e).__name__}: {e}")
 
+        # Record the failure as an EXPLICIT offline sample instead of letting it
+        # become a gap. A missing row is ambiguous — it cannot distinguish "the
+        # station did not answer" from "the scheduler was not running" — and the
+        # receiver-retained metrics that arrive later via status_1hr DO backfill
+        # this window (voltage, temperature, satellites all reappear at their
+        # original timestamps), so without a row the outage silently vanishes
+        # from the graph once the late data lands.
+        #
+        # The normal failure path already handles this: gather_comprehensive_health
+        # raising leaves an error-only dict, which still reaches
+        # _write_connectivity_status and writes is_online=false. Only failures
+        # raised BEFORE that inner try — create_receiver, the imports, anything
+        # unexpected — land here, and those were writing nothing at all.
+        # status_task.py has done this on its own failure path all along.
+        if send_to_db:
+            try:
+                from ..health.connectivity_writer import ConnectivityWriter
+
+                ConnectivityWriter(logger).write_ping_only(
+                    station_id,
+                    {"connection": {"error": f"{type(e).__name__}: {e}"}},
+                )
+            except Exception:  # noqa: BLE001 - recording must never break the job
+                logger.debug(
+                    f"[{station_id}] could not record offline ping sample",
+                    exc_info=True,
+                )
+
 
 @dataclass
 class ScheduleConfig:
