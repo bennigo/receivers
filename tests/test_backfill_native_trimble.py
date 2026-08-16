@@ -144,3 +144,78 @@ def _pairs(mod):
                 if isinstance(e, tuple) and len(e) == 2 and isinstance(e[0], str):
                     out.append(e)
     return out
+
+
+# --- the divergence must not be re-creatable -------------------------------
+
+
+def test_both_paths_use_the_one_shared_selector():
+    """Live and backfill must resolve Trimble through the same function.
+
+    They drifted apart once: async_converter preferred the native converter
+    while RINEXTask hardcoded runpkr00, so every Trimble backfill conversion
+    failed. Two copies of one decision is the defect — not either copy.
+    """
+    import inspect
+
+    from receivers.rinex import async_converter
+    from receivers.scheduling.tasks import rinex_task
+
+    live = inspect.getsource(async_converter)
+    back = inspect.getsource(rinex_task)
+    assert "resolve_trimble_converter" in live
+    assert "resolve_trimble_converter" in back
+    # Neither may re-derive the rule locally.
+    for src, name in ((live, "async_converter"), (back, "rinex_task")):
+        assert "is_available()" not in src, (
+            f"{name} re-implements the native-availability check instead of "
+            "delegating to converter_select"
+        )
+
+
+def test_selector_short_circuits_non_trimble_types():
+    from receivers.rinex.converter_select import (
+        resolve_trimble_converter,
+        wants_native_trimble,
+    )
+
+    sentinel = object()
+    assert resolve_trimble_converter(sentinel, receiver_type="PolaRX5") is sentinel
+    assert wants_native_trimble("PolaRX5") is False
+
+
+def test_selector_is_case_insensitive():
+    """The DB stores 'NetR9'; the live path matched a lowercased string."""
+    from receivers.rinex.converter_select import wants_native_trimble
+
+    for rx in ("NetR9", "netr9", "NETR9", "trimble netrs", "NetR5"):
+        assert wants_native_trimble(rx) is True, rx
+
+
+def test_caller_supplied_config_wins_over_global():
+    """A CLI --native-trimble override must not be discarded.
+
+    _create_converter receives an already-resolved rinex_config; re-reading
+    global config in the shared selector silently dropped that override. Caught
+    by test_netrs_uses_native_at_rinex2 during the unification.
+    """
+    from receivers.rinex.converter_select import resolve_trimble_converter
+    from receivers.rinex.trimble_native_converter import TrimbleNativeConverter
+
+    sentinel = object()
+    # Global config says OFF; the caller says ON. The caller must win.
+    global_off = MagicMock()
+    global_off.get_rinex_config.return_value = {"use_native_trimble": False}
+    with (
+        patch(
+            "receivers.config.receivers_config.get_receivers_config",
+            return_value=global_off,
+        ),
+        patch.object(TrimbleNativeConverter, "is_available", return_value=True),
+    ):
+        got = resolve_trimble_converter(
+            sentinel,
+            receiver_type="netrs",
+            rinex_config={"use_native_trimble": True},
+        )
+    assert got is TrimbleNativeConverter

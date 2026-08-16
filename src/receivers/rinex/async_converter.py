@@ -589,20 +589,17 @@ def _create_converter(
     # a proper P2. (The teqc TrimbleConverter path does NOT produce output for
     # NetRS .T00 here, so we must use the native converter — same as the manual
     # `receivers rinex` path.)
-    use_native = rinex_config.get("use_native_trimble", False)
-    trimble_cls = TrimbleConverter
-    if use_native and ("netr9" in receiver_type or "netrs" in receiver_type):
-        try:
-            from ..rinex.trimble_native_converter import TrimbleNativeConverter
+    # Shared with the backfill path — see rinex.converter_select. These two
+    # decisions drifted apart once and silently cost every Trimble backfill
+    # conversion; they must not be re-derived independently again.
+    from .converter_select import resolve_trimble_converter
 
-            if TrimbleNativeConverter.is_available():
-                trimble_cls = TrimbleNativeConverter
-            else:
-                worker_logger.debug(
-                    "Native Trimble configured but Docker not available"
-                )
-        except ImportError:
-            pass
+    trimble_cls = resolve_trimble_converter(
+        TrimbleConverter,
+        log=worker_logger,
+        receiver_type=receiver_type,
+        rinex_config=rinex_config,
+    )
 
     if (
         "polarx" in receiver_type
