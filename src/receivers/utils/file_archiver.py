@@ -208,6 +208,7 @@ class FileArchiver:
                 min_fraction=self.yield_guard.min_fraction,
                 lookback_days=self.yield_guard.lookback_days,
                 min_samples=self.yield_guard.min_samples,
+                lag_days=self.yield_guard.baseline_lag_days,
             )
         except Exception as exc:  # noqa: BLE001 - guard must never break archiving
             self.logger.debug(f"yield guard skipped for {tmp_file.name}: {exc}")
