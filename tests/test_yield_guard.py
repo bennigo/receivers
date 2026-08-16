@@ -192,3 +192,19 @@ def test_satellite_alert_names_the_station_and_urges_investigation(caplog):
     assert "RFEL" in msg
     # Must not read as "handled" — a filtered station still needs a site visit.
     assert "investigation" in msg.lower()
+
+
+def test_db_writer_raises_the_zero_satellite_alert(caplog):
+    """The alert must fire from where the evidence actually lands."""
+    import logging
+    from unittest.mock import MagicMock, patch
+
+    from receivers.health.db_writer import HealthDatabaseWriter
+
+    w = HealthDatabaseWriter()
+    w._conn = MagicMock()
+    with caplog.at_level(logging.ERROR), patch(
+        "receivers.utils.yield_guard.satellite_alert"
+    ) as alert:
+        w._write_satellite_tracking("RFEL", __import__("datetime").datetime.now(), {"total": 0})
+    alert.assert_called_once_with("RFEL", 0)
