@@ -598,6 +598,35 @@ def _download_station_data_job(
     # Set up logging
     logger = logging.getLogger(f"receivers.download.{station_id}")
 
+    # Satellite gate: don't spend a transfer on a receiver that is tracking
+    # nothing. Health data already knows — block_satellite_tracking is written
+    # every 5 minutes, independently of downloads, so a dead receiver is visible
+    # before the window opens.
+    #
+    # This is self-healing on purpose: health keeps probing a gated station, so
+    # the moment it tracks a satellite again the next window proceeds. Nothing
+    # has to be cleared by hand — the person who fixes the antenna will never
+    # think to reset a flag.
+    #
+    # Fails open on any uncertainty (no DB, no rows, thin sample count, error).
+    try:
+        from ..db.connection import get_connection
+        from ..utils.download_gate import should_skip_download
+
+        _gate_conn = get_connection(single_host=True)
+        try:
+            _skip, _why = should_skip_download(station_id, _gate_conn)
+        finally:
+            try:
+                _gate_conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if _skip:
+            logger.warning(f"🛰️  SKIPPING download for {station_id}: {_why}")
+            return
+    except Exception as exc:  # noqa: BLE001 - the gate must never block a download
+        logger.debug(f"satellite gate skipped for {station_id}: {exc}")
+
     # Load-aware throttling: check system load before starting
     monitor = _get_load_monitor()
     if monitor is not None:

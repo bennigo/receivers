@@ -186,15 +186,25 @@ def test_satellite_alert_fires_only_at_zero(sats, expected, caplog):
     assert satellite_alert("RFEL", sats) is expected
 
 
-def test_satellite_alert_names_the_station_and_urges_investigation(caplog):
-    import logging
+def test_satellite_alert_names_the_station_and_urges_investigation():
+    """Assert on the emitted record, not on caplog.
 
-    with caplog.at_level(logging.ERROR):
+    caplog only sees records that propagate, and setup_logging() turns
+    propagation OFF for the receivers.* hierarchy — so a caplog assertion here
+    passes in isolation and fails as soon as a test that configures logging has
+    run first. Order-dependent tests are worse than no test.
+    """
+    from unittest.mock import patch
+
+    with patch("logging.getLogger") as get_logger:
         satellite_alert("RFEL", 0)
-    msg = caplog.text
-    assert "RFEL" in msg
+
+    log = get_logger.return_value
+    log.error.assert_called_once()
+    fmt, station = log.error.call_args[0][0], log.error.call_args[0][1]
+    assert station == "RFEL"
     # Must not read as "handled" — a filtered station still needs a site visit.
-    assert "investigation" in msg.lower()
+    assert "investigation" in fmt.lower()
 
 
 def test_db_writer_raises_the_zero_satellite_alert(caplog):
