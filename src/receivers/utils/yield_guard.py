@@ -41,7 +41,16 @@ DEFAULT_MIN_FRACTION = 0.10
 # Fewer samples than this and the median is not a baseline, it is noise.
 DEFAULT_MIN_SAMPLES = 20
 
-DEFAULT_LOOKBACK_DAYS = 14
+# Span of the baseline window.
+DEFAULT_LOOKBACK_DAYS = 90
+
+# ...ending this many days BEFORE today. A station that broke recently would
+# otherwise poison its own baseline: RFEL's 14-day median was 8,085 bytes, so a
+# 10% floor of 808 let its 8 KB shells straight through — the guard would have
+# missed the very fault it was written for. Lagging the window to
+# [today-104, today-14] puts RFEL's baseline back at 440,436 bytes and catches
+# all 243 of them.
+DEFAULT_BASELINE_LAG_DAYS = 14
 
 
 @dataclass
@@ -74,6 +83,7 @@ class YieldGuardConfig:
     min_fraction: float = DEFAULT_MIN_FRACTION
     min_samples: int = DEFAULT_MIN_SAMPLES
     lookback_days: int = DEFAULT_LOOKBACK_DAYS
+    baseline_lag_days: int = DEFAULT_BASELINE_LAG_DAYS
     quarantine_root: Optional[Path] = None
 
 
@@ -92,7 +102,8 @@ def build_yield_guard(logger: Optional[logging.Logger] = None):
         enabled = true
         min_fraction = 0.10
         min_samples = 20
-        lookback_days = 14
+        lookback_days = 90
+        baseline_lag_days = 14
         quarantine_dir = /mnt/data/gpsdata_quarantine
 
     The result is cached per process. Any failure resolves to None (guard off),
@@ -132,6 +143,11 @@ def build_yield_guard(logger: Optional[logging.Logger] = None):
             ),
             lookback_days=cfg.getint(
                 "data_yield_guard", "lookback_days", fallback=DEFAULT_LOOKBACK_DAYS
+            ),
+            baseline_lag_days=cfg.getint(
+                "data_yield_guard",
+                "baseline_lag_days",
+                fallback=DEFAULT_BASELINE_LAG_DAYS,
             ),
             quarantine_root=Path(qdir) if qdir else None,
         )
@@ -180,8 +196,13 @@ def median_size(
     *,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     min_samples: int = DEFAULT_MIN_SAMPLES,
+    lag_days: int = DEFAULT_BASELINE_LAG_DAYS,
 ) -> Optional[int]:
     """Median archived raw size for this station+session, or None if not enough history.
+
+    The window ENDS ``lag_days`` before today. A receiver that broke inside the
+    window would otherwise define its own broken output as normal — measured on
+    RFEL, whose recent median was 8 KB and whose lagged median is 440 KB.
 
     Deliberately restricted to ``file_size > 0``: the catalog carries rows whose
     size is 0 because the file went missing, and including them would drag the
@@ -198,9 +219,9 @@ def median_size(
                   AND session_type = %s
                   AND file_category = 'raw'
                   AND file_size > 0
-                  AND file_date > current_date - %s
+                  AND file_date BETWEEN current_date - %s AND current_date - %s
                 """,
-                (station, session_type, lookback_days),
+                (station, session_type, lag_days + lookback_days, lag_days),
             )
             row = cur.fetchone()
     except Exception as exc:  # noqa: BLE001 - never let a guard query break archiving
@@ -221,6 +242,7 @@ def check_yield(
     min_fraction: float = DEFAULT_MIN_FRACTION,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     min_samples: int = DEFAULT_MIN_SAMPLES,
+    lag_days: int = DEFAULT_BASELINE_LAG_DAYS,
 ) -> GuardVerdict:
     """Decide whether a raw file of ``size`` bytes is worth archiving."""
     if conn is None:
@@ -232,6 +254,7 @@ def check_yield(
         session_type,
         lookback_days=lookback_days,
         min_samples=min_samples,
+        lag_days=lag_days,
     )
     if baseline is None:
         return GuardVerdict(True, "no baseline — fail open", size, None, station)

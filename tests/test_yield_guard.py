@@ -214,3 +214,30 @@ def test_db_writer_raises_the_zero_satellite_alert(caplog):
             "RFEL", __import__("datetime").datetime.now(), {"total": 0}
         )
     alert.assert_called_once_with("RFEL", 0)
+
+
+# --- the self-poisoning trap ------------------------------------------------
+
+
+def test_baseline_window_is_lagged_not_trailing():
+    """A station that broke recently must not define its own fault as normal.
+
+    RFEL's trailing 14-day median was 8,085 bytes, making a 10% floor of 808 —
+    its ~8 KB shells passed and the guard missed the case it exists for. The
+    window must END before today, not at it.
+    """
+    conn = _conn(HEALTHY_MEDIAN)
+    median_size(conn, "RFEL", "1Hz_1hr", lookback_days=90, lag_days=14)
+    call = conn.cursor.return_value.__enter__.return_value.execute.call_args
+    sql, params = call[0][0], call[0][1]
+    assert "BETWEEN current_date -" in sql, "must bound both ends of the window"
+    # (station, session, start_offset, end_offset) with end strictly before today
+    assert params[2] == 104 and params[3] == 14
+    assert params[3] > 0, "window must not run up to today"
+
+
+def test_lagged_baseline_catches_a_recently_broken_station():
+    """With a healthy pre-fault baseline, RFEL's shells are rejected."""
+    v = check_yield(RFEL_SIZE, "RFEL", "1Hz_1hr", _conn(440_436))
+    assert v.allowed is False
+    assert v.fraction < 0.02
