@@ -36,6 +36,7 @@ from ..utils.performance_recorder import (
 )
 from ..utils.session_parser import parse_session_parameters
 from ..utils.time_processor import TimeParameterProcessor
+from ..utils.yield_guard import build_yield_guard
 
 
 def _safe_resume_offset(local_file, remote_file_size, logger):
@@ -865,7 +866,11 @@ class PolaRX5(BaseReceiver):
             )
             from ..utils.file_archiver import ArchiveMode, FileArchiver
 
-            with FileArchiver(mode=ArchiveMode.BULK, logger=self.logger) as archiver:
+            with FileArchiver(
+                mode=ArchiveMode.BULK,
+                logger=self.logger,
+                yield_guard=build_yield_guard(self.logger),
+            ) as archiver:
                 for igs_filename, tmp_path in files_in_tmp_dict.items():
                     # Find the archive destination
                     archive_dest = archive_paths_dict.get(igs_filename)
@@ -2727,7 +2732,11 @@ class PolaRX5(BaseReceiver):
         # PolaRX5 downloads .sbf.gz files (gzip compressed) - don't compress again!
         should_compress = needs_compression(Path(tmp_file_path))
 
-        with FileArchiver(mode=ArchiveMode.IMMEDIATE, logger=self.logger) as archiver:
+        with FileArchiver(
+            mode=ArchiveMode.IMMEDIATE,
+            logger=self.logger,
+            yield_guard=build_yield_guard(self.logger),
+        ) as archiver:
             success = archiver.archive_file(
                 Path(tmp_file_path),
                 Path(destination),
@@ -2741,7 +2750,11 @@ class PolaRX5(BaseReceiver):
         """Move downloaded files to archive locations using Phase 1 FileArchiver (BULK mode)."""
         self.logger.debug("Using Phase 1 FileArchiver (BULK mode)")
 
-        with FileArchiver(mode=ArchiveMode.BULK, logger=self.logger) as archiver:
+        with FileArchiver(
+            mode=ArchiveMode.BULK,
+            logger=self.logger,
+            yield_guard=build_yield_guard(self.logger),
+        ) as archiver:
             for ddate, tmp_file in downloaded_files_dict.items():
                 if not os.path.isfile(tmp_file):
                     continue

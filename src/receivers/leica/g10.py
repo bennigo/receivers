@@ -32,6 +32,7 @@ from ..utils.performance_recorder import (
 )
 from ..utils.session_parser import parse_session_parameters
 from ..utils.time_processor import TimeParameterProcessor
+from ..utils.yield_guard import build_yield_guard
 from .leica_ftp_download_client import LeicaFTPDownloader
 
 
@@ -292,7 +293,9 @@ class LeicaG10(BaseReceiver):
                 from ..utils.file_archiver import ArchiveMode, FileArchiver
 
                 with FileArchiver(
-                    mode=ArchiveMode.BULK, logger=self.logger
+                    mode=ArchiveMode.BULK,
+                    logger=self.logger,
+                    yield_guard=build_yield_guard(self.logger),
                 ) as archiver:
                     for filename, tmp_path in files_in_tmp_dict.items():
                         archive_dest = archive_files_dict.get(filename)
@@ -416,7 +419,9 @@ class LeicaG10(BaseReceiver):
                                 )
 
                                 with FileArchiver(
-                                    mode=ArchiveMode.IMMEDIATE, logger=self.logger
+                                    mode=ArchiveMode.IMMEDIATE,
+                                    logger=self.logger,
+                                    yield_guard=build_yield_guard(self.logger),
                                 ) as archiver:
                                     success = archiver.archive_file(
                                         Path(unzipped),

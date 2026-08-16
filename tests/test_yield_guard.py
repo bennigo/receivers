@@ -74,7 +74,8 @@ def test_boundary_is_inclusive_at_the_floor():
     floor = math.ceil(HEALTHY_MEDIAN * 0.10)
     assert check_yield(floor, "SAUR", "1Hz_1hr", _conn(HEALTHY_MEDIAN)).allowed is True
     assert (
-        check_yield(floor - 2, "SAUR", "1Hz_1hr", _conn(HEALTHY_MEDIAN)).allowed is False
+        check_yield(floor - 2, "SAUR", "1Hz_1hr", _conn(HEALTHY_MEDIAN)).allowed
+        is False
     )
 
 
@@ -168,7 +169,9 @@ def test_guard_failure_does_not_break_archiving(tmp_path):
 
     broken = MagicMock()
     broken.enabled = True
-    type(broken).min_fraction = property(lambda self: (_ for _ in ()).throw(Exception()))
+    type(broken).min_fraction = property(
+        lambda self: (_ for _ in ()).throw(Exception())
+    )
 
     archiver = FileArchiver(mode=ArchiveMode.IMMEDIATE, yield_guard=broken)
     assert archiver.archive_file(src, dest, compress=False) is True
@@ -203,8 +206,11 @@ def test_db_writer_raises_the_zero_satellite_alert(caplog):
 
     w = HealthDatabaseWriter()
     w._conn = MagicMock()
-    with caplog.at_level(logging.ERROR), patch(
-        "receivers.utils.yield_guard.satellite_alert"
-    ) as alert:
-        w._write_satellite_tracking("RFEL", __import__("datetime").datetime.now(), {"total": 0})
+    with (
+        caplog.at_level(logging.ERROR),
+        patch("receivers.utils.yield_guard.satellite_alert") as alert,
+    ):
+        w._write_satellite_tracking(
+            "RFEL", __import__("datetime").datetime.now(), {"total": 0}
+        )
     alert.assert_called_once_with("RFEL", 0)

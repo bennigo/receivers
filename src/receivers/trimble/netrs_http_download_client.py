@@ -16,6 +16,7 @@ from urllib.parse import quote, urljoin
 import requests
 
 from ..utils.file_validator import FileValidator
+from ..utils.yield_guard import build_yield_guard
 from .http_client import TrimbleHTTPClient
 
 
@@ -552,7 +553,9 @@ class NetRSHTTPDownloader:
                     from ..utils.file_archiver import ArchiveMode, FileArchiver
 
                     with FileArchiver(
-                        mode=ArchiveMode.IMMEDIATE, logger=self.logger
+                        mode=ArchiveMode.IMMEDIATE,
+                        logger=self.logger,
+                        yield_guard=build_yield_guard(self.logger),
                     ) as archiver:
                         archive_success = archiver.archive_file(
                             local_file_path,
