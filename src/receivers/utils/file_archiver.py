@@ -16,7 +16,10 @@ import logging
 import shutil
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Protocol, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Protocol, Tuple
+
+if TYPE_CHECKING:  # avoid a runtime import cycle: yield_guard imports config
+    from .yield_guard import YieldGuardConfig
 
 from .compression_detector import CompressionDetector
 from .file_validator import FileValidator

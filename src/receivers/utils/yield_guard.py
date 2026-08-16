@@ -77,6 +77,85 @@ class YieldGuardConfig:
     quarantine_root: Optional[Path] = None
 
 
+_cached_guard: Optional[YieldGuardConfig] = None
+_guard_resolved = False
+
+
+def build_yield_guard(logger: Optional[logging.Logger] = None):
+    """Build the guard from ``receivers.cfg`` ``[data_yield_guard]``, or None.
+
+    **Disabled unless the config says otherwise.** This decides what does and
+    does not enter the archive, so turning it on is a deliberate, reviewable
+    config change rather than something a code deploy does silently.
+
+        [data_yield_guard]
+        enabled = true
+        min_fraction = 0.10
+        min_samples = 20
+        lookback_days = 14
+        quarantine_dir = /mnt/data/gpsdata_quarantine
+
+    The result is cached per process. Any failure resolves to None (guard off),
+    keeping with the fail-open rule for this whole module.
+    """
+    global _cached_guard, _guard_resolved
+    if _guard_resolved:
+        return _cached_guard
+    _guard_resolved = True
+    log = logger or logging.getLogger(__name__)
+
+    try:
+        from ..config.receivers_config import get_receivers_config
+
+        cfg = get_receivers_config().config
+        if not cfg.has_section("data_yield_guard"):
+            return None
+        if not cfg.getboolean("data_yield_guard", "enabled", fallback=False):
+            return None
+
+        qdir = cfg.get("data_yield_guard", "quarantine_dir", fallback="").strip()
+
+        from ..db.connection import get_connection
+
+        # single_host: this only READS a baseline. A fanned read is pointless,
+        # and the mirror may hold different rows.
+        conn = get_connection(single_host=True)
+
+        guard = YieldGuardConfig(
+            connection=conn,
+            enabled=True,
+            min_fraction=cfg.getfloat(
+                "data_yield_guard", "min_fraction", fallback=DEFAULT_MIN_FRACTION
+            ),
+            min_samples=cfg.getint(
+                "data_yield_guard", "min_samples", fallback=DEFAULT_MIN_SAMPLES
+            ),
+            lookback_days=cfg.getint(
+                "data_yield_guard", "lookback_days", fallback=DEFAULT_LOOKBACK_DAYS
+            ),
+            quarantine_root=Path(qdir) if qdir else None,
+        )
+        log.info(
+            "data-yield guard ACTIVE (floor=%.0f%% of station median, "
+            "min_samples=%d, quarantine=%s)",
+            guard.min_fraction * 100,
+            guard.min_samples,
+            guard.quarantine_root or "(discard)",
+        )
+        _cached_guard = guard
+        return guard
+    except Exception as exc:  # noqa: BLE001 - never let config break archiving
+        log.debug("data-yield guard unavailable (%s) — archiving unguarded", exc)
+        return None
+
+
+def reset_guard_cache() -> None:
+    """Drop the cached guard (tests, and after a config reload)."""
+    global _cached_guard, _guard_resolved
+    _cached_guard = None
+    _guard_resolved = False
+
+
 def parse_archive_path(archive_path: Path) -> tuple[Optional[str], Optional[str]]:
     """Pull ``(station, session_type)`` out of an archive path.
 
