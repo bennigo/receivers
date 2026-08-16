@@ -292,39 +292,16 @@ class RINEXTask(ScheduledTask):
             return []
 
     def _resolve_trimble_converter(self, fallback):
-        """Return the native (Docker) Trimble converter, or ``fallback``.
+        """Delegate to the shared selector (rinex.converter_select).
 
-        Mirrors ``async_converter._select_converter``: when
-        ``[rinex] use_native_trimble`` is set and the Docker image is present,
-        Trimble raw goes through the native converter. That is the only path
-        that yields RINEX 3 for these receivers, and the only one that can read
-        a .T02 whose payload is bzip2-compressed — runpkr00 exits 30 on those
-        and leaves a 26-byte stub .dat.
-
-        Falls back silently: a missing image or a Docker outage should degrade
-        to the old path, not fail the task.
+        Kept as a thin method so the call site reads clearly and so tests can
+        patch one place. The RULE lives in converter_select — this must never
+        grow its own copy of it again; that divergence is exactly what broke
+        Trimble backfill conversion.
         """
-        try:
-            from ...config.receivers_config import get_receivers_config
+        from ...rinex.converter_select import resolve_trimble_converter
 
-            if (
-                not get_receivers_config()
-                .get_rinex_config()
-                .get("use_native_trimble", False)
-            ):
-                return fallback
-
-            from ...rinex.trimble_native_converter import TrimbleNativeConverter
-
-            if TrimbleNativeConverter.is_available():
-                return TrimbleNativeConverter
-            self.logger.warning(
-                "use_native_trimble is set but the Docker image is unavailable "
-                "— falling back to runpkr00, which cannot read compressed .T02"
-            )
-        except Exception as exc:  # noqa: BLE001 - never fail conversion on this
-            self.logger.debug(f"native Trimble converter unavailable: {exc}")
-        return fallback
+        return resolve_trimble_converter(fallback, log=self.logger)
 
     def _get_converter(self, station_config: Dict[str, Any]):
         """Get the appropriate converter for the receiver type.
