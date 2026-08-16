@@ -151,6 +151,7 @@ class FileArchiver:
         file_validator: Optional[FileValidator] = None,
         logger: Optional[logging.Logger] = None,
         mode: ArchiveMode = ArchiveMode.BULK,
+        yield_guard: Optional["YieldGuardConfig"] = None,
     ):
         """Initialize file archiver.
 
@@ -158,10 +159,15 @@ class FileArchiver:
             file_validator: Optional FileValidator for integrity checks
             logger: Optional logger instance
             mode: Archiving mode (immediate or bulk)
+            yield_guard: Optional data-yield guard. When supplied, a raw file
+                far below the station's own size baseline is quarantined instead
+                of archived (see receivers.utils.yield_guard). Omitted =
+                disabled, and the guard itself fails open on any doubt.
         """
         self.file_validator = file_validator
         self.logger = logger or logging.getLogger(__name__)
         self.mode = mode
+        self.yield_guard = yield_guard
 
         # Pending archives queue (for bulk mode)
         self._pending_archives: List[Tuple[Path, Path, bool, bool]] = []
@@ -175,6 +181,61 @@ class FileArchiver:
             "": NoCompression(),
             # Future: '.bz2': Bzip2Compression(), '.xz': XzCompression(), etc.
         }
+
+    def _check_yield(self, tmp_file: Path, archive_path: Path, size: int):
+        """Run the yield guard, or return None when it is not in play.
+
+        Every failure path here returns None (= archive it). The guard exists to
+        stop useless data entering the archive; it must never become a reason
+        that real data does not.
+        """
+        if self.yield_guard is None or not self.yield_guard.enabled:
+            return None
+        try:
+            from .yield_guard import check_yield, parse_archive_path
+
+            station, session_type = parse_archive_path(archive_path)
+            if not station or not session_type:
+                return None
+            return check_yield(
+                size,
+                station,
+                session_type,
+                self.yield_guard.connection,
+                min_fraction=self.yield_guard.min_fraction,
+                lookback_days=self.yield_guard.lookback_days,
+                min_samples=self.yield_guard.min_samples,
+            )
+        except Exception as exc:  # noqa: BLE001 - guard must never break archiving
+            self.logger.debug(f"yield guard skipped for {tmp_file.name}: {exc}")
+            return None
+
+    def _quarantine_result(
+        self, tmp_file: Path, verdict, remove_tmp: bool
+    ) -> ArchiveResult:
+        """Move a rejected file aside and report it as a non-archive."""
+        from .yield_guard import quarantine
+
+        station = verdict.station
+        dest = None
+        if self.yield_guard.quarantine_root:
+            dest = quarantine(tmp_file, self.yield_guard.quarantine_root, station)
+
+        self.logger.error(
+            f"🚫 QUARANTINED {tmp_file.name}: {verdict.reason}"
+            + (f" → {dest}" if dest else " (not archived)")
+        )
+        if dest is None and remove_tmp:
+            try:
+                tmp_file.unlink()
+            except OSError:
+                pass
+        return ArchiveResult(
+            success=False,
+            tmp_file=tmp_file,
+            source_size=verdict.size,
+            error=f"quarantined by yield guard: {verdict.reason}",
+        )
 
     def register_compression_strategy(
         self, extension: str, strategy: CompressionStrategy
@@ -305,6 +366,14 @@ class FileArchiver:
             # Get tmp file size
             tmp_file_size = tmp_file.stat().st_size
             self.logger.info(f"File to archive {filename} ({tmp_file_size:,} bytes)")
+
+            # Data-yield guard: a receiver that has lost its sky view keeps
+            # producing files on schedule, they are just nearly empty. Reject
+            # here — before the archive dir is created — so nothing rejected
+            # ever lands in the tree for a reindex or converter to pick up.
+            guard_verdict = self._check_yield(tmp_file, archive_path, tmp_file_size)
+            if guard_verdict is not None and not guard_verdict.allowed:
+                return self._quarantine_result(tmp_file, guard_verdict, remove_tmp)
 
             # Create archive directory
             archive_path.parent.mkdir(parents=True, exist_ok=True)
