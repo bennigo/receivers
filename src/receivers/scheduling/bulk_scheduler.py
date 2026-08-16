@@ -609,18 +609,18 @@ def _download_station_data_job(
     # think to reset a flag.
     #
     # Fails open on any uncertainty (no DB, no rows, thin sample count, error).
+    #
+    # Borrows from the semaphore-bounded pool and memoises per station: rek-d01
+    # runs at max_connections=100 and has logged slot exhaustion daily since
+    # 2026-08-05, and ~169 stations download in the same :01-:06 window. A gate
+    # that opened its own socket per job would add ~169 concurrent connections
+    # to an already-exhausted budget and cause the outage it exists to prevent.
     try:
-        from ..db.connection import get_connection
+        from ..health.database_factory import DatabaseConnectionFactory
         from ..utils.download_gate import should_skip_download
 
-        _gate_conn = get_connection(single_host=True)
-        try:
-            _skip, _why = should_skip_download(station_id, _gate_conn)
-        finally:
-            try:
-                _gate_conn.close()
-            except Exception:  # noqa: BLE001
-                pass
+        with DatabaseConnectionFactory.connection(single_host=True) as _gate_conn:
+            _skip, _why = should_skip_download(station_id, _gate_conn, use_cache=True)
         if _skip:
             logger.warning(f"🛰️  SKIPPING download for {station_id}: {_why}")
             return

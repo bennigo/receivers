@@ -20,14 +20,39 @@ partial obstruction, winter icing — and those files are real data we want.
 **Fails open on every uncertainty.** No connection, no rows, too few samples, a
 raising query: download. A receiver family that reports no satellite block at all
 must never be gated by the absence of evidence.
+
+**Connection discipline matters here.** rek-d01 runs against ``max_connections =
+100`` and has logged slot exhaustion daily since 2026-08-05 (11,378 errors on the
+08-10 collapse day). ~169 stations download in the same :01-:06 window, so a gate
+that opened its own connection per job would add ~169 concurrent connections to
+an already-exhausted budget — turning a safety feature into an outage. Two
+defences: the decision is cached per station for :data:`_CACHE_TTL_S`, and the
+query itself borrows from the semaphore-bounded pool rather than opening a
+socket. In the steady state this costs roughly one query per station per TTL.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Health writes every ~5 min, so a decision older than that cannot be improved by
+# asking again. Re-querying per download job would be pure cost.
+_CACHE_TTL_S = 300
+
+_cache: dict = {}
+_cache_lock = threading.Lock()
+
+
+def reset_cache() -> None:
+    """Drop the memoised decisions (tests)."""
+    with _cache_lock:
+        _cache.clear()
+
 
 # Window of health history the decision is made on.
 DEFAULT_WINDOW_HOURS = 6
@@ -52,7 +77,7 @@ def satellite_health(
     if conn is None:
         return None
     try:
-        with conn.cursor() as cur:
+        with conn.cursor() as cur:  # noqa: SIM117
             cur.execute(
                 """
                 SELECT count(*), coalesce(max(st.total), 0)
@@ -78,11 +103,21 @@ def should_skip_download(
     *,
     window_hours: int = DEFAULT_WINDOW_HOURS,
     min_samples: int = DEFAULT_MIN_SAMPLES,
+    use_cache: bool = False,
 ) -> Tuple[bool, str]:
     """``(skip, reason)`` — skip only when health PROVES nothing is tracked."""
+    if use_cache:
+        now = time.monotonic()
+        with _cache_lock:
+            hit = _cache.get(station_id)
+            if hit and now - hit[0] < _CACHE_TTL_S:
+                return hit[1]
+
     health = satellite_health(station_id, conn, window_hours=window_hours)
     if health is None:
-        return False, "no satellite health evidence — proceeding"
+        return _remember(
+            station_id, (False, "no satellite health evidence — proceeding"), use_cache
+        )
 
     samples, max_sats = health
     if samples < min_samples:
@@ -91,10 +126,25 @@ def should_skip_download(
             f"(need {min_samples}) — proceeding"
         )
     if max_sats > 0:
-        return False, f"tracking {max_sats} satellites — proceeding"
+        return _remember(
+            station_id,
+            (False, f"tracking {max_sats} satellites — proceeding"),
+            use_cache,
+        )
 
-    return True, (
-        f"0 satellites across all {samples} health samples in the last "
-        f"{window_hours}h — receiver is producing files with no observations. "
-        f"Downloads resume automatically as soon as it tracks a satellite again."
+    verdict = (
+        True,
+        (
+            f"0 satellites across all {samples} health samples in the last "
+            f"{window_hours}h — receiver is producing files with no observations. "
+            f"Downloads resume automatically as soon as it tracks a satellite again."
+        ),
     )
+    return _remember(station_id, verdict, use_cache)
+
+
+def _remember(station_id: str, verdict: Tuple[bool, str], use_cache: bool):
+    if use_cache:
+        with _cache_lock:
+            _cache[station_id] = (time.monotonic(), verdict)
+    return verdict
