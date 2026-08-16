@@ -215,9 +215,13 @@ class FileArchiver:
             return None
 
     def _quarantine_result(
-        self, tmp_file: Path, verdict, remove_tmp: bool
+        self, tmp_file: Path, verdict, remove_tmp: bool, confirmed_empty: bool = False
     ) -> ArchiveResult:
-        """Move a rejected file aside and report it as a non-archive."""
+        """Move a rejected file aside and report it as a non-archive.
+
+        ``confirmed_empty`` records that a content decode -- not just the size
+        heuristic -- established the file carries no observations.
+        """
         from .yield_guard import quarantine
 
         station = verdict.station
@@ -225,8 +229,9 @@ class FileArchiver:
         if self.yield_guard.quarantine_root:
             dest = quarantine(tmp_file, self.yield_guard.quarantine_root, station)
 
+        why = "no observation epochs in the file" if confirmed_empty else verdict.reason
         self.logger.error(
-            f"🚫 QUARANTINED {tmp_file.name}: {verdict.reason}"
+            f"🚫 QUARANTINED {tmp_file.name}: {why} ({verdict.reason})"
             + (f" → {dest}" if dest else " (not archived)")
         )
         if dest is None and remove_tmp:
@@ -377,7 +382,32 @@ class FileArchiver:
             # ever lands in the tree for a reindex or converter to pick up.
             guard_verdict = self._check_yield(tmp_file, archive_path, tmp_file_size)
             if guard_verdict is not None and not guard_verdict.allowed:
-                return self._quarantine_result(tmp_file, guard_verdict, remove_tmp)
+                # Size flagged it as abnormal — now ask the file itself, because
+                # size alone is a fragile reason to discard. Disabling a few
+                # constellations legitimately shrinks a file several-fold, and
+                # that file still contains observation epochs. Content is the
+                # authority; size is only what made us look.
+                from .data_presence import has_observations
+
+                observed = has_observations(tmp_file)
+                if observed is True:
+                    self.logger.warning(
+                        f"⚠️  {tmp_file.name} is undersized "
+                        f"({guard_verdict.reason}) but DOES contain observations "
+                        f"— archiving it. Check whether the receiver's "
+                        f"constellation or logging config changed."
+                    )
+                elif observed is False:
+                    return self._quarantine_result(
+                        tmp_file, guard_verdict, remove_tmp, confirmed_empty=True
+                    )
+                else:
+                    # UNKNOWN is not a soft no. Keep the file, say so loudly.
+                    self.logger.warning(
+                        f"⚠️  {tmp_file.name} is undersized "
+                        f"({guard_verdict.reason}) but its data content could "
+                        f"not be determined — archiving it rather than guessing."
+                    )
 
             # Create archive directory
             archive_path.parent.mkdir(parents=True, exist_ok=True)
