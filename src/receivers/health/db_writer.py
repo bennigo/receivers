@@ -638,6 +638,18 @@ class HealthDatabaseWriter:
         if total is None and not by_const:
             return
 
+        # A receiver tracking nothing still produces files on schedule — they are
+        # simply empty (RFEL: 0 satellites for days, ~8 KB 1Hz files vs a normal
+        # ~460 KB). The yield guard keeps that out of the archive, but filtering
+        # alone would hide the fault: the files just stop appearing and nobody is
+        # told why. Raise it here, where the evidence actually arrives.
+        try:
+            from ..utils.yield_guard import satellite_alert
+
+            satellite_alert(sid, total)
+        except Exception:  # noqa: BLE001 - an alert must never block the write
+            pass
+
         try:
             with self._conn.cursor() as cur:
                 cur.execute("SAVEPOINT satellite_tracking")
