@@ -291,6 +291,41 @@ class RINEXTask(ScheduledTask):
             self.logger.warning(f"Could not find raw files: {e}")
             return []
 
+    def _resolve_trimble_converter(self, fallback):
+        """Return the native (Docker) Trimble converter, or ``fallback``.
+
+        Mirrors ``async_converter._select_converter``: when
+        ``[rinex] use_native_trimble`` is set and the Docker image is present,
+        Trimble raw goes through the native converter. That is the only path
+        that yields RINEX 3 for these receivers, and the only one that can read
+        a .T02 whose payload is bzip2-compressed — runpkr00 exits 30 on those
+        and leaves a 26-byte stub .dat.
+
+        Falls back silently: a missing image or a Docker outage should degrade
+        to the old path, not fail the task.
+        """
+        try:
+            from ...config.receivers_config import get_receivers_config
+
+            if (
+                not get_receivers_config()
+                .get_rinex_config()
+                .get("use_native_trimble", False)
+            ):
+                return fallback
+
+            from ...rinex.trimble_native_converter import TrimbleNativeConverter
+
+            if TrimbleNativeConverter.is_available():
+                return TrimbleNativeConverter
+            self.logger.warning(
+                "use_native_trimble is set but the Docker image is unavailable "
+                "— falling back to runpkr00, which cannot read compressed .T02"
+            )
+        except Exception as exc:  # noqa: BLE001 - never fail conversion on this
+            self.logger.debug(f"native Trimble converter unavailable: {exc}")
+        return fallback
+
     def _get_converter(self, station_config: Dict[str, Any]):
         """Get the appropriate converter for the receiver type.
 
@@ -323,9 +358,19 @@ class RINEXTask(ScheduledTask):
                     session_type=session_type,
                 )
             elif receiver_type in ("netr9", "netrs", "netr5"):
+                # Prefer the native (Docker/Wine) converter exactly as the live
+                # path does in async_converter._select_converter. This branch
+                # used to hardcode TrimbleConverter, so live downloads converted
+                # natively while BACKFILL fell back to runpkr00 — which exits 30
+                # on these .T02 (bzip2-compressed payload, 26-byte stub .dat).
+                # Measured 2026-08-16: 566 distinct files retried, 1,132 failed
+                # spawns per 3 h, and the gaps never filled. The native
+                # converter is also the only one that produces RINEX 3 here.
                 from ...rinex.trimble_converter import TrimbleConverter
 
-                return TrimbleConverter(
+                trimble_cls = self._resolve_trimble_converter(TrimbleConverter)
+
+                return trimble_cls(
                     station_id=self.station_id,
                     rinex_version=RinexVersion(self.rinex_version),
                     output_format=output_format,

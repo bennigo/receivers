@@ -54,16 +54,29 @@ _PERMANENT_SIGNATURES: tuple[tuple[str, str], ...] = (
     ("not in gzip format", "not the compressed format the name claims"),
     ("invalid block type", "corrupt compressed stream"),
     ("crc check failed", "corrupt compressed stream"),
-    # --- unconvertable raw (converter exits non-zero on bad data) ----------
-    # runpkr00 reads a Trimble .T02/.T00 and extracts a .dat intermediate; a
-    # non-zero exit is a data problem (corrupt/incompatible raw), not the
-    # subprocess pressure that makes `compress` flaky, so a retry reads the same
-    # bad file. exit 30 is the observed fleet-wide case (1367 files / 83
-    # stations on the 2026-08-09 backfill run). Other runpkr00 codes are folded
-    # in as they surface — they are data failures, not transient load.
+    # --- wrong converter, NOT bad data -------------------------------------
+    # CORRECTED 2026-08-16. This used to read "Trimble raw unconvertable
+    # (runpkr00 exit 30) — archive-rm", i.e. it advised DELETING the raw. That
+    # was wrong and would have destroyed good data.
+    #
+    # exit 30 means runpkr00 could not read the .T02, not that the file is bad.
+    # These .T02 carry a bzip2-compressed payload (magic "BZh" a few bytes in)
+    # that this runpkr00 build cannot decode — it writes a 26-byte stub .dat and
+    # exits 30. The SAME files convert cleanly through the native Docker/Wine
+    # converter, which is why `use_native_trimble` exists and is the only path
+    # that produces RINEX 3 for these receivers.
+    #
+    # It surfaced fleet-wide (1367 files / 83 stations on 2026-08-09; 566 files
+    # and 1,132 failed spawns per 3 h on 2026-08-16) because the BACKFILL path
+    # hardcoded TrimbleConverter while live downloads used the native converter.
+    # Fixed in RINEXTask._resolve_trimble_converter. If this fires again, the
+    # native converter is unavailable — check Docker and the trm2rinex image,
+    # do NOT delete the raw.
     (
         "runpkr00 failed with exit code 30",
-        "Trimble raw unconvertable (runpkr00 exit 30) — archive-rm",
+        "runpkr00 cannot read this .T02 (compressed payload) — the native "
+        "Docker converter can; check use_native_trimble + the trm2rinex image. "
+        "DO NOT archive-rm: the raw is fine.",
     ),
     # --- metadata gaps, need a human ------------------------------------
     ("no tos session covers", "TOS has no session for this date — fix TOS"),
