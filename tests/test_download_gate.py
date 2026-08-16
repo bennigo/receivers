@@ -102,14 +102,25 @@ def test_gate_reopens_as_soon_as_satellites_return():
 
 
 def _run_job():
+    """Drive the job, stubbing the receiver so no real network I/O happens.
+
+    create_receiver raising means the job fails fast just past the gate; the
+    load-monitor call is what proves the gate let it through.
+    """
     from receivers.scheduling.bulk_scheduler import _download_station_data_job
 
-    return _download_station_data_job("RFEL", "1Hz_1hr")
+    with patch(
+        "receivers.cli.main.create_receiver", side_effect=RuntimeError("stubbed")
+    ):
+        return _download_station_data_job("RFEL", "1Hz_1hr")
 
 
 def test_download_job_returns_early_when_gated():
     with (
-        patch("receivers.db.connection.get_connection", return_value=MagicMock()),
+        patch(
+            "receivers.health.database_factory.DatabaseConnectionFactory.connection",
+            MagicMock(),
+        ),
         patch(
             "receivers.utils.download_gate.should_skip_download",
             return_value=(True, "0 satellites"),
@@ -123,7 +134,10 @@ def test_download_job_returns_early_when_gated():
 
 def test_download_job_proceeds_when_not_gated():
     with (
-        patch("receivers.db.connection.get_connection", return_value=MagicMock()),
+        patch(
+            "receivers.health.database_factory.DatabaseConnectionFactory.connection",
+            MagicMock(),
+        ),
         patch(
             "receivers.utils.download_gate.should_skip_download",
             return_value=(False, "tracking 9 satellites"),
@@ -141,10 +155,68 @@ def test_download_job_proceeds_when_not_gated():
 def test_a_broken_gate_never_blocks_a_download():
     """A gate that cannot even open its connection must not stop the download."""
     with (
-        patch("receivers.db.connection.get_connection", side_effect=Exception("boom")),
+        patch(
+            "receivers.health.database_factory.DatabaseConnectionFactory.connection",
+            side_effect=Exception("boom"),
+        ),
         patch(
             "receivers.scheduling.bulk_scheduler._get_load_monitor", return_value=None
         ) as load,
     ):
         _run_job()
         load.assert_called()
+
+
+# --- connection discipline --------------------------------------------------
+
+
+def test_repeat_calls_are_memoised(monkeypatch):
+    """rek-d01 sits at max_connections=100 with ~169 stations downloading in the
+    same window. Without memoisation the gate would query per job."""
+    from receivers.utils import download_gate as dg
+
+    dg.reset_cache()
+    conn = _conn(72, 0)
+    for _ in range(5):
+        assert dg.should_skip_download("RFEL", conn, use_cache=True)[0] is True
+    # One query for five calls.
+    assert conn.cursor.return_value.__enter__.return_value.execute.call_count == 1
+    dg.reset_cache()
+
+
+def test_healthy_verdicts_are_memoised_too():
+    """Otherwise a healthy fleet — the 170 normal stations — queries every job."""
+    from receivers.utils import download_gate as dg
+
+    dg.reset_cache()
+    conn = _conn(72, 11)
+    for _ in range(4):
+        assert dg.should_skip_download("SAUR", conn, use_cache=True)[0] is False
+    assert conn.cursor.return_value.__enter__.return_value.execute.call_count == 1
+    dg.reset_cache()
+
+
+def test_cache_is_opt_in_so_direct_calls_stay_honest():
+    from receivers.utils import download_gate as dg
+
+    dg.reset_cache()
+    conn = _conn(72, 0)
+    dg.should_skip_download("RFEL", conn)
+    dg.should_skip_download("RFEL", conn)
+    assert conn.cursor.return_value.__enter__.return_value.execute.call_count == 2
+    dg.reset_cache()
+
+
+def test_expired_cache_entry_is_refetched(monkeypatch):
+    """A station that recovers must not stay gated by a stale decision."""
+    from receivers.utils import download_gate as dg
+
+    dg.reset_cache()
+    base = dg.time.monotonic()
+    gated = _conn(72, 0)
+    assert dg.should_skip_download("RFEL", gated, use_cache=True)[0] is True
+    # ...TTL elapses, antenna fixed... (advance FORWARD from the cached stamp)
+    monkeypatch.setattr(dg.time, "monotonic", lambda: base + dg._CACHE_TTL_S + 1)
+    fixed = _conn(72, 7)
+    assert dg.should_skip_download("RFEL", fixed, use_cache=True)[0] is False
+    dg.reset_cache()
