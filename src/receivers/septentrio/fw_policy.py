@@ -61,13 +61,28 @@ def firmware_requires_auth(firmware_version: Optional[str]) -> bool:
 
 
 def should_attempt_login(firmware_version: Optional[str]) -> bool:
-    """True unless the firmware is KNOWN to be pre-5.7.
+    """True ONLY when the firmware is KNOWN to be >= 5.7.0.
 
-    The inverse is the lockout guard: a known pre-5.7 receiver gains nothing
-    from a login (auth is not enforced) and a rejected one still increments the
-    brute-force counter that bites the moment the station is upgraded.
+    Login is the sole thing that feeds the receiver's brute-force counter, and
+    on 5.7.0 a tripped counter is a GLOBAL lockout — every user including the
+    factory account, blocking ``rec-provision`` itself. So a login is sent only
+    where it can actually succeed.
+
+    **Unknown firmware does NOT attempt a login** (changed 2026-08-17). The
+    earlier default was "unknown -> try", on the reasoning that a stale
+    stations.cfg would otherwise silently break auth. That reasoning is obsolete:
+    the extractor detects the condition at the COMMAND level instead —
+    ``"Not authorized"`` raises a warning naming the exact fix
+    (``polarx5_tcp_extractor.py:1153-1161``), which is how ELDC's post-flash
+    state was diagnosed. The failure is loud, self-describing and clears with one
+    ``rec-provision``; the lockout it replaces cost 3.5 h of downtime and blocked
+    its own remedy.
+
+    Measured on rek-d01 2026-08-17: 113 Septentrio stations — 91 pre-5.7 (stop
+    logging in), 18 on 5.7.0 (unchanged), 4 unknown (ICEB/ICEC/INGC/NORV, all
+    ``station_status = inactive`` with zero health samples in 7 days).
     """
     parsed = parse_firmware(firmware_version)
     if parsed is None:
-        return True  # unknown — must try
+        return False  # unknown — do NOT risk the counter
     return parsed >= AUTH_REQUIRED_FROM

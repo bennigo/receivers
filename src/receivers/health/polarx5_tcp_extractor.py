@@ -30,7 +30,7 @@ import time
 from datetime import UTC, datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..septentrio.fw_policy import firmware_requires_auth
+from ..septentrio.fw_policy import firmware_requires_auth, should_attempt_login
 from .metrics import MetricChecker, load_thresholds
 
 #: Backwards-compatible alias. The policy now lives in
@@ -1263,11 +1263,28 @@ class PolaRX5TCPExtractor:
             # Previous attempt in this health check cycle failed — skip to avoid lockout.
             return True
 
-        # Always attempt login when credentials are configured — pre-5.7 receivers
-        # respond with "$E: Invalid command!" which is handled below, and 5.7.0+
-        # accept it normally. Skipping based on the stations.cfg firmware version
-        # silently breaks auth whenever the recorded version is stale (e.g. after
-        # a firmware upgrade that wasn't reflected in stations.cfg).
+        # Send a login ONLY where it can succeed: firmware KNOWN to be >= 5.7.0.
+        # This is the same guard septentrio/tcp_client.py:157 already applies —
+        # the two receiver-comms paths had drifted, and only this one still sent
+        # unconditionally. See fw_policy for the rule; do not re-derive it here.
+        #
+        # The old comment here argued that skipping on a stale stations.cfg
+        # version "silently breaks auth". It does not: a 5.7.0 receiver answers
+        # commands with "Not authorized", which _read_sbf_block turns into a
+        # warning naming the exact fix (:1153-1161). That is how ELDC's
+        # post-upgrade state was diagnosed. Loud, and one rec-provision clears it.
+        #
+        # What the unconditional login cost instead, measured 2026-08-17: ~8
+        # rejected logins per health cycle x 79 stations = ~159,000/day feeding a
+        # brute-force counter that is harmless on pre-5.7 and becomes a GLOBAL
+        # 3.5-9 h lockout the instant the station is flashed — blocking
+        # rec-provision, the very command needed to recover.
+        if not should_attempt_login(self.firmware_version):
+            self.logger.debug(
+                f"Skipping login for {self.station_id} "
+                f"(fw {self.firmware_version or 'unknown'} — not a known >=5.7.0)"
+            )
+            return True
 
         cmd = f"login, {self.tcp_username}, {self.tcp_password}\n"
         sock.sendall(cmd.encode("utf-8"))
