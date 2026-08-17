@@ -9,7 +9,9 @@ APScheduler-compatible entry point.
 """
 
 import logging
-from typing import List
+from typing import List, Optional
+
+from .lookback import Lookback
 
 logger = logging.getLogger("receivers.scheduler.gaps")
 
@@ -18,6 +20,7 @@ def _run_gap_detection_job(
     session_types: List[str],
     days_back: int = 7,
     rinex_days_back: int = 30,
+    lookback: Optional[Lookback] = None,
 ) -> None:
     """APScheduler job: scan for gaps in archived files.
 
@@ -59,18 +62,23 @@ def _run_gap_detection_job(
             if sid in station_ids and cfg.get("receiver_type")
         }
 
+        lb = lookback or Lookback(days_back, "days")
         logger.info(
             f"Gap detection: scanning {len(station_ids)} stations, "
-            f"{len(session_types)} sessions, {days_back} days back"
+            f"{len(session_types)} sessions, {lb.describe(session_types)}"
         )
 
         with GapDetector() as detector:
             for session_type in session_types:
+                # max_files is what makes files_back exact. Under days_back it
+                # equals the full enumerated range, so passing it is a no-op
+                # there and the two units share one call path.
                 summary = detector.get_gap_summary(
                     station_ids,
                     session_type,
-                    days_back=days_back,
+                    days_back=lb.date_span_days(session_type),
                     receiver_types=receiver_types,
+                    max_files=lb.file_count(session_type),
                 )
 
                 total_gaps = summary.get("total_gaps", 0)
@@ -105,7 +113,14 @@ def _run_gap_detection_job(
                     # and never refills.
                     from .backfill import _enqueue_backfill
 
-                    _enqueue_backfill(session_type, stations_with_gaps, days_back)
+                    # The queued backfill row must cover the SAME window the
+                    # gaps were found in, or the worker re-widens what this run
+                    # just narrowed.
+                    _enqueue_backfill(
+                        session_type,
+                        stations_with_gaps,
+                        lb.date_span_days(session_type),
+                    )
                 else:
                     logger.info(
                         f"Gap detection {session_type}: "

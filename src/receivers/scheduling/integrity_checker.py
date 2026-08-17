@@ -16,6 +16,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
+from .lookback import Lookback
+
 if TYPE_CHECKING:
     from ..health.file_tracker import ArchiveFileChecker, FileTracker
 
@@ -31,6 +33,7 @@ def _run_integrity_check_job(
     hash_fill_limit: int = 1000,
     check_identity: bool = True,
     identity_sessions: Optional[List[str]] = None,
+    lookback: Optional[Lookback] = None,
 ) -> None:
     """APScheduler job: periodic file integrity check.
 
@@ -70,8 +73,9 @@ def _run_integrity_check_job(
         return
 
     start_time = time.time()
+    lb = lookback or Lookback(days_back, "days")
     logger.info(
-        f"Starting integrity check: {days_back} days back, "
+        f"Starting integrity check: {lb.describe(session_types)}, "
         f"sessions={session_types}, tolerance={size_tolerance_pct}%"
     )
 
@@ -94,9 +98,10 @@ def _run_integrity_check_job(
         logger.warning("No active stations found for integrity check")
         return
 
-    # Date range
+    # Date range. end_date is shared; the start is per-session because a
+    # files_back window means hours for an hourly session and days for a daily
+    # one — see the loop below.
     end_date = date.today() - timedelta(days=1)
-    start_date = end_date - timedelta(days=days_back - 1)
 
     checker = ArchiveFileChecker()
     tracker = FileTracker()
@@ -134,6 +139,7 @@ def _run_integrity_check_job(
 
     try:
         for session_type in session_types:
+            start_date = end_date - timedelta(days=lb.date_span_days(session_type) - 1)
             for station_id in sorted(active_stations):
                 try:
                     result = _check_station_session(

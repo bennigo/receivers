@@ -159,3 +159,57 @@ class TestDateSpanDays:
     def test_days_back_is_always_its_own_count(self):
         assert Lookback(30, "days").date_span_days("1Hz_1hr") == 30
         assert Lookback(30, "days").date_span_days("15s_24hr") == 30
+
+
+class TestWiringContract:
+    """The consumers must keep accepting a Lookback.
+
+    These are signature guards: the wiring is easy to undo by accident in a
+    later refactor, and the failure mode is silent — the job falls back to
+    days_back and quietly re-widens the window by 24x on hourly sessions.
+    """
+
+    def test_jobs_accept_lookback_kwarg(self):
+        import inspect
+
+        from receivers.scheduling.archive_reconciler import (
+            _run_archive_reconciler_job,
+        )
+        from receivers.scheduling.gap_scheduler import _run_gap_detection_job
+        from receivers.scheduling.integrity_checker import _run_integrity_check_job
+
+        for fn in (
+            _run_gap_detection_job,
+            _run_archive_reconciler_job,
+            _run_integrity_check_job,
+        ):
+            params = inspect.signature(fn).parameters
+            assert "lookback" in params, f"{fn.__name__} lost its lookback kwarg"
+            assert params["lookback"].default is None, (
+                f"{fn.__name__}'s lookback must default to None so callers "
+                f"passing a plain days_back int keep working"
+            )
+
+    def test_gap_summary_accepts_max_files(self):
+        import inspect
+
+        from receivers.health.file_tracker import GapDetector
+
+        params = inspect.signature(GapDetector.get_gap_summary).parameters
+        assert "max_files" in params
+        assert params["max_files"].default is None
+
+    def test_gap_detection_values_for_a_realistic_config(self):
+        # What the wiring actually hands get_gap_summary for files_back: 7.
+        lb = Lookback.from_config({"files_back": 7}, default_days=7)
+        assert lb.date_span_days("1Hz_1hr") == 2  # enumerate 2 days...
+        assert lb.file_count("1Hz_1hr") == 7  # ...then keep the newest 7
+        assert lb.date_span_days("15s_24hr") == 7
+        assert lb.file_count("15s_24hr") == 7
+
+    def test_days_back_makes_max_files_a_noop(self):
+        # Under days_back, max_files equals the full enumerated range, so the
+        # trim cannot change anything and both units share one call path.
+        lb = Lookback.from_config({"days_back": 7}, default_days=7)
+        enumerated_hourly = lb.date_span_days("1Hz_1hr") * 24
+        assert lb.file_count("1Hz_1hr") == enumerated_hourly == 168

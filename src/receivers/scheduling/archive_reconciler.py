@@ -19,6 +19,8 @@ from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from .lookback import Lookback
+
 if TYPE_CHECKING:
     from ..health.file_tracker import ArchiveFileChecker, ArchiveFormat, FormatResolver
 
@@ -79,6 +81,7 @@ def _get_format_resolver():
 def _run_archive_reconciler_job(
     session_types: List[str],
     days_back: int = 30,
+    lookback: Optional[Lookback] = None,
 ) -> None:
     """APScheduler job: reconcile raw archives with RINEX output.
 
@@ -87,7 +90,13 @@ def _run_archive_reconciler_job(
 
     Args:
         session_types: Session types to reconcile (e.g., ['15s_24hr', '1Hz_1hr'])
-        days_back: Number of days to look back from yesterday
+        days_back: Number of days to look back from yesterday. Kept for callers
+            that still pass a plain int (the CLI); ignored when ``lookback`` is
+            given.
+        lookback: Session-aware window. With ``files_back`` this narrows hourly
+            sessions to N files instead of N*24 — the case scheduler.yaml's own
+            comment complains about (days_back:30 over 1Hz is ~239,000 files).
+            Daily sessions are unaffected either way.
     """
     try:
         from ..cli.main import get_all_station_configs
@@ -116,9 +125,10 @@ def _run_archive_reconciler_job(
             logger.info("Archive reconciler: no active stations with RINEX converters")
             return
 
+        lb = lookback or Lookback(days_back, "days")
         logger.info(
             f"Archive reconciler: scanning {len(convertible_stations)} stations, "
-            f"{len(session_types)} sessions, {days_back} days back"
+            f"{len(session_types)} sessions, {lb.describe(session_types)}"
         )
         _SWEEP_REFUSALS.clear()
 
@@ -132,7 +142,15 @@ def _run_archive_reconciler_job(
             logger.debug("Using FormatResolver for RINEX path construction")
 
         end_date = date.today() - timedelta(days=1)
-        start_date = end_date - timedelta(days=days_back - 1)
+        # The tiers below span the WIDEST session window; each session is then
+        # clamped to its own inside the loop. Doing it that way keeps the tier
+        # ordering intact (all stations at yesterday before any deep history) —
+        # inverting the tier/session loops to get per-session ranges would have
+        # broken exactly the priority this design exists for.
+        widest_days = max(
+            (lb.date_span_days(st) for st in session_types), default=days_back
+        )
+        start_date = end_date - timedelta(days=widest_days - 1)
         station_ids = sorted(convertible_stations)
 
         # --- Tiered priority: yesterday → last 7 days → deep history ---
@@ -163,6 +181,16 @@ def _run_archive_reconciler_job(
             # any 1Hz job starts, so yesterday data for all stations is done
             # in one fast batch.
             for session_type in session_types:
+                # Clamp this tier to the session's own window. With files_back
+                # an hourly session covers only the last day or two, so it
+                # simply drops out of the deeper tiers while the daily session
+                # still walks them.
+                session_start = max(
+                    tier_start,
+                    end_date - timedelta(days=lb.date_span_days(session_type) - 1),
+                )
+                if session_start > tier_end:
+                    continue
                 _yield_to_load_gate(f"reconciler-{tier_name}-{session_type}")
                 max_pool = min(len(station_ids), 8)
                 with ThreadPoolExecutor(
@@ -175,7 +203,7 @@ def _run_archive_reconciler_job(
                             _reconcile_station_session,
                             station_id,
                             session_type,
-                            tier_start,
+                            session_start,
                             tier_end,
                             checker,
                             resolver,

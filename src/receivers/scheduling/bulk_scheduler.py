@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
+from .lookback import Lookback
 from .schedule_parser import ScheduleTrigger, apply_distribution_window, parse_schedule
 
 if TYPE_CHECKING:
@@ -2624,13 +2625,18 @@ class BulkDownloadScheduler:
         from .gap_scheduler import _run_gap_detection_job
 
         schedule = gap_cfg.get("schedule", "2h")
-        days_back = gap_cfg.get("days_back", 7)
         sessions = gap_cfg.get("sessions", ["15s_24hr", "1Hz_1hr", "status_1hr"])
+        lookback = Lookback.from_config(
+            gap_cfg, default_days=7, section_name="gap_detection"
+        )
 
-        # RINEX scan uses a longer window — defaults to archive_reconciler's days_back
+        # RINEX scan uses a longer window — defaults to the reconciler's own
+        # count. Read files_back too, so switching that section over does not
+        # silently drop this fallback to the hardcoded 30.
         reconciler_cfg = self.yaml_config.get("archive_reconciler", {})
         rinex_days_back = gap_cfg.get(
-            "rinex_days_back", reconciler_cfg.get("days_back", 30)
+            "rinex_days_back",
+            reconciler_cfg.get("days_back", reconciler_cfg.get("files_back", 30)),
         )
 
         base_trigger = parse_schedule(schedule)
@@ -2638,7 +2644,8 @@ class BulkDownloadScheduler:
         self.scheduler.add_job(
             func=_run_gap_detection_job,
             trigger=base_trigger.trigger_type,
-            args=[sessions, days_back, rinex_days_back],
+            args=[sessions, 7, rinex_days_back],
+            kwargs={"lookback": lookback},
             id="gap_detection",
             replace_existing=True,
             max_instances=1,
@@ -2652,7 +2659,8 @@ class BulkDownloadScheduler:
             func=_run_gap_detection_job,
             trigger="date",
             run_date=datetime.now() + timedelta(seconds=60),
-            args=[sessions, days_back, rinex_days_back],
+            args=[sessions, 7, rinex_days_back],
+            kwargs={"lookback": lookback},
             id="gap_detection_startup",
             replace_existing=True,
             executor="backfill",
@@ -2660,7 +2668,8 @@ class BulkDownloadScheduler:
 
         self.logger.info(
             f"Scheduled gap detection ({base_trigger.description}, "
-            f"{days_back} days back, RINEX {rinex_days_back} days, immediate first run)"
+            f"{lookback.describe(sessions)}, RINEX {rinex_days_back} days, "
+            f"immediate first run)"
         )
 
     def _schedule_archive_reconciler(self) -> None:
@@ -2677,15 +2686,18 @@ class BulkDownloadScheduler:
         from .archive_reconciler import _run_archive_reconciler_job
 
         schedule = reconciler_cfg.get("schedule", "6h")
-        days_back = reconciler_cfg.get("days_back", 30)
         sessions = reconciler_cfg.get("sessions", ["15s_24hr", "1Hz_1hr"])
+        lookback = Lookback.from_config(
+            reconciler_cfg, default_days=30, section_name="archive_reconciler"
+        )
 
         base_trigger = parse_schedule(schedule)
 
         self.scheduler.add_job(
             func=_run_archive_reconciler_job,
             trigger=base_trigger.trigger_type,
-            args=[sessions, days_back],
+            args=[sessions],
+            kwargs={"lookback": lookback},
             id="archive_reconciler",
             replace_existing=True,
             max_instances=1,
@@ -2698,14 +2710,16 @@ class BulkDownloadScheduler:
             func=_run_archive_reconciler_job,
             trigger="date",
             run_date=datetime.now() + timedelta(seconds=120),
-            args=[sessions, days_back],
+            args=[sessions],
+            kwargs={"lookback": lookback},
             id="archive_reconciler_startup",
             replace_existing=True,
             executor="backfill",
         )
 
         self.logger.info(
-            f"Scheduled archive reconciler ({base_trigger.description}, {days_back} days back, immediate first run)"
+            f"Scheduled archive reconciler ({base_trigger.description}, "
+            f"{lookback.describe(sessions)}, immediate first run)"
         )
 
     def _schedule_local_prune(self) -> None:
@@ -2867,8 +2881,10 @@ class BulkDownloadScheduler:
         from .integrity_checker import _run_integrity_check_job
 
         schedule = checker_cfg.get("schedule", "6h")
-        days_back = checker_cfg.get("days_back", 7)
         sessions = checker_cfg.get("sessions", ["15s_24hr", "1Hz_1hr", "status_1hr"])
+        lookback = Lookback.from_config(
+            checker_cfg, default_days=7, section_name="integrity_checker"
+        )
         check_receiver = checker_cfg.get("check_receiver", True)
         size_tolerance_pct = checker_cfg.get("size_tolerance_pct", 50.0)
         hash_fill_limit = checker_cfg.get("hash_fill_limit", 1000)
@@ -2881,10 +2897,11 @@ class BulkDownloadScheduler:
         base_trigger = parse_schedule(schedule)
 
         # args positions 5/6 = station_filter (None = all), hash_fill_limit;
-        # 7/8 = check_identity, identity_sessions
+        # 7/8 = check_identity, identity_sessions. days_back stays at its
+        # historical default here — `lookback` (passed as a kwarg) supersedes it.
         job_args = [
             sessions,
-            days_back,
+            7,
             check_receiver,
             size_tolerance_pct,
             None,
@@ -2892,11 +2909,13 @@ class BulkDownloadScheduler:
             check_identity,
             identity_sessions,
         ]
+        job_kwargs = {"lookback": lookback}
 
         self.scheduler.add_job(
             func=_run_integrity_check_job,
             trigger=base_trigger.trigger_type,
             args=job_args,
+            kwargs=job_kwargs,
             id="integrity_checker",
             replace_existing=True,
             max_instances=1,
@@ -2910,6 +2929,7 @@ class BulkDownloadScheduler:
             trigger="date",
             run_date=datetime.now() + timedelta(seconds=180),
             args=job_args,
+            kwargs=job_kwargs,
             id="integrity_checker_startup",
             replace_existing=True,
             executor="backfill",
@@ -2917,7 +2937,7 @@ class BulkDownloadScheduler:
 
         self.logger.info(
             f"Scheduled integrity checker ({base_trigger.description}, "
-            f"{days_back} days back, tolerance={size_tolerance_pct}%, "
+            f"{lookback.describe(sessions)}, tolerance={size_tolerance_pct}%, "
             f"receiver_check={'on' if check_receiver else 'off'}, immediate first run)"
         )
 
