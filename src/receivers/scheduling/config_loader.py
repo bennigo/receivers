@@ -186,19 +186,19 @@ def get_default_config() -> Dict[str, Any]:
         "gap_detection": {
             "enabled": True,
             "schedule": "2h",
-            "days_back": 7,
+            "files_back": 7,
             "sessions": ["15s_24hr", "1Hz_1hr", "status_1hr"],
         },
         "archive_reconciler": {
             "enabled": True,
             "schedule": "6h",
-            "days_back": 30,
+            "files_back": 30,
             "sessions": ["15s_24hr", "1Hz_1hr"],
         },
         "integrity_checker": {
             "enabled": True,
             "schedule": "6h",
-            "days_back": 7,
+            "files_back": 7,
             "sessions": ["15s_24hr", "1Hz_1hr", "status_1hr"],
             "check_receiver": True,
             "size_tolerance_pct": 50.0,
@@ -588,22 +588,43 @@ backfill:
   archiving_mode: bulk
   sessions: [status_1hr, 1Hz_1hr, 15s_24hr]
 
+# How far back a job looks. Two keys, pick ONE per section — setting both is a
+# hard startup error, never a silent precedence:
+#
+#   days_back:  N calendar days, whatever the session's file frequency.
+#   files_back: N FILES — N days for a daily session (15s_24hr), N HOURS for an
+#               hourly one (1Hz_1hr, status_1hr).
+#
+# The difference only matters for hourly sessions, where it is 24x: days_back: 7
+# on 1Hz_1hr is 168 files per station, files_back: 7 is 7. Anything older is
+# long_term_backfill's job.
+#
+# Sections that deliberately keep days_back:
+#   epos_disseminate  — it is the ONLY backfill window EPOS has (no
+#                       gap-reconciler yet), so a day that ages out of it is
+#                       orphaned until someone runs epos-disseminate --force.
+#   morning_recovery  — day-oriented by construction (it re-walks whole target
+#                       dates, daily sessions only).
+#
+# The effective expansion is logged at startup, e.g.
+#   "files_back=7 -> 15s_24hr: 7d, 1Hz_1hr: 7h"
+
 gap_detection:
   enabled: true
   schedule: "2h"
-  days_back: 7
+  files_back: 7
   sessions: [15s_24hr, 1Hz_1hr, status_1hr]
 
 archive_reconciler:
   enabled: true
   schedule: "6h"
-  days_back: 30
+  files_back: 30
   sessions: [15s_24hr, 1Hz_1hr]
 
 integrity_checker:
   enabled: true
   schedule: "6h"
-  days_back: 7
+  files_back: 7
   sessions: [15s_24hr, 1Hz_1hr, status_1hr]
   check_receiver: true
   size_tolerance_pct: 50.0
