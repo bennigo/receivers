@@ -2342,6 +2342,7 @@ class GapDetector:
         session_type: str,
         days_back: int = 7,
         receiver_types: Optional[dict[str, str]] = None,
+        max_files: Optional[int] = None,
     ) -> dict[str, Any]:
         """Get summary of gaps across multiple stations.
 
@@ -2350,6 +2351,12 @@ class GapDetector:
             session_type: Session type
             days_back: Number of days to check
             receiver_types: Optional dict of station_id -> receiver_type
+            max_files: If set, consider only the NEWEST N expected files per
+                station rather than the whole date range. This is how
+                ``files_back`` is expressed here: the date arithmetic below
+                works in whole ``date`` objects and cannot represent "7/24 of a
+                day", so the range is enumerated as usual and then trimmed.
+                For an hourly session that is literally "the last N files".
 
         Returns:
             Dictionary with gap summary:
@@ -2381,6 +2388,14 @@ class GapDetector:
             expected = self._generate_expected_files(
                 station_id, session_type, start_date, end_date
             )
+            # files_back trim: _generate_expected_files emits chronologically,
+            # so the newest N are the tail. Both the expected count and the gap
+            # list must be trimmed by the SAME set, or the summary would report
+            # gaps outside the window it claims to cover.
+            allowed: Optional[set] = None
+            if max_files is not None and len(expected) > max_files:
+                expected = expected[-max_files:]
+                allowed = set(expected)
             summary["total_expected"] += len(expected)
 
             # Find gaps
@@ -2393,6 +2408,8 @@ class GapDetector:
                 sync_first=True,
                 skip_missing_on_receiver=True,
             )
+            if allowed is not None:
+                gaps = [g for g in gaps if (g.file_date, g.file_hour) in allowed]
 
             archived = len(expected) - len(gaps)
             summary["total_archived"] += archived
