@@ -51,9 +51,41 @@ StartLimitBurst=5
 # /etc/systemd/system/user@.service.d/delegate.conf drop-in for that.
 # If you ever copy this unit to a host without that drop-in, MemoryMax and
 # CPUQuota will be silently ignored.
+#
+# MemoryHigh is a SOFT limit: over it the kernel reclaims and throttles the
+# cgroup (memory.events "high"), killing nothing. MemoryMax is HARD: over it
+# the kernel OOM-kills. The gap between them is the safety margin.
+#
+# These values are rek-d01-sized (the unit already hardcodes /home/bgo paths).
+# History, so nobody "tidies" them back down:
+#   3G/4G   — the ORIGINAL values, and the direct cause of the Aug 10-11 2026
+#             collapse. memory.current reached 3.1G (446MB anon + 2.17GB
+#             RECLAIMABLE page cache from bulk file I/O — not a leak) and
+#             produced 148,604,206 memory.high throttle events. Every process
+#             stalled in mem_cgroup_handle_over_high; 78 bin2asc sat ~2.5h each
+#             at 6% CPU, load hit 82 while I/O pressure was only 14%. The box
+#             was throttled, not busy.
+#   10G/14G — raised 2026-08-11 against a 32 GB host. The 16-worker RINEX pool
+#             then sat pinned on the watermark at 9.94 GB with ~49,150 high
+#             events: memory-bound, not CPU-bound.
+#   20G/28G — raised 2026-08-17 after planned maintenance took the host to
+#             64 GB RAM. Leaves ~32 GB for the OS and for postgres page cache,
+#             which it leans on entirely (shared_buffers = 128MB against an
+#             8.8M-row archive_catalog).
+#
+# CPUQuota is deliberately NOT raised with them: at 16 workers load is 0.59
+# against the 400% quota, so the quota is never approached. This pool binds on
+# memory, never on CPU.
+#
+# NOTE: `systemctl --user daemon-reload` does NOT reapply cgroup limits to a
+# RUNNING unit — `systemctl --user show` will report the new values while the
+# cgroup files keep the old ones. To change them live without a restart:
+#   systemctl --user set-property --runtime gps-receivers-scheduler \
+#       MemoryHigh=20G MemoryMax=28G
+# then verify against the actual cgroup memory.high / memory.max files.
 LimitNOFILE=65536
-MemoryMax=4G
-MemoryHigh=3G
+MemoryMax=28G
+MemoryHigh=20G
 CPUQuota=400%
 
 # Logging

@@ -760,9 +760,16 @@ receivers scheduler stop | restart | status | load-status | backfill-status
   `--max-workers` flag** by design, so a CLI override won't match the service. To throttle,
   edit `max_workers` in **gps-config-data** `scheduler.yaml`, push (sync timer propagates in
   ~10 min), then `systemctl --user restart`. A local edit on rek-d01 gets reverted by the sync.
-- Caps: `CPUQuota=400%`, `MemoryMax=4G`/`MemoryHigh=3G` (only enforced with the
+- Caps: `CPUQuota=400%`, `MemoryMax=28G`/`MemoryHigh=20G` (only enforced with the
   `user@.service.d/delegate.conf` cgroup-delegation drop-in install.sh lays down). The 400%
-  quota is the ~365% CPU ceiling seen under load.
+  quota is the ~365% CPU ceiling seen under load, and is deliberately NOT raised alongside
+  memory — at 16 RINEX workers load is 0.59 against that quota, so this pool binds on memory
+  and never on CPU. The memory pair went 3G/4G → 10G/14G (2026-08-11, after the Aug 10-11
+  throttle collapse) → 20G/28G (2026-08-17, after the host went 32 → 64 GB); the unit file
+  carries the full history. **`daemon-reload` does not reapply cgroup limits to a running
+  unit** — `systemctl --user show` reports the new values while the cgroup files keep the old
+  ones. Change them live with `systemctl --user set-property --runtime`, and verify against
+  the actual `memory.high`/`memory.max` files, not against `show`.
 - A **legacy system-level** `gps-receivers-scheduler.service` was removed by install.sh; if you
   see it `not-found/failed` under `systemctl` (system scope), that's the removed unit — the live
   one is the **user** unit above.
