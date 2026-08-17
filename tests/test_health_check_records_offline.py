@@ -14,6 +14,7 @@ graph once the late data lands.
 used to write nothing at all. These tests pin the outer handler.
 """
 
+from datetime import UTC
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -30,11 +31,13 @@ def patched_config():
 
 def _run_with_receiver_failure(send_to_db=True):
     """Drive _status_check_job so it raises before the inner try."""
-    with patch(
-        "receivers.cli.main.create_receiver", side_effect=RuntimeError("no route to host")
-    ), patch(
-        "receivers.health.connectivity_writer.ConnectivityWriter"
-    ) as writer_cls:
+    with (
+        patch(
+            "receivers.cli.main.create_receiver",
+            side_effect=RuntimeError("no route to host"),
+        ),
+        patch("receivers.health.connectivity_writer.ConnectivityWriter") as writer_cls,
+    ):
         _status_check_job("TEST", send_to_db=send_to_db, send_to_icinga=False)
     return writer_cls
 
@@ -74,11 +77,10 @@ def test_no_db_write_when_db_disabled(patched_config):
 
 def test_recording_failure_never_breaks_the_job(patched_config):
     """A failure to record must not propagate out of the health job."""
-    with patch(
-        "receivers.cli.main.create_receiver", side_effect=RuntimeError("boom")
-    ), patch(
-        "receivers.health.connectivity_writer.ConnectivityWriter"
-    ) as writer_cls:
+    with (
+        patch("receivers.cli.main.create_receiver", side_effect=RuntimeError("boom")),
+        patch("receivers.health.connectivity_writer.ConnectivityWriter") as writer_cls,
+    ):
         writer_cls.return_value.write_ping_only.side_effect = Exception("db down")
         # Must return normally, not raise.
         _status_check_job("TEST", send_to_db=True, send_to_icinga=False)
@@ -90,9 +92,10 @@ def test_missing_station_config_does_not_record_offline():
     Recording it as 'offline' would blame the station for our own misconfig,
     so this path deliberately stays a no-op.
     """
-    with patch("receivers.cli.main.get_station_config", return_value=None), patch(
-        "receivers.health.connectivity_writer.ConnectivityWriter"
-    ) as writer_cls:
+    with (
+        patch("receivers.cli.main.get_station_config", return_value=None),
+        patch("receivers.health.connectivity_writer.ConnectivityWriter") as writer_cls,
+    ):
         _status_check_job("TEST", send_to_db=True, send_to_icinga=False)
 
     writer_cls.return_value.write_ping_only.assert_not_called()
@@ -112,7 +115,7 @@ def test_connectivity_writer_derives_offline_from_error_only_payload():
         conn,
         "TEST",
         {"connection": {"error": "RuntimeError: no route to host"}},
-        datetime(2026, 8, 14, 14, 23, tzinfo=timezone.utc),
+        datetime(2026, 8, 14, 14, 23, tzinfo=UTC),
     )
 
     assert cursor.execute.called

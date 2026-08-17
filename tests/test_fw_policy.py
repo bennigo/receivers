@@ -61,9 +61,21 @@ class TestShouldAttemptLogin:
         assert should_attempt_login(fw) is True
 
     @pytest.mark.parametrize("fw", [None, "unknown"])
-    def test_unknown_still_tries(self, fw):
-        """Can't know — must attempt, or a 5.7.0 box would reject everything."""
-        assert should_attempt_login(fw) is True
+    def test_unknown_does_NOT_try(self, fw):
+        """INVERTED 2026-08-17. Was: "can't know — must attempt".
+
+        The old reasoning was that a 5.7.0 box would otherwise reject
+        everything. It still reveals itself — via "Not authorized" on the
+        COMMAND path, which warns and names the fix
+        (polarx5_tcp_extractor.py:1153-1161). That is exactly how ELDC's
+        post-flash state was diagnosed.
+
+        Meanwhile the cost of guessing wrong the other way is a GLOBAL 3.5-9 h
+        lockout that also blocks rec-provision, the command needed to recover.
+        A login that cannot be known to succeed is pure risk, so unknown now
+        means "do not send".
+        """
+        assert should_attempt_login(fw) is False
 
 
 def test_extractor_alias_still_resolves():
