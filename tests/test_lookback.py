@@ -283,3 +283,28 @@ class TestPerSessionOverrides:
         lb = Lookback.from_config(self.CFG, default_days=7)
         assert hash(lb) is not None
         assert pickle.loads(pickle.dumps(lb)) == lb
+
+
+class TestScalarIntConsumers:
+    """Some consumers still need a plain int, and a mapping must not leak into
+    them. rinex_days_back is the one that bit: it feeds timedelta(days=...),
+    and reading the raw files_back key handed it a dict."""
+
+    RECONCILER = {"files_back": {"default": 36, "15s_24hr": 30}}
+
+    def test_reconciler_daily_reach_is_an_int(self):
+        lb = Lookback.from_config(self.RECONCILER, default_days=30)
+        v = lb.date_span_days("15s_24hr")
+        assert isinstance(v, int)
+        assert v == 30  # same value the old hardcoded fallback used
+
+    def test_it_survives_timedelta(self):
+        from datetime import date, timedelta
+
+        lb = Lookback.from_config(self.RECONCILER, default_days=30)
+        # This is the exact expression that raised on a dict.
+        assert date.today() - timedelta(days=lb.date_span_days("15s_24hr"))
+
+    def test_scalar_form_gives_the_same_shape(self):
+        lb = Lookback.from_config({"files_back": 36}, default_days=30)
+        assert isinstance(lb.date_span_days("15s_24hr"), int)
