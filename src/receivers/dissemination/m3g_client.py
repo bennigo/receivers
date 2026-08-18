@@ -56,6 +56,35 @@ TEST_M3G_ENDPOINT = "https://gnss-metadata.eu/__test/v1"
 _ENDPOINT_ALIASES = {"prod": DEFAULT_M3G_ENDPOINT, "test": TEST_M3G_ENDPOINT}
 
 
+#: IGS site logs are ISO-8859-1 (Latin-1), not UTF-8. M3G serves Latin-1 back
+#: (``file`` reports "ISO-8859 text" for every log fetched from
+#: gnss-metadata.eu) and Latin-1 covers Icelandic completely (á é í ó ú ý þ æ ö ð).
+SITELOG_ENCODING = "latin-1"
+
+
+def decode_sitelog(raw: bytes) -> str:
+    """Decode site-log bytes, tolerating the UTF-8 files written before the fix.
+
+    Latin-1 decoding never raises — every byte is a valid code point — so a
+    mis-encoded file cannot be detected by failure. UTF-8 decoding *does* raise
+    on Latin-1 high bytes, which makes it a reliable discriminator: try UTF-8
+    strict first, and fall back to Latin-1 when it fails. A pre-fix UTF-8 log
+    (``ö`` as ``C3 B6``) decodes as UTF-8; a Latin-1 log (``ö`` as ``F6``) fails
+    UTF-8 and falls through. Both end up as the same correct text.
+    """
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode(SITELOG_ENCODING)
+
+
+def read_sitelog(path) -> str:
+    """Read a site log from disk with :func:`decode_sitelog`."""
+    from pathlib import Path as _Path
+
+    return decode_sitelog(_Path(path).read_bytes())
+
+
 def nine_char_id(
     station_id: str, country_code: str = "ISL", monument_number: str = "00"
 ) -> str:
@@ -357,6 +386,10 @@ class M3GClient:
             resp = requests.put(
                 url,
                 params=params,
+                # UTF-8 on the WIRE, deliberately, even though the site log
+                # itself is Latin-1 on disk and Latin-1 is what M3G serves back.
+                # Sending Latin-1 here makes the API answer HTTP 500 (measured
+                # 2026-08-18). Do not "fix" this to match SITELOG_ENCODING.
                 data=content.encode("utf-8"),
                 headers={
                     "Content-Type": "text/plain; charset=utf-8",
@@ -451,6 +484,10 @@ class M3GClient:
             resp = requests.put(
                 url,
                 params=params,
+                # UTF-8 on the WIRE, deliberately, even though the site log
+                # itself is Latin-1 on disk and Latin-1 is what M3G serves back.
+                # Sending Latin-1 here makes the API answer HTTP 500 (measured
+                # 2026-08-18). Do not "fix" this to match SITELOG_ENCODING.
                 data=content.encode("utf-8"),
                 headers={
                     **self._auth_headers(),
@@ -564,7 +601,10 @@ class M3GClient:
             return None
         if not resp.ok:
             return None
-        text = resp.text
+        # Decode from bytes: requests guesses the charset from headers, and M3G
+        # serves Latin-1 without always declaring it — a wrong guess turns every
+        # Icelandic character into U+FFFD and makes the diff show phantom changes.
+        text = decode_sitelog(resp.content)
         # M3G serves an HTML error page for an unknown station. Guard on the body
         # as well as the status: returning that as "the live site log" would make
         # a diff show the entire portal page as a change.
