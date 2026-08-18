@@ -19,7 +19,7 @@ differ per host. The goal: fold each into a verb that resolves its inputs from t
 config that already exists, so a future operator (or the scheduler) reruns the same
 extraction by name.
 
-## The four authorities an extraction reconciles
+## The six authorities an extraction reconciles
 
 | # | Source | Access | Truth it carries |
 |---|--------|--------|------------------|
@@ -27,9 +27,36 @@ extraction by name.
 | 2 | TOS | `tostools.api` (`/tos/internal`) | the metadata DB of record |
 | 3 | live receiver | probe (SBF 5902 / Trimble HTTP) | hardware *self-report* |
 | 4 | cold RINEX archive | filesystem (read-only mount) | *empirical* history (REC/ANT/VERS headers) |
+| 5 | **raw SBF** | `sbf2rin` decode of the archived raw | *empirical* truth where the header **cannot** answer |
+| 6 | **GAMIT `station.info`** | `resolve_station_info()` (okada `/D/DATABASE`) | the **field record** — surveyed heights, curated models |
 
 Determinism rule: a verb names which authorities it reads and resolves every path
 from config; given the same TOS + archive state it always returns the same result.
+
+**5 and 6 were added 2026-08-18.** Both existed and did real work; neither was
+named here, and both broke the determinism rule in the same way — an
+undocumented source whose path or presence you had to read the code to discover.
+
+*Raw SBF* is the only authority that can answer the **2017-2025** span: those
+archived headers are RINEX 2, which under-reports constellations, so absence in
+them proves nothing. `tos audit constellations` decodes the day's raw when the
+header is R2 or unparseable. The catch that makes naming it necessary: a decode
+produces an R3 reading, so `version`/`reliable` are indistinguishable from a
+genuine R3 header — the report would otherwise claim the *archive* recorded
+something it never did. `ConstellationReading.origin` (`rinex_header` |
+`sbf_decode`) now states which replied.
+
+*station.info* was reachable only by hardcoding
+`--station-info data/station_config/station.info.sopac.apr05` — a packaged 2005
+snapshot — and **without that flag the audits did no enrichment at all**, so the
+hardcoded path was load-bearing. It now resolves override → env → cfg → mount →
+packaged, mirroring `cold_archive_prepath`, and reports its origin. okada
+exported `/D/DATABASE` read-only on 2026-08-18, so `origin=mount` (the live file)
+is the normal case.
+
+**Both follow the same rule, and it is the general one: an authority must name
+itself in its own output.** "Which copy did I read, and is it live?" has to be
+answerable from the run, not from the source.
 
 ## Extraction catalogue — current form → target verb → path config
 
