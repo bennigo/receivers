@@ -169,7 +169,7 @@ def cmd_m3g_submit(args: argparse.Namespace) -> int:
 
 def cmd_m3g_diff(args: argparse.Namespace) -> int:
     """Diff the locally generated site log against the live M3G draft."""
-    from ..dissemination.m3g_client import M3GClient
+    from ..dissemination.m3g_client import M3GClient, nine_char_id
     from ..dissemination.sitelogs import generate_site_log, resolve_sitelogs_repo
 
     sid = args.station.upper()
@@ -186,9 +186,17 @@ def cmd_m3g_diff(args: argparse.Namespace) -> int:
         local = path.read_text(encoding="utf-8")
 
     client = M3GClient(endpoint=args.m3g_endpoint)
-    remote = client.view_sitelog(sid)
+    nine = nine_char_id(sid, args.country_code, args.monument_number)
+    remote = client.view_sitelog(
+        sid,
+        country_code=args.country_code,
+        monument_number=args.monument_number,
+    )
     if remote is None:
-        print(f"❌ no live M3G site log for {sid} (station may not exist yet).")
+        # Genuinely absent now that the endpoint is right — this used to fire for
+        # every station, including published ones, because /sitelog/view does not
+        # exist on M3G.
+        print(f"❌ no live M3G site log for {nine} — not published yet.")
         return 1
 
     local_lines = local.splitlines(keepends=True)
@@ -287,6 +295,13 @@ def create_m3g_parser(subparsers) -> argparse.ArgumentParser:
         "diff", help="Diff the local site log vs the live M3G draft"
     )
     add_common(p_diff)
+    # Needed to build the nine-char id the exportlog endpoint keys on.
+    p_diff.add_argument(
+        "--country-code", default="ISL", help="Country code (default: ISL)"
+    )
+    p_diff.add_argument(
+        "--monument-number", default="00", help="Monument number (default: 00)"
+    )
     p_diff.set_defaults(func=cmd_m3g_diff)
 
     return parser

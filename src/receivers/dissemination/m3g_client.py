@@ -39,6 +39,7 @@ from __future__ import annotations
 import configparser
 import logging
 import os
+import re
 import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -53,6 +54,23 @@ logger = logging.getLogger("receivers.dissemination.m3g")
 DEFAULT_M3G_ENDPOINT = "https://gnss-metadata.eu/v1"
 TEST_M3G_ENDPOINT = "https://gnss-metadata.eu/__test/v1"
 _ENDPOINT_ALIASES = {"prod": DEFAULT_M3G_ENDPOINT, "test": TEST_M3G_ENDPOINT}
+
+
+def nine_char_id(
+    station_id: str, country_code: str = "ISL", monument_number: str = "00"
+) -> str:
+    """IGS/M3G nine-character id: ``RHOF`` -> ``RHOF00ISL``.
+
+    Idempotent: a value that is already nine characters is returned unchanged,
+    so callers may pass either form.
+    """
+    sid = station_id.strip().upper()
+    if len(sid) == 9:
+        return sid
+    mon = str(monument_number)[:2].rjust(2, "0")
+    return f"{sid}{mon}{country_code.upper()}"
+
+
 DEFAULT_TIMEOUT = 30
 DEFAULT_NETWORK = "EPOS"
 
@@ -498,24 +516,59 @@ class M3GClient:
 
     # -- read: view (auth-free for public stations) -----------------------
 
-    def view_sitelog(self, station_id: str) -> Optional[str]:
-        """Fetch the current M3G site log text for ``station_id`` (``/sitelog/view``).
+    def _portal_root(self) -> str:
+        """Root for the non-API paths (``/sitelog/exportlog``).
 
-        Useful for diffing the live M3G draft against a locally generated one
-        before uploading. Returns the site log text, or None if unavailable.
+        API endpoints carry a trailing ``/v1`` / ``/v14`` segment; the portal
+        paths sit one level up. The ``__test`` prefix is preserved, so a client
+        pointed at the test endpoint does not silently read production.
+
+        ``https://gnss-metadata.eu/v1``         -> ``https://gnss-metadata.eu``
+        ``https://gnss-metadata.eu/__test/v1``  -> ``https://gnss-metadata.eu/__test``
         """
-        sid = station_id.upper()
-        url = f"{self.endpoint}/sitelog/view"
+        return re.sub(r"/v\d+/?$", "", self.endpoint)
+
+    def view_sitelog(
+        self,
+        station_id: str,
+        *,
+        country_code: str = "ISL",
+        monument_number: str = "00",
+    ) -> Optional[str]:
+        """Fetch the live M3G site log text, or None when the station has none.
+
+        Uses ``/sitelog/exportlog?station=<nine-char>``. This previously requested
+        ``/sitelog/view?id=<four-char>``, which does not exist on M3G: every call
+        got a 404 HTML page, so ``m3g diff`` reported "station may not exist yet"
+        for EVERY station, including ones demonstrably published. Verified
+        2026-08-18 against the live service:
+
+            /sitelog/view?id=RHOF                 -> 404 (HTML)
+            /sitelog/view?id=RHOF00ISL            -> 404 (HTML)
+            /sitelog/exportlog?station=RHOF00ISL  -> 200, 11 kB site log
+
+        A 4-char marker is expanded to the nine-char id; an id that is already
+        nine characters is used as given.
+        """
+        nine = nine_char_id(station_id, country_code, monument_number)
+        url = f"{self._portal_root()}/sitelog/exportlog"
         try:
             resp = requests.get(
                 url,
-                params={"id": sid},
+                params={"station": nine},
                 headers={"Accept": "application/sitelog"},
                 timeout=self.timeout,
             )
         except requests.RequestException as exc:
-            logger.warning("m3g view %s: %s", sid, exc)
+            logger.warning("m3g exportlog %s: %s", nine, exc)
             return None
         if not resp.ok:
             return None
-        return resp.text
+        text = resp.text
+        # M3G serves an HTML error page for an unknown station. Guard on the body
+        # as well as the status: returning that as "the live site log" would make
+        # a diff show the entire portal page as a change.
+        if text.lstrip().startswith("<"):
+            logger.debug("m3g exportlog %s: HTML body, treating as absent", nine)
+            return None
+        return text
