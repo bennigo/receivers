@@ -148,6 +148,11 @@ class DisseminateResult:
     # day/dir), to be removed after a durable push+index. None when the name is
     # unchanged (R2-short overwrite) or the source was raw (no legacy RINEX).
     superseded_name: Optional[str] = None
+    # Convert-cache directories this product occupies: the output-layer entry and
+    # its decode-layer entry. Carried so the caller can drop them once the file is
+    # DURABLE on the portal — see receivers/dissemination/job.py `_on_flush`.
+    # Empty when the target keeps its cache (`prune_cache: false`) or on a dry run.
+    cache_entries: list[str] = field(default_factory=list)
     message: str = ""
     errors: list[str] = field(default_factory=list)
 
@@ -476,6 +481,25 @@ class EposDisseminate:
         rel_dir = self.relative_dir(station, d, session_segment=session_segment)
         result.long_name = pub_name
         result.cached = conv.cached
+        # Record both cache layers for post-push pruning. The output layer is the
+        # converted file's own directory; the decode layer is keyed separately
+        # (source content + sample) and lives under `decode/`, so pruning only the
+        # output layer would leave the larger half behind.
+        if getattr(self.target, "prune_cache", True) and not self.dry_run:
+            from .convert import decode_cache_key
+
+            entries = [str(Path(conv.output_path).parent)]
+            try:
+                entries.append(
+                    str(
+                        self.target.cache_path
+                        / "decode"
+                        / decode_cache_key(Path(conv.source_path), sample=sample)
+                    )
+                )
+            except Exception:  # noqa: BLE001 — pruning is best-effort
+                pass
+            result.cache_entries = entries
         result.rinex_version = conv.rinex_version
         result.dest = self._dest_base
         result.relative_path = f"{rel_dir}/{pub_name}" if rel_dir else pub_name

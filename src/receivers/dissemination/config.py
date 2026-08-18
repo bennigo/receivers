@@ -202,6 +202,13 @@ class DisseminationTarget:
     onboard EPOS one station at a time. The explicit ``--station`` path ignores it."""
     format: DisseminationFormat = field(default_factory=DisseminationFormat)
     convert_cache_dir: str = DEFAULT_CACHE_DIR
+    #: Drop each product's convert-cache entries once the push is DURABLE on the
+    #: portal. Default ON: a full-history run is ~120 GB of intermediates for a
+    #: single station (measured on ELDC 2020-2026, 4,441 products), and an
+    #: unreaped cache has filled /mnt/data before and taken Postgres down with it.
+    #: Set false to keep the cache when a cheap `--force` header re-push is
+    #: planned — that is the only thing it buys.
+    prune_cache: bool = True
     """Where converted outputs are cached, keyed on
     ``hash(source content_sha256 + TOS-metadata fingerprint)``."""
 
@@ -277,6 +284,7 @@ def _build_target(raw: dict) -> DisseminationTarget:
         stations=frozenset(s.upper() for s in raw.get("stations", ())),
         format=DisseminationFormat.from_dict(raw.get("format", {})),
         convert_cache_dir=raw.get("convert_cache_dir", DEFAULT_CACHE_DIR),
+        prune_cache=bool(raw.get("prune_cache", True)),
         cutover=cutover,
     )
 
