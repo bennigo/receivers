@@ -34,6 +34,7 @@ from typing import Any, Dict, Optional, Tuple
 # RINEX header field formatting is generic (not receiver-specific) and now
 # lives in tostools.rinex.formatter. These re-exports keep the receivers
 # import surface stable for existing callers.
+from tostools.device import is_synthetic_serial
 from tostools.rinex.formatter import (  # noqa: F401
     RINEX_FIELD_SPECS,
     format_antenna_type_with_radome,
@@ -142,15 +143,32 @@ class EquipmentMetadata:
                 self.receiver_firmware or "",
             )
 
-        # Antenna: only if we have serial (to fix "Unknown" from converters)
-        if self.antenna_serial:
+        # Antenna. A TOS synthetic serial (<subtype>-<STID>-<YYYYMMDD>) must
+        # never reach the header: it is an internal lookup key, and at 21 chars
+        # it does not even fit the A20 field. VMEY 2026-08-01 onwards shows what
+        # happens — `antenna-VMEY-20230111` was truncated to
+        # `antenna-VMEY-2023011`, filling the column exactly so the serial abuts
+        # the antenna type with no separator, and 65 archived headers now carry
+        # a malformed ANT # / TYPE. It also defeats the reconstruct dup-guard,
+        # which reads the truncated string back, fails to match TOS's 21-char
+        # serial, and proposes creating a duplicate antenna.
+        #
+        # Same rule the IGS site log already applies (tostools cb02a03): no
+        # factory serial means an EMPTY field, not a stand-in.
+        published_serial = self.antenna_serial or ""
+        if is_synthetic_serial(published_serial):
+            published_serial = ""
+        # Emit on model OR serial — gating on the serial alone (the old
+        # behaviour) would drop the antenna TYPE and RADOME along with a
+        # suppressed serial, which is a worse header than a blank serial field.
+        if published_serial or self.antenna_model:
             if self.antenna_model:
                 ant_type = format_antenna_type_with_radome(
                     self.antenna_model, self.radome_model
                 )
             else:
                 ant_type = ""
-            base["ANT # / TYPE"] = (self.antenna_serial, ant_type)
+            base["ANT # / TYPE"] = (published_serial, ant_type)
 
         # Antenna height (always include)
         total_height = self.antenna_height + self.monument_height
