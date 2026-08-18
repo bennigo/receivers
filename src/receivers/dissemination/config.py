@@ -242,7 +242,29 @@ class DisseminationTarget:
 
     @property
     def cache_path(self) -> Path:
-        return Path(self.convert_cache_dir).expanduser()
+        """Convert-cache root: first candidate whose PARENT exists.
+
+        Accepts a str or a list, the same shape ``source_root`` uses in the same
+        config block, so one shared sync.yaml is correct on every host without a
+        symlink. rek-d01 keeps its cache on the data volume (/home is 82 G, a
+        full-history run is ~120 G); the laptop falls through to ~/.cache.
+
+        This replaces a host-only symlink from ~/.cache/gps_receivers/epos_convert
+        to /mnt/data/gpsops_scratch/. That symlink produced SILENT wrong answers,
+        not errors: `du -sh` reported 0 for a 7.8 G tree, `find -maxdepth 1`
+        matched nothing, and each looked like a valid result. An explicit
+        candidate list has no indirection to fall through.
+
+        Parent, not the directory itself: the cache dir is created on first use,
+        so testing the dir would always pick the last candidate on a clean host.
+        """
+        raw = self.convert_cache_dir
+        candidates = [raw] if isinstance(raw, str) else list(raw)
+        for c in candidates:
+            path = Path(str(c)).expanduser()
+            if path.exists() or path.parent.is_dir():
+                return path
+        return Path(str(candidates[0])).expanduser()
 
 
 def _resolve_source_root(value, name: str) -> str:
