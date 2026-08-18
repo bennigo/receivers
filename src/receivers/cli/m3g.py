@@ -61,14 +61,14 @@ def _print_validation(vr) -> None:
 
 def cmd_m3g_validate(args: argparse.Namespace) -> int:
     """Validate a locally generated site log against M3G network rules (no token)."""
-    from ..dissemination.m3g_client import M3GClient, M3GError
+    from ..dissemination.m3g_client import M3GClient, M3GError, read_sitelog
     from ..dissemination.sitelogs import generate_site_log, resolve_sitelogs_repo
 
     sid = args.station.upper()
     content: str
     src: str
     if args.file:
-        content = Path(args.file).read_text(encoding="utf-8")
+        content = read_sitelog(args.file)
         src = args.file
     else:
         out_dir = (
@@ -78,7 +78,7 @@ def cmd_m3g_validate(args: argparse.Namespace) -> int:
         if path is None:
             print(f"Site log generation failed for {sid} (see log).")
             return 1
-        content = path.read_text(encoding="utf-8")
+        content = read_sitelog(path)
         src = str(path)
 
     print(
@@ -169,12 +169,12 @@ def cmd_m3g_submit(args: argparse.Namespace) -> int:
 
 def cmd_m3g_diff(args: argparse.Namespace) -> int:
     """Diff the locally generated site log against the live M3G draft."""
-    from ..dissemination.m3g_client import M3GClient, nine_char_id
+    from ..dissemination.m3g_client import M3GClient, nine_char_id, read_sitelog
     from ..dissemination.sitelogs import generate_site_log, resolve_sitelogs_repo
 
     sid = args.station.upper()
     if args.file:
-        local = Path(args.file).read_text(encoding="utf-8")
+        local = read_sitelog(args.file)
     else:
         out_dir = (
             Path(args.sitelog_dir) if args.sitelog_dir else resolve_sitelogs_repo()
@@ -183,7 +183,7 @@ def cmd_m3g_diff(args: argparse.Namespace) -> int:
         if path is None:
             print(f"Site log generation failed for {sid} (see log).")
             return 1
-        local = path.read_text(encoding="utf-8")
+        local = read_sitelog(path)
 
     client = M3GClient(endpoint=args.m3g_endpoint)
     nine = nine_char_id(sid, args.country_code, args.monument_number)

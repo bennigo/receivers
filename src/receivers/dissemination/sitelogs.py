@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from .m3g_client import read_sitelog
+
 logger = logging.getLogger("receivers.dissemination.sitelogs")
 
 # Where the gps-sitelogs clone lives when [paths] sitelogs_repo is unset.
@@ -367,7 +369,7 @@ def generate_site_log_if_changed(
 
     if latest is not None:
         try:
-            existing = latest.read_text(encoding="utf-8", errors="replace")
+            existing = read_sitelog(latest)
         except OSError:
             existing = ""
         if _normalize_sitelog(content) == _normalize_sitelog(existing):
@@ -494,7 +496,7 @@ def submit_to_m3g(
         if path is None:
             result.skipped = f"site log generation failed for {sid} (see log)"
             return result
-    content = Path(path).read_text(encoding="utf-8")
+    content = read_sitelog(path)
     logger.info("m3g submit %s: site log = %s (%d bytes)", sid, path, len(content))
 
     if client is None:

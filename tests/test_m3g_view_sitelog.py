@@ -59,7 +59,7 @@ class TestViewSitelog:
 
     def test_requests_exportlog_with_the_nine_char_station_param(self):
         c = self._client()
-        resp = MagicMock(ok=True, text="     RHOF00ISL Site Information Form\n")
+        resp = MagicMock(ok=True, content=b"     RHOF00ISL Site Information Form\n")
         with patch(
             "receivers.dissemination.m3g_client.requests.get", return_value=resp
         ) as g:
@@ -72,7 +72,7 @@ class TestViewSitelog:
 
     def test_non_ok_response_is_absent_not_content(self):
         c = self._client()
-        resp = MagicMock(ok=False, text="<!DOCTYPE html>…")
+        resp = MagicMock(ok=False, content=b"<!DOCTYPE html>")
         with patch(
             "receivers.dissemination.m3g_client.requests.get", return_value=resp
         ):
@@ -82,7 +82,7 @@ class TestViewSitelog:
         # Returning a portal error page as "the live site log" would make the
         # diff show the whole HTML page as a change.
         c = self._client()
-        resp = MagicMock(ok=True, text="\n<!DOCTYPE html>\n<html>…</html>")
+        resp = MagicMock(ok=True, content=b"\n<!DOCTYPE html>\n<html></html>")
         with patch(
             "receivers.dissemination.m3g_client.requests.get", return_value=resp
         ):
@@ -101,9 +101,60 @@ class TestViewSitelog:
     @pytest.mark.parametrize("marker", ["RHOF", "RHOF00ISL"])
     def test_either_id_form_reaches_the_same_url(self, marker):
         c = self._client()
-        resp = MagicMock(ok=True, text="     RHOF00ISL Site Information Form\n")
+        resp = MagicMock(ok=True, content=b"     RHOF00ISL Site Information Form\n")
         with patch(
             "receivers.dissemination.m3g_client.requests.get", return_value=resp
         ) as g:
             c.view_sitelog(marker)
         assert g.call_args[1]["params"] == {"station": "RHOF00ISL"}
+
+
+class TestSitelogEncoding:
+    """Latin-1 on disk, UTF-8 on the wire — the asymmetry is real, not an oversight.
+
+    IGS site logs are ISO-8859-1 and that is what M3G serves back, but M3G's API
+    answers HTTP 500 to a Latin-1 request body (measured 2026-08-18 against the
+    live service). Both halves are pinned here so neither gets "corrected" into
+    the other.
+    """
+
+    def test_encoding_constant_is_latin1(self):
+        from receivers.dissemination.m3g_client import SITELOG_ENCODING
+
+        assert SITELOG_ENCODING == "latin-1"
+
+    def test_decodes_latin1_bytes(self):
+        from receivers.dissemination.m3g_client import decode_sitelog
+
+        assert decode_sitelog("Eldvörp".encode("latin-1")) == "Eldvörp"
+
+    def test_still_decodes_the_pre_fix_utf8_logs(self):
+        # gps-sitelogs already contains UTF-8 files written before the switch;
+        # reading them as Latin-1 would silently produce mojibake, and Latin-1
+        # never raises so the mistake would be invisible.
+        from receivers.dissemination.m3g_client import decode_sitelog
+
+        assert decode_sitelog("Eldvörp".encode("utf-8")) == "Eldvörp"
+
+    def test_both_encodings_yield_identical_text(self):
+        from receivers.dissemination.m3g_client import decode_sitelog
+
+        s = "Eldvörp Bústaðarvegur þæö"
+        assert (
+            decode_sitelog(s.encode("utf-8"))
+            == decode_sitelog(s.encode("latin-1"))
+            == s
+        )
+
+    def test_icelandic_is_fully_representable_in_latin1(self):
+        # If this ever fails, the strict write in tostools would start raising.
+        "áéíóúýþæöðÁÉÍÓÚÝÞÆÖÐ".encode("latin-1")
+
+    def test_wire_body_is_utf8_not_latin1(self):
+        import inspect
+
+        from receivers.dissemination import m3g_client
+
+        src = inspect.getsource(m3g_client)
+        assert 'data=content.encode("utf-8")' in src
+        assert "data=content.encode(SITELOG_ENCODING)" not in src
