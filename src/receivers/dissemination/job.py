@@ -15,6 +15,7 @@ layer on top of this trailing-window sweep.
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -429,6 +430,22 @@ def run_epos_disseminate_job(
                     )
             if slots:
                 local["superseded"] += _supersede_slots(c, slots)
+            # Drop the convert-cache entries for this batch. Safe HERE and only
+            # here: BatchPush calls _on_flush once the files are DURABLE on the
+            # portal, so nothing is discarded before its replacement has landed.
+            #
+            # Per-batch is the right granularity. Per-file would mean one rm per
+            # product (the pusher deliberately batches to avoid per-file work),
+            # and per-year would let a single station's intermediates reach ~120 GB
+            # before anything is reclaimed — measured on the ELDC 2020-2026 run.
+            # Chunks are date-disjoint and cache keys are content hashes, so two
+            # concurrent chunks can never own the same entry.
+            for result in refs:
+                for entry in getattr(result, "cache_entries", None) or ():
+                    try:
+                        shutil.rmtree(entry, ignore_errors=True)
+                    except Exception as exc:  # noqa: BLE001 — best-effort
+                        logger.debug("cache prune %s: %s", entry, exc)
 
         pusher = BatchPush(
             dest_base=getattr(engine, "dest_override", None) or target.dest,
