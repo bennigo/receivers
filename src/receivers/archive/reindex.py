@@ -119,11 +119,18 @@ def reindex_files(
         try:
             digest = content_sha256(f)
         except CorruptArchiveFileError as exc:
+            # DEBUG, not ERROR: a re-rinex --push run reindexes the staging tree
+            # AFTER _push_cleanup has removed what it pushed, so every cleaned
+            # file lands here. One VMEY run emitted 238 of these — two lines per
+            # file — burying the actual conversion result. The aggregate below
+            # is the operator-facing signal; the per-file detail stays in
+            # stats.errors and at -v.
             stats.errors.append(f"corrupt, not reindexed: {f}: {exc}")
-            log.error("reindex: corrupt local file %s: %s", f, exc)
+            log.debug("reindex: corrupt local file %s: %s", f, exc)
             continue
         except OSError as exc:
             stats.errors.append(f"could not read {f}: {exc}")
+            log.debug("reindex: could not read %s: %s", f, exc)
             continue
 
         key = canonical_key(os.path.basename(f))
@@ -176,6 +183,21 @@ def reindex_files(
             stats.updated += 1
         else:
             stats.inserted += 1
+    # One aggregate line instead of two per unreadable file. On a re-rinex
+    # --push run these are almost always files _push_cleanup already removed
+    # after a successful push — expected, not a fault — so the count plus a
+    # couple of examples is the useful signal. Full detail is in stats.errors.
+    if stats.errors:
+        sample = ", ".join(
+            e.split(": ", 1)[-1].split(":")[0].strip() for e in stats.errors[:3]
+        )
+        log.warning(
+            "reindex: %d file(s) unreadable or already removed, not indexed "
+            "(e.g. %s%s) — run with -v for the full list",
+            len(stats.errors),
+            sample,
+            ", …" if len(stats.errors) > 3 else "",
+        )
     return stats
 
 

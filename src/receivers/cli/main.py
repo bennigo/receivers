@@ -6246,11 +6246,24 @@ def cmd_rinex(args) -> int:
         nonlocal push_stats
         with _flush_lock:
             work = Path(args.work_dir).expanduser()
-            all_rel = [
-                str(p.relative_to(work))
-                for p in work.rglob("*")
-                if p.is_file() and p.parent.name == "rinex"
-            ]
+            # Scope to THIS run's stations. The staging tree is shared across
+            # runs (~/tmp/rinex_reconvert), and _pushed_rel only lives for the
+            # life of this process — so on the first flush every leftover file
+            # from an earlier station's run counted as "new". A VMEY run that
+            # converted 5 files pushed 6,901, ran archive-side --backup-old over
+            # another station's already-archived files (needlessly creating
+            # rinex_bak copies), and reindexed 786 catalog rows that were not
+            # VMEY's. Layout is <YYYY>/<mon>/<SID>/<session>/rinex/<file>.
+            run_sids = {s.upper() for s in stations}
+            all_rel = []
+            for p in work.rglob("*"):
+                if not (p.is_file() and p.parent.name == "rinex"):
+                    continue
+                rel = str(p.relative_to(work))
+                parts = Path(rel).parts
+                if len(parts) >= 3 and parts[2].upper() not in run_sids:
+                    continue  # another run's leftovers — not ours to push
+                all_rel.append(rel)
             new_rel = [r for r in all_rel if r not in _pushed_rel]
             if not new_rel:
                 return
@@ -6503,10 +6516,18 @@ def cmd_rinex(args) -> int:
     # Summary — conversion counts, per-file timing, elapsed, and push outcome.
     elapsed = int(_time.monotonic() - run_t0)
     elapsed_str = f"{elapsed // 3600}:{elapsed % 3600 // 60:02d}:{elapsed % 60:02d}"
+    # "conversions:" is explicit because a --push run also emits reindex
+    # warnings, and the two were being read as one number. Reindex reports its
+    # own aggregate separately; nothing it logs feeds these counts.
     lines = [
-        f"Summary: ✅ {total_converted} converted, ❌ {total_failed} failed, "
-        f"⏭️  {total_skipped} skipped (already staged)"
+        f"Summary: conversions ✅ {total_converted} converted, "
+        f"❌ {total_failed} failed, ⏭️  {total_skipped} skipped (already staged)"
     ]
+    if total_failed:
+        lines.append(
+            f"  ↳ {total_failed} conversion failure(s) — these are NOT the "
+            f"reindex warnings above; re-run with -v for the per-file reason"
+        )
     if durations:
         avg = sum(durations) / len(durations)
         lines.append(
