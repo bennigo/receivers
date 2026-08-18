@@ -2630,13 +2630,21 @@ class BulkDownloadScheduler:
             gap_cfg, default_days=7, section_name="gap_detection"
         )
 
-        # RINEX scan uses a longer window — defaults to the reconciler's own
-        # count. Read files_back too, so switching that section over does not
-        # silently drop this fallback to the hardcoded 30.
+        # RINEX scan uses a longer window, in whole DAYS, defaulting to the
+        # reconciler's own daily reach. Resolve that through Lookback rather
+        # than reading the raw key: files_back may be a MAPPING, and a dict
+        # reaching timedelta(days=...) is a TypeError at scan time. Asking the
+        # Lookback for the daily session gives the same 30 the hardcoded
+        # fallback used to.
         reconciler_cfg = self.yaml_config.get("archive_reconciler", {})
-        rinex_days_back = gap_cfg.get(
-            "rinex_days_back",
-            reconciler_cfg.get("days_back", reconciler_cfg.get("files_back", 30)),
+        _reconciler_lookback = Lookback.from_config(
+            reconciler_cfg, default_days=30, section_name="archive_reconciler"
+        )
+        rinex_days_back = int(
+            gap_cfg.get(
+                "rinex_days_back",
+                _reconciler_lookback.date_span_days("15s_24hr"),
+            )
         )
 
         base_trigger = parse_schedule(schedule)
