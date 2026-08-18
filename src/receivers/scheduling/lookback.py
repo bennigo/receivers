@@ -79,16 +79,28 @@ class Lookback:
 
     count: int
     unit: str
+    #: Per-session overrides as (session_type, count) pairs. A tuple rather
+    #: than a dict so the dataclass stays genuinely immutable and hashable —
+    #: these instances are pickled into the APScheduler jobstore.
+    overrides: Tuple[Tuple[str, int], ...] = ()
 
     def __post_init__(self) -> None:
         if self.unit not in ("days", "files"):
             raise LookbackConfigError(
                 f"Lookback unit must be 'days' or 'files', got {self.unit!r}"
             )
-        if self.count < 0:
-            raise LookbackConfigError(
-                f"Lookback count must be >= 0, got {self.count!r}"
-            )
+        for label, value in (("default", self.count), *self.overrides):
+            if value < 0:
+                raise LookbackConfigError(
+                    f"Lookback count for {label} must be >= 0, got {value!r}"
+                )
+
+    def count_for(self, session_type: str) -> int:
+        """The count that applies to ``session_type`` (override, else default)."""
+        for name, value in self.overrides:
+            if name == session_type:
+                return value
+        return self.count
 
     @classmethod
     def from_config(
@@ -104,8 +116,22 @@ class Lookback:
         also fine — the caller's historical default applies, so an untouched
         deployed config keeps behaving exactly as before.
 
+        Either key may be a plain number::
+
+            files_back: 36
+
+        or a mapping with a ``default`` and per-session overrides, for when one
+        number does not suit both frequencies (``files_back: 36`` means 36 days
+        for a daily session but 36 hours for an hourly one, which is often not
+        what you want on both at once)::
+
+            files_back:
+              default: 36        # status_1hr, 1Hz_1hr -> 36 hours
+              15s_24hr: 7        # the daily session -> 7 days
+
         Raises:
-            LookbackConfigError: if both keys are set.
+            LookbackConfigError: if both keys are set, or a mapping has no
+                ``default``.
         """
         has_days = section.get(DAYS_KEY) is not None
         has_files = section.get(FILES_KEY) is not None
@@ -119,10 +145,26 @@ class Lookback:
             )
 
         if has_files:
-            return cls(count=int(section[FILES_KEY]), unit="files")
-        if has_days:
-            return cls(count=int(section[DAYS_KEY]), unit="days")
-        return cls(count=int(default_days), unit="days")
+            key, unit = FILES_KEY, "files"
+        elif has_days:
+            key, unit = DAYS_KEY, "days"
+        else:
+            return cls(count=int(default_days), unit="days")
+
+        raw = section[key]
+        if isinstance(raw, Mapping):
+            if "default" not in raw:
+                raise LookbackConfigError(
+                    f"{section_name}.{key} is a mapping but has no 'default' — "
+                    f"add one so sessions without an explicit entry are covered "
+                    f"(got keys {sorted(raw)})."
+                )
+            overrides = tuple(
+                (str(k), int(v)) for k, v in raw.items() if k != "default"
+            )
+            return cls(count=int(raw["default"]), unit=unit, overrides=overrides)
+
+        return cls(count=int(raw), unit=unit)
 
     def window(
         self, session_type: str, end: Optional[datetime] = None
@@ -138,9 +180,10 @@ class Lookback:
 
     def span(self, session_type: str) -> timedelta:
         """The lookback duration for ``session_type``."""
+        n = self.count_for(session_type)
         if self.unit == "files" and is_hourly_session(session_type):
-            return timedelta(hours=self.count)
-        return timedelta(days=self.count)
+            return timedelta(hours=n)
+        return timedelta(days=n)
 
     def days_for(self, session_type: str) -> float:
         """The span expressed in days, for callers whose API still takes days.
@@ -162,9 +205,10 @@ class Lookback:
         hourly session that is literally "the last N files", which is what
         ``files_back`` means.
         """
+        n = self.count_for(session_type)
         if self.unit == "files":
-            return self.count
-        return self.count * 24 if is_hourly_session(session_type) else self.count
+            return n
+        return n * 24 if is_hourly_session(session_type) else n
 
     def date_span_days(self, session_type: str) -> int:
         """Whole days to enumerate so that :meth:`file_count` files fit inside.
@@ -174,11 +218,12 @@ class Lookback:
         via :meth:`file_count`; enumerating a day too many is cheap, a day too
         few silently drops files.
         """
+        n = self.count_for(session_type)
         if self.unit == "days":
-            return self.count
+            return n
         if is_hourly_session(session_type):
-            return -(-self.count // 24) + 1  # ceil, plus the straddle day
-        return self.count
+            return -(-n // 24) + 1  # ceil, plus the straddle day
+        return n
 
     def describe(self, session_types: Iterable[str]) -> str:
         """Human-readable expansion, for logging the effective window at startup.
@@ -194,4 +239,7 @@ class Lookback:
             else:
                 parts.append(f"{st}: {int(span.total_seconds() // 3600)}h")
         key = FILES_KEY if self.unit == "files" else DAYS_KEY
-        return f"{key}={self.count} -> " + ", ".join(parts)
+        head = f"{key}={self.count}"
+        if self.overrides:
+            head += " (" + ", ".join(f"{k}={v}" for k, v in self.overrides) + ")"
+        return f"{head} -> " + ", ".join(parts)

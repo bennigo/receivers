@@ -599,6 +599,17 @@ backfill:
 # on 1Hz_1hr is 168 files per station, files_back: 7 is 7. Anything older is
 # long_term_backfill's job.
 #
+# Either key also takes a mapping when one number does not suit both
+# frequencies — note that files_back: 36 means 36 DAYS for 15s_24hr but 36
+# HOURS for the hourly sessions, which is often not what you want on both:
+#
+#   files_back:
+#     default: 36      # status_1hr, 1Hz_1hr -> 36 hours
+#     15s_24hr: 7      # the daily session   -> 7 days
+#
+# A mapping without a `default` is a startup error: a session missing from it
+# would otherwise silently inherit whatever the code's historical default was.
+#
 # Sections that deliberately keep days_back:
 #   epos_disseminate  — it is the ONLY backfill window EPOS has (no
 #                       gap-reconciler yet), so a day that ages out of it is
