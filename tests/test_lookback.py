@@ -213,3 +213,73 @@ class TestWiringContract:
         lb = Lookback.from_config({"days_back": 7}, default_days=7)
         enumerated_hourly = lb.date_span_days("1Hz_1hr") * 24
         assert lb.file_count("1Hz_1hr") == enumerated_hourly == 168
+
+
+class TestPerSessionOverrides:
+    """`files_back: N` is N days for daily and N hours for hourly — one number
+    rarely suits both, so a mapping form allows per-session counts."""
+
+    CFG = {"files_back": {"default": 36, "15s_24hr": 7}}
+
+    def test_mapping_parses(self):
+        lb = Lookback.from_config(self.CFG, default_days=7)
+        assert lb.unit == "files"
+        assert lb.count == 36
+        assert lb.count_for("15s_24hr") == 7
+        assert lb.count_for("1Hz_1hr") == 36
+        assert lb.count_for("status_1hr") == 36
+
+    def test_spans_differ_per_session(self):
+        lb = Lookback.from_config(self.CFG, default_days=7)
+        assert lb.span("15s_24hr") == timedelta(days=7)
+        assert lb.span("1Hz_1hr") == timedelta(hours=36)
+
+    def test_file_count_and_date_span_follow_the_override(self):
+        lb = Lookback.from_config(self.CFG, default_days=7)
+        assert lb.file_count("15s_24hr") == 7
+        assert lb.date_span_days("15s_24hr") == 7
+        assert lb.file_count("1Hz_1hr") == 36
+        assert lb.date_span_days("1Hz_1hr") == 3  # ceil(36/24)=2, +1 straddle
+
+    def test_describe_shows_the_overrides(self):
+        lb = Lookback.from_config(self.CFG, default_days=7)
+        text = lb.describe(["15s_24hr", "1Hz_1hr", "status_1hr"])
+        assert text == (
+            "files_back=36 (15s_24hr=7) -> "
+            "15s_24hr: 7d, 1Hz_1hr: 36h, status_1hr: 36h"
+        )
+
+    def test_mapping_without_default_is_rejected(self):
+        # Otherwise a session absent from the mapping would silently get
+        # whatever the caller's historical default happened to be.
+        with pytest.raises(LookbackConfigError) as exc:
+            Lookback.from_config(
+                {"files_back": {"15s_24hr": 7}},
+                default_days=7,
+                section_name="gap_detection",
+            )
+        assert "no 'default'" in str(exc.value)
+
+    def test_days_back_also_accepts_the_mapping_form(self):
+        lb = Lookback.from_config(
+            {"days_back": {"default": 30, "15s_24hr": 7}}, default_days=7
+        )
+        assert lb.unit == "days"
+        # days_back stays frequency-blind: hourly still gets DAYS.
+        assert lb.span("1Hz_1hr") == timedelta(days=30)
+        assert lb.span("15s_24hr") == timedelta(days=7)
+
+    def test_negative_override_rejected(self):
+        with pytest.raises(LookbackConfigError):
+            Lookback.from_config(
+                {"files_back": {"default": 36, "15s_24hr": -1}}, default_days=7
+            )
+
+    def test_still_hashable_and_picklable(self):
+        # Pickled into the APScheduler SQLite jobstore; a dict field would have
+        # broken hashing on a frozen dataclass.
+        import pickle
+
+        lb = Lookback.from_config(self.CFG, default_days=7)
+        assert hash(lb) is not None
+        assert pickle.loads(pickle.dumps(lb)) == lb
