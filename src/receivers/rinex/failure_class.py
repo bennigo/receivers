@@ -78,6 +78,25 @@ _PERMANENT_SIGNATURES: tuple[tuple[str, str], ...] = (
         "Docker converter can; check use_native_trimble + the trm2rinex image. "
         "DO NOT archive-rm: the raw is fine.",
     ),
+    # --- receiver logged, but observed nothing ---------------------------
+    # sbf2rin exit 2. NOT a conversion fault: the raw is intact and the
+    # converter is right to refuse — there are no measurements to write.
+    # Measured on VMEY 2022-11-01: 5760 MeasEpoch + 5760 PVTGeodetic (a full
+    # 24 h at 15 s) with N1 == 0 in every single epoch. Receiver powered and
+    # logging on schedule, antenna dead. ~238 VMEY days across 2021-2023 in
+    # long contiguous runs, each ~88 KB gzipped against a normal day's 9.7 MB.
+    #
+    # Permanent because no retry can produce data that was never observed. The
+    # suggested action names the VERIFIER, not archive-rm directly: the
+    # runpkr00 entry below is the standing reminder that a converter error read
+    # as "bad data" once advised deleting 1,367 perfectly good files. Prove it
+    # with receivers.rinex.sbf_inspect first — is_provably_empty is true only
+    # when the file parsed, HAS epochs, and none carry a satellite.
+    (
+        "no relevant data available",
+        "receiver logged epochs but observed ZERO satellites (antenna fault) — "
+        "confirm with sbf_inspect.is_provably_empty, then archive-rm",
+    ),
     # --- metadata gaps, need a human ------------------------------------
     ("no tos session covers", "TOS has no session for this date — fix TOS"),
     # --- deliberate fail-safes, must never be retried away ---------------

@@ -4458,6 +4458,11 @@ def _rinex_convert_station_period(
     failed = 0
     skipped = 0
     _validation_refusals: list = []
+    # Raw files sbf2rin refused for "No relevant data available". Collected for
+    # the epilog, where each is VERIFIED against its bytes before anything is
+    # suggested — the message alone is not proof (see failure_class' runpkr00
+    # entry, which once advised deleting 1,367 good files on a converter error).
+    _empty_raw: list = []
     _log_extra = {"batch_quiet": True} if progress is not None else None
 
     try:
@@ -4777,6 +4782,8 @@ def _rinex_convert_station_period(
                 # Failures stay LOUD on console in every mode.
                 print(f"  ❌ {raw_file.name}: {result.message}")
                 logger.error(f"❌ {raw_file.name}: {result.message}")
+                if "no relevant data available" in (result.message or "").lower():
+                    _empty_raw.append(raw_file)
                 failed += 1
                 if progress is not None:
                     progress.advance()
@@ -4822,6 +4829,58 @@ def _rinex_convert_station_period(
                 )
                 if len(rels) > 30:
                     print(f"     ... and {len(rels) - 30} more — use --list FILE")
+        except Exception:  # noqa: BLE001 - suggestion is best-effort
+            pass
+
+    # Raw that carries no observations at all. sbf2rin is right to refuse it and
+    # no retry can help, so surface it as a data finding with a ready-to-run
+    # removal — but only for files PROVEN empty against their own bytes.
+    if _empty_raw:
+        try:
+            from ..rinex.sbf_inspect import inspect_sbf
+
+            _root = str(_reconvert_source_root(args, data_prepath)).rstrip("/")
+            proven, unproven = [], []
+            for raw in _empty_raw:
+                obs = inspect_sbf(raw)
+                p_str = str(raw)
+                rel = p_str[len(_root) + 1 :] if p_str.startswith(_root + "/") else None
+                if obs.is_provably_empty and rel:
+                    proven.append((rel, raw.stat().st_size, obs.epochs))
+                else:
+                    unproven.append((raw.name, obs.describe()))
+
+            if proven:
+                cap = max(sz for _, sz, _ in proven)
+                eps = proven[0][2]
+                print(
+                    f"\n   ⚪ {len(proven)} raw file(s) contain NO observations — "
+                    f"receiver logged epochs (e.g. {eps}) with zero satellites "
+                    f"throughout, i.e. an antenna-side fault. Verified against the "
+                    f"bytes, not just the converter message. These can never "
+                    f"produce RINEX."
+                )
+                print("      receivers archive-rm --catalog-prod \\")
+                print(f"        --max-size {cap} \\")
+                print(
+                    "        --file "
+                    + " \\\n               ".join(
+                        rel for rel, _, _ in sorted(proven)[:30]
+                    )
+                )
+                if len(proven) > 30:
+                    print(f"      ... and {len(proven) - 30} more")
+                print(
+                    f"      (dry-run as shown; add --yes to delete — only files "
+                    f"≤{cap} bytes are removed, catalog pruned on both DBs)"
+                )
+            if unproven:
+                print(
+                    f"\n   ⚠️  {len(unproven)} file(s) sbf2rin called empty could NOT "
+                    f"be proven empty — NOT suggested for removal:"
+                )
+                for name, why in unproven[:5]:
+                    print(f"        {name}: {why}")
         except Exception:  # noqa: BLE001 - suggestion is best-effort
             pass
 
