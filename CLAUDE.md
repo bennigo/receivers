@@ -471,6 +471,42 @@ logger = logging.getLogger(f"receivers.download.{station_id}")
 - **Sync strategy**: Only download new/partial files
 - **Clean restart**: Option to clear partial downloads
 
+### ⚠️ Archive write access — `rawdata` is the ONLY writer
+
+**The long-term archive (`ananas.vedur.is:/gps/gpsdata`) is mounted READ-ONLY on
+every host. `rawdata.vedur.is` is the sole writer, by design, for traceability.**
+This is NOT a misconfiguration, NOT a per-host quirk, and NOT a blocker — it is
+the architecture, and every tool here is built around it.
+
+| Host | Mount | Access | What it is |
+|------|-------|--------|------------|
+| rek-d01 | `/mnt/rawgpsdata` | **read-only** NFS | the long-term archive |
+| rek-d01 | `/mnt/data/gpsdata` | read-write (local) | rolling collection window, ~recent only |
+| laptop | `/mnt_data/rawgpsdata` | **read-only** NFS | same archive, laptop's view |
+| rawdata | `~/gpsdata` | **read-write** | the one write gateway (a disk ON ananas) |
+
+**The designed round-trip** — identical from the laptop and from rek-d01:
+
+```
+read over NFS  →  stage to a work dir  →  push via gpsops@rawdata  →  reindex catalogs
+```
+
+So `--fix-headers` / re-rinex **stage by default** (`--work-dir`, default
+`~/tmp/rinex_fixes`) and only reach the archive through `--push`. Staging is the
+normal mode, not a fallback. `--work-dir ''` (fix in place) is valid ONLY against
+a locally-writable tree such as rek-d01's `/mnt/data/gpsdata` — **never** against
+the historical archive on either host.
+
+Corollaries that keep biting:
+- Running on rek-d01 does **not** grant archive write access. Same round-trip.
+- Re-rinexing history needs `--from-archive` (or `--source-dir`): raw is read from
+  the sync.yaml candidate list `["/mnt/rawgpsdata", "/mnt_data/rawgpsdata",
+  "/mnt/data/gpsdata"]`, first existing wins. Plain `data_prepath` on rek-d01 is
+  the rolling window and silently has no pre-window data.
+- `rawdata` is a **single-core** gateway — check `nproc`/`uptime` before a bulk
+  `--push` and throttle (see `[[rawdata-is-single-core-bottleneck]]`).
+- Deleting archive files is likewise a rawdata-side operation.
+
 ## Configuration
 
 **Config architecture**: See `docs/architecture/config-data-flow.md` for the full design,
@@ -691,6 +727,11 @@ All scheduler functionality maintains complete compatibility with manual operati
 
 **Role split**: bgo owns venv + code (`~/git/receivers/`); gpsops owns config + data + DB + logs.
 bgo is in the gpsops group — can read/write gpsops-owned dirs without owning them.
+
+**Being on rek-d01 does NOT grant archive write access.** `/mnt/rawgpsdata` is a
+read-only NFS mount there; `rawdata.vedur.is` is the sole writer. Archive edits
+follow the same stage→push round-trip as from the laptop — see
+"⚠️ Archive write access" above.
 
 **Deploy flow**:
 1. Merge branch to main

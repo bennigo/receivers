@@ -1221,10 +1221,16 @@ Examples:
     mode_group.add_argument(
         "--work-dir",
         default="~/tmp/rinex_fixes",
-        help="With --fix-headers: write fixed files into this directory instead "
-        "of overwriting the source archive (default: ~/tmp/rinex_fixes). "
-        "Pass an empty string (--work-dir '') to disable staging and fix "
-        "in place (when the archive is writable, e.g. on rek-d01).",
+        help="With --fix-headers: stage fixed files into this directory instead "
+        "of overwriting the source archive (default: ~/tmp/rinex_fixes). Staging "
+        "is the NORMAL mode, not a fallback: the long-term archive "
+        "(ananas:/gps/gpsdata) is mounted READ-ONLY everywhere — including "
+        "rek-d01, where it is /mnt/rawgpsdata — because rawdata.vedur.is is the "
+        "sole writer, by design, for traceability. The tools are built for that: "
+        "read over NFS, stage here, push via the gpsops@rawdata gateway with "
+        "--push. Pass an empty string (--work-dir '') to fix in place, which "
+        "works ONLY on a locally-writable tree such as rek-d01's rolling "
+        "collection dir /mnt/data/gpsdata — never on the historical archive.",
     )
 
     mode_group.add_argument(
