@@ -62,7 +62,7 @@ dependencies = [
     # cfg/operations.py's retire path imports. Bumping is mandatory, not
     # cosmetic — the laptop mamba env has tostools editable, so an unbumped pin
     # fails only in CI / on rek-d01.
-    "tostools @ git+https://github.com/bgo-gnss/tostools@f91c937",
+    "tostools @ git+https://github.com/bgo-gnss/tostools@bdc8a52",
     # gps_parser main @257a2ee: passive-station schema (2c5b428) + canonical
     # module-level parse_station_role (257a2ee) — the API config_utils imports.
     "gps-parser @ git+https://github.com/bgo-gnss/gps_parser@257a2ee",

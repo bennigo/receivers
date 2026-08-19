@@ -793,11 +793,30 @@ RINEX 62" means "23 stations the laptop hasn't recently downloaded raw data for"
 - `ssh gpsops@rek-d01.vedur.is 'receivers health <SID>'` (CLI)
 - `https://grafana.vedur.is/` (production dashboards, backed by pgdev)
 
-**Laptop config is independent of `gps-config-data`.** The `~/.config/gpsconfig/`
-files on the laptop come from the user's dotfiles repo (with credentials encrypted
-locally), not from the IMO server config repo. `data_prepath` in particular should
-point somewhere reboot-persistent (e.g. `~/tmp/gpsdata/`) — `/tmp/...` is tmpfs.
-See "Configuration → Source of truth" above for the production sync flow.
+**The laptop's RECEIVERS config is independent of `gps-config-data`.**
+`receivers.cfg`, `scheduler.yaml`, `stations.cfg`, `sync.yaml` and `icinga.cfg`
+in `~/.config/gpsconfig/` are the user's own development config, not the IMO
+server config repo. The divergence is deliberate and load-bearing:
+`scheduler.yaml` runs `max_workers: 2` against production's 100, `data_prepath`
+and `tmp_dir` point somewhere reboot-persistent (`~/tmp/…`) because `/tmp` is
+tmpfs, and the laptop tracks a working subset of stations. Deploying the repo
+copies over these would hand a development laptop production's concurrency and
+lose local work — so `gps-config-data/environments/laptop-bgo.env` lists them
+under `[deploy] exclude` and `deploy.py` refuses to touch them.
+
+**The ANALYSIS-LANE config is NOT independent** (since 2026-07-29, mechanised
+2026-08-19). `postprocess.cfg`, the analysis-lane catalogs (`steps.csv`,
+`fit_windows.csv`, `outlier_overrides.csv`, `protect_windows.csv`,
+`analysis.yaml`, `segment_exclusions.csv`), `detrend_itrf2008.csv`,
+`station-plate` and `station_coord.xyz` DO come from `gps-config-data`, via
+`python3 deploy.py --env laptop-bgo --target ~/.config/gpsconfig --sync`.
+`postprocess.cfg` is *rendered* there rather than copied, because its `[PATHS]`
+analysis-lane directories are host-specific. `detrend_params.json` is generated
+output and is never written by any deploy.
+
+So the config dir has two owners by design; check which set a file belongs to
+before assuming where it comes from. See "Configuration → Source of truth"
+above for the production sync flow.
 
 ## Querying gps_health
 
