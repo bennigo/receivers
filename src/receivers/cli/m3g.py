@@ -148,7 +148,13 @@ def cmd_m3g_submit(args: argparse.Namespace) -> int:
 
     if not ur.ok:
         print(
-            f"\n❌ publish FAILED for {sid}: {ur.error or 'HTTP ' + str(ur.status_code)}"
+            # Always show the HTTP status alongside the message. The message
+            # alone degrades to a bare "upload failed" whenever M3G's JSON body
+            # has no `message`/`error` key, which hid a 404 "Object not found"
+            # (a station never published to M3G, so there is no object to
+            # update) behind text that reads like a transport problem.
+            f"\n❌ publish FAILED for {sid}: "
+            f"HTTP {ur.status_code} — {ur.error or '(no message from M3G)'}"
         )
         return 1
 
