@@ -33,9 +33,19 @@ logger = logging.getLogger("receivers.rinex.raw_presence")
 
 # Base raw extensions (lowercase, compression stripped) we have a converter for.
 # Keep in sync with async_converter._create_converter's raw_extension returns.
-KNOWN_RAW_EXTENSIONS: frozenset[str] = frozenset(
-    {".sbf", ".t02", ".t00", ".m00", ".r00"}
-)
+#: NOTE — ``.r00`` is deliberately ABSENT despite R00Converter existing.
+#:
+#: The candidate match below is ``date_tag in p.name``, and the archive names
+#: R00 files by SESSION START: 951 of VMEY's 977 are ``…YYYYMMDD2359a.r00``,
+#: whose data belongs to the NEXT day. So for day D the matcher picks the file
+#: stamped D — which actually contains D+1. Listing ``.r00`` here therefore
+#: reports ``regenerable=True`` on the strength of the WRONG DAY's raw, and
+#: fix-headers skips the ``rinex_org`` preservation for ~977 irreplaceable VMEY
+#: days. Un-recognised is the SAFE direction: those days get preserved.
+#:
+#: Re-add only once the filename→observation-date offset rule ships AND one
+#: R00 day has round-tripped through re-rinex past the identity gate.
+KNOWN_RAW_EXTENSIONS: frozenset[str] = frozenset({".sbf", ".t02", ".t00", ".m00"})
 
 # Compression suffixes stripped before matching the base extension.
 _COMPRESSION_SUFFIXES = (".gz", ".z")

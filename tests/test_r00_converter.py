@@ -52,13 +52,24 @@ class TestContentIdentification:
 
 
 class TestRegenerability:
-    def test_r00_now_counts_as_convertible_raw(self):
-        # Before this, a day with .r00 raw was "un-regenerable" and fix-headers
-        # preserved it to rinex_org instead of offering a re-conversion.
-        assert ".r00" in KNOWN_RAW_EXTENSIONS
+    def test_r00_is_deliberately_NOT_treated_as_regenerable_yet(self):
+        # Reverted after review. check_regenerable matches `date_tag in p.name`,
+        # and the archive names R00 by SESSION START (…YYYYMMDD2359a.r00, data
+        # belonging to the NEXT day). So for day D the matcher picks the file
+        # stamped D, which holds D+1 — listing .r00 here would report
+        # regenerable=True off the WRONG DAY's raw and make fix-headers skip
+        # rinex_org preservation for ~977 irreplaceable VMEY days.
+        # Un-recognised is the safe direction: those days get preserved.
+        assert ".r00" not in KNOWN_RAW_EXTENSIONS
 
     def test_the_other_formats_are_untouched(self):
         assert {".sbf", ".t02", ".t00", ".m00"} <= KNOWN_RAW_EXTENSIONS
+
+    def test_the_converter_still_exists_for_explicit_use(self):
+        # The gate and the converter are separate concerns: --r00 can still
+        # convert on purpose; what is withheld is the automatic claim that such
+        # a day needs no preservation.
+        assert R00Converter("VMEY").supported_extensions
 
 
 class TestGpsWeekIsDerivedNotGuessed:
