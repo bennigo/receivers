@@ -283,6 +283,20 @@ def cmd_scheduler_test(args) -> int:
         return 1
 
 
+def _signal(proc, action) -> bool:
+    """Send a signal, tolerating a process that already exited or is not ours."""
+    import psutil
+
+    try:
+        action()
+        return True
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
+        print(f"⚠️  no permission to signal PID {proc.pid} (owned by another user?)")
+        return False
+
+
 def cmd_scheduler_stop(args) -> int:
     """Stop the running scheduler."""
 
@@ -299,7 +313,8 @@ def cmd_scheduler_stop(args) -> int:
         current_pid = os.getpid()
         scheduler_pids = []
 
-        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        matched = {}
+        for proc in psutil.process_iter(["pid", "ppid", "name", "cmdline"]):
             try:
                 cmdline = proc.info.get("cmdline", [])
                 if (
@@ -309,40 +324,81 @@ def cmd_scheduler_stop(args) -> int:
                     and "start" in " ".join(cmdline)
                 ):
                     if proc.info["pid"] != current_pid:
-                        scheduler_pids.append(proc.info["pid"])
+                        matched[proc.info["pid"]] = proc.info.get("ppid")
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
+
+        # Signal only the ROOT scheduler(s). The RINEX pool workers are forked
+        # from the main process, so they inherit its cmdline verbatim and match
+        # this filter too — on rek-d01 that is 1 main + 16 workers = 17 matches.
+        #
+        # The old code terminated all 17 SERIALLY with a 30 s wait each: up to
+        # 510 s against the unit's TimeoutStopSec=120, so ExecStop could never
+        # finish and systemd SIGKILLed the whole cgroup every single deploy
+        # (measured 4m0.4s = 8 timeouts x 30 s, Result=signal). It got worse
+        # when the pool went 4 -> 16 workers; at 4 it was 150 s, already over.
+        #
+        # Signalling the parent is also the CORRECT shutdown: it runs the
+        # graceful APScheduler shutdown, and its children exit with it. Anything
+        # left over is reaped by systemd's KillMode=control-group.
+        scheduler_pids = [pid for pid, ppid in matched.items() if ppid not in matched]
+        workers = len(matched) - len(scheduler_pids)
 
         if not scheduler_pids:
             print("ℹ️  No running scheduler found")
             return 0
 
-        print(f"🛑 Found {len(scheduler_pids)} running scheduler process(es)")
+        print(
+            f"🛑 Found {len(scheduler_pids)} scheduler process(es)"
+            + (f" (+{workers} worker(s), signalled via the parent)" if workers else "")
+        )
 
+        # Total budget for the graceful phase. Must stay under the unit's
+        # TimeoutStopSec (120 s) or systemd kills us mid-shutdown and the
+        # scheduler never gets to close its jobstore cleanly.
+        timeout = float(getattr(args, "timeout", None) or 60)
+
+        procs = []
         for pid in scheduler_pids:
             try:
-                proc = psutil.Process(pid)
+                procs.append(psutil.Process(pid))
+            except psutil.NoSuchProcess:
+                continue
 
-                if args.force:
-                    print(f"⚡ Force stopping scheduler (PID {pid})...")
-                    proc.kill()  # SIGKILL - immediate termination
-                    proc.wait(timeout=1)
-                    print(f"✅ Scheduler forcefully stopped (PID {pid})")
-                else:
-                    print(f"🛑 Gracefully stopping scheduler (PID {pid})...")
-                    print("   Waiting for active downloads to complete...")
-                    proc.terminate()  # SIGTERM - graceful shutdown
-                    proc.wait(timeout=30)
-                    print(f"✅ Scheduler stopped gracefully (PID {pid})")
+        try:
+            if args.force:
+                print(f"⚡ Force stopping {len(procs)} scheduler process(es)...")
+                for p in procs:
+                    _signal(p, p.kill)
+                psutil.wait_procs(procs, timeout=5)
+                print("✅ Scheduler forcefully stopped")
+                return 0
 
-            except psutil.TimeoutExpired:
-                print("⚠️  Scheduler did not stop within timeout, force killing...")
-                proc.kill()
-                proc.wait(timeout=5)
-                print(f"✅ Scheduler forcefully stopped (PID {pid})")
-            except Exception as e:
-                print(f"❌ Failed to stop scheduler (PID {pid}): {e}")
-                return 1
+            print(f"🛑 Gracefully stopping {len(procs)} scheduler process(es)...")
+            print(f"   Waiting up to {timeout:.0f}s for active work to finish...")
+            # Signal everything FIRST, then wait on one shared deadline — the
+            # waits must overlap, not accumulate.
+            for p in procs:
+                _signal(p, p.terminate)
+            gone, alive = psutil.wait_procs(procs, timeout=timeout)
+            for p in gone:
+                print(f"✅ Scheduler stopped gracefully (PID {p.pid})")
+
+            if alive:
+                print(
+                    f"⚠️  {len(alive)} process(es) still running after {timeout:.0f}s "
+                    "— force killing"
+                )
+                for p in alive:
+                    _signal(p, p.kill)
+                _, still = psutil.wait_procs(alive, timeout=5)
+                if still:
+                    print(f"❌ {len(still)} process(es) survived SIGKILL")
+                    return 1
+                print("✅ Scheduler forcefully stopped")
+        except Exception as e:
+            print(f"❌ Failed to stop scheduler: {e}")
+            return 1
 
         return 0
 
@@ -1143,7 +1199,9 @@ def cmd_scheduler_restart(args) -> int:
     print("🔄 Restarting scheduler...")
 
     # Stop the scheduler
-    stop_args = argparse.Namespace(force=args.force)
+    stop_args = argparse.Namespace(
+        force=args.force, timeout=getattr(args, "timeout", None) or 60.0
+    )
     result = cmd_scheduler_stop(stop_args)
 
     if result != 0:
@@ -1268,6 +1326,17 @@ def create_scheduler_parser(subparsers):
         "--force",
         action="store_true",
         help="Force immediate shutdown without waiting for active downloads",
+    )
+    stop_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=60.0,
+        help=(
+            "Seconds to wait for a graceful shutdown before SIGKILL (default: 60). "
+            "Keep this BELOW the systemd unit's TimeoutStopSec (120s) — if ExecStop "
+            "outlives it, systemd SIGKILLs the whole cgroup and the scheduler never "
+            "closes its jobstore cleanly."
+        ),
     )
     stop_parser.set_defaults(func=cmd_scheduler_stop)
 
