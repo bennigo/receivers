@@ -522,6 +522,26 @@ class M3GClient:
             msg = "upload failed"
             if isinstance(raw, dict):
                 msg = str(raw.get("message") or raw.get("error") or msg)
+            elif isinstance(raw, list) and raw:
+                # M3G reports per-field validation failures as a LIST of
+                # {"field": …, "message": …} objects, not the single object the
+                # dict branch expects. Only handling dicts meant the real answer
+                # — e.g. 'sitelog: Please check the "Antenna" section for more
+                # information' — was discarded and the operator saw the bare
+                # fallback "upload failed", which reads like a transport error
+                # and sends you looking in entirely the wrong place. Measured on
+                # VMEY 2026-08-19.
+                parts = []
+                for item in raw:
+                    if isinstance(item, dict):
+                        f = str(item.get("field") or "").strip()
+                        m = str(item.get("message") or item.get("error") or "").strip()
+                        parts.append(f"{f}: {m}" if f and m else (m or f))
+                    else:
+                        parts.append(str(item))
+                joined = "; ".join(p for p in parts if p)
+                if joined:
+                    msg = joined
             return UploadResult(
                 ok=False,
                 station_id=sid,
