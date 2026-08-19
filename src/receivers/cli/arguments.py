@@ -1261,6 +1261,18 @@ Examples:
     )
 
     mode_group.add_argument(
+        "--skip-fields",
+        metavar="FIELD[,..]",
+        help="With --fix-headers: do NOT rewrite these fields, even when they "
+        "differ from TOS. Comma-separated keys: marker, domes, antenna_height, "
+        "coordinates, observer_agency. Chiefly 'coordinates' — a header's APPROX "
+        "POSITION XYZ is the receiver's own autonomous solution and legitimately "
+        "sits tens of metres from the surveyed TOS value, so it flags on nearly "
+        "every historical file; skipping it keeps a MARKER NUMBER repair from "
+        "silently rewriting a station's entire archive as well.",
+    )
+
+    mode_group.add_argument(
         "--from-archive",
         action="store_true",
         help="Re-rinex mode: read raw from the persistent archive (the sync.yaml "

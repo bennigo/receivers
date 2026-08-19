@@ -5880,6 +5880,31 @@ def cmd_rinex(args) -> int:
         if getattr(args, "correct_antenna", False):
             _correct_hw.add("antenna")
         _correct_hw = frozenset(_correct_hw)
+
+        # --skip-fields: keys removed from the correctable set for this run.
+        # Validated against the known keys so a typo ("coordinate") fails loudly
+        # instead of silently rewriting the field it was meant to protect.
+        _VALID_SKIP = {
+            "marker",
+            "domes",
+            "antenna_height",
+            "coordinates",
+            "observer_agency",
+            "receiver",
+            "antenna",
+        }
+        _skip_fields = frozenset(
+            f.strip() for f in (getattr(args, "skip_fields", None) or "").split(",") if f.strip()
+        )
+        _bad_skip = _skip_fields - _VALID_SKIP
+        if _bad_skip:
+            logger.error(
+                "--skip-fields: unknown field(s) %s. Valid keys: %s",
+                ", ".join(sorted(_bad_skip)),
+                ", ".join(sorted(_VALID_SKIP)),
+            )
+            return 2
+
         if _correct_hw and len(stations) != 1:
             logger.error(
                 "--correct-receiver/--correct-antenna rewrite hardware headers "
@@ -6122,6 +6147,7 @@ def cmd_rinex(args) -> int:
                     retry_attempts=getattr(args, "retry_attempts", 2),
                     retry_backoff=getattr(args, "retry_backoff", 3.0),
                     correct_hardware=_correct_hw,
+                    skip_fields=_skip_fields,
                     loglevel=args.loglevel,
                     progress=h,
                 )
