@@ -198,6 +198,16 @@ Examples:
     )
 
     parser.add_argument(
+        "--external",
+        action="store_true",
+        help=(
+            "Fetch from an external server (stations.cfg "
+            "external_url_template) instead of the receiver directly. "
+            "Implied by operational_status=external."
+        ),
+    )
+
+    parser.add_argument(
         "--clean",
         action="store_true",
         dest="clean_tmp",  # Keep internal name for compatibility

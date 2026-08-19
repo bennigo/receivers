@@ -357,6 +357,46 @@ def cmd_download(args) -> int:
     total_downloaded = 0
     total_errors = 0
 
+    # External-fetch mode: stations whose data arrives from a third-party
+    # server (stations.cfg external_url_template / operational_status=external)
+    # instead of a receiver we reach directly. Reuses the resolved time range.
+    if getattr(args, "external", False):
+        from pathlib import Path as _Path
+
+        from ..config.receivers_config import get_receivers_config
+        from ..config_utils import get_station_config
+        from ..external_fetch import external_station_config, fetch_external_station
+
+        data_prepath = _Path(get_receivers_config().get_data_prepath())
+        for sid in args.stations:
+            cfg = get_station_config(sid)
+            if cfg is None:
+                logger.error("external %s: no stations.cfg section — skipping", sid)
+                total_errors += 1
+                continue
+            if external_station_config(cfg) is None:
+                logger.error(
+                    "external %s: no external_url_template in stations.cfg — "
+                    "not an external station",
+                    sid,
+                )
+                total_errors += 1
+                continue
+            dest = (
+                data_prepath
+                / start_time.strftime("%Y")
+                / start_time.strftime("%b").lower()
+                / sid.upper()
+                / args.session
+                / "rinex"
+            )
+            files = fetch_external_station(sid, cfg, start_time, end_time, dest)
+            total_downloaded += len(files)
+        logger.info(
+            f"External download complete. Files: {total_downloaded}, Errors: {total_errors}"
+        )
+        return 0 if total_errors == 0 else 1
+
     # Parallel mode: grouped batching with stagger and retry
     if getattr(args, "parallel", False) and len(args.stations) > 1:
         from .parallel import download_parallel
@@ -5894,7 +5934,9 @@ def cmd_rinex(args) -> int:
             "antenna",
         }
         _skip_fields = frozenset(
-            f.strip() for f in (getattr(args, "skip_fields", None) or "").split(",") if f.strip()
+            f.strip()
+            for f in (getattr(args, "skip_fields", None) or "").split(",")
+            if f.strip()
         )
         _bad_skip = _skip_fields - _VALID_SKIP
         if _bad_skip:
