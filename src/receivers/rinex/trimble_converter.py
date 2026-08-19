@@ -25,7 +25,7 @@ import gzip
 import logging
 import shutil
 import tempfile
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -313,6 +313,15 @@ class TrimbleConverter(RawToRinexConverter):
             raw_file,
         )
 
+    def _teqc_extra_args(self, observation_date: datetime) -> List[str]:
+        """Extra teqc flags for this container. Base: none.
+
+        Subclass hook so a decoder that needs disambiguation (R00 and its GPS
+        week-number rollover) can add flags without changing the .T02/.T00
+        command that is already correct.
+        """
+        return []
+
     def _run_teqc(
         self,
         dat_file: Path,
@@ -346,6 +355,7 @@ class TrimbleConverter(RawToRinexConverter):
         # teqc reads the .dat file and produces RINEX observation file
         cmd = [
             str(teqc),
+            *self._teqc_extra_args(observation_date),
             "+obs",
             str(rinex_file),
             str(dat_file),
@@ -506,3 +516,51 @@ class NetRSConverter(TrimbleConverter):
     def supported_extensions(self) -> List[str]:
         """Return supported file extensions for NetRS."""
         return [".t00", ".T00", ".t00.gz", ".T00.gz"]
+
+
+#: GPS time origin — week 0 day 0. Used to derive teqc's ``-week``.
+_GPS_EPOCH = date(1980, 1, 6)
+
+
+class R00Converter(TrimbleConverter):
+    """Trimble R00 raw (4000SSi / 4000Si era) → RINEX, via runpkr00 + teqc.
+
+    The pipeline is IDENTICAL to .T02/.T00 — runpkr00 unpacks the container to
+    a binary ``.dat``, teqc decodes that to RINEX 2 — so this subclass only
+    changes the accepted extension and adds one flag.
+
+    **That flag matters.** R00 predates the GPS week-number rollover, and the
+    raw stream carries a 10-bit week. Left to itself teqc guesses, and says so::
+
+        ? Error ? translation ... may have started with GPS week 2432
+                  rather than 1586  (try using '-week 1586' option)
+
+    It guessed right on the file this was built against, but a wrong guess is
+    silent and lands the data ~19.6 years away. The observation date is known
+    from the archive path, so the week is derived, not guessed.
+
+    Output is native RINEX 2.11 (teqc cannot create real RINEX 3 from this
+    raw); the inherited gfzrnx step performs the R2→R3 upgrade when asked, the
+    same as for .T02.
+
+    Verified against VMEY201006012359a.r00 (2010-06-02): runpkr00 8,495
+    records, teqc 5,760 epochs at 15 s = a complete 24 h day, header receiver
+    ``26093 TRIMBLE 4000SSI`` matching TOS's join for that era.
+    """
+
+    accepted_raw_formats = frozenset({"trimble_r00"})
+
+    @property
+    def supported_extensions(self) -> List[str]:
+        return [".r00", ".R00", ".r00.gz", ".R00.gz"]
+
+    def _teqc_extra_args(self, observation_date: datetime) -> List[str]:
+        """``-week N`` for ``observation_date`` — never let teqc guess."""
+        d = observation_date.date() if isinstance(observation_date, datetime) else observation_date
+        week = (d - _GPS_EPOCH).days // 7
+        self.logger.debug(
+            "R00 %s: pinning teqc -week %d (rollover is silent if guessed wrong)",
+            d.isoformat(),
+            week,
+        )
+        return ["-week", str(week)]

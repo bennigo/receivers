@@ -1136,6 +1136,18 @@ Examples:
     )
 
     format_group.add_argument(
+        "--r00",
+        action="store_true",
+        help="Restrict a re-rinex run to Trimble R00 raw (.r00) regardless of "
+        "the station's CURRENT receiver type — the 4000SSi/4000Si era, roughly "
+        "pre-2013 (e.g. VMEY is a PolaRX5 today but its 2008-2012 raw is .r00). "
+        "Pipeline is runpkr00 + teqc, the same as .T02; teqc's '-week' is "
+        "derived from the observation date rather than guessed, because R00 "
+        "predates the GPS week rollover and a wrong guess silently shifts the "
+        "data ~19.6 years. Output is native RINEX 2.11.",
+    )
+
+    format_group.add_argument(
         "--ashtech",
         action="store_true",
         help="Convert Ashtech .atc raw via teqc (pre-2012 archive; the -ash u/r "

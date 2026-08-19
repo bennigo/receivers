@@ -18,6 +18,7 @@ Recognised raw extensions mirror the converter registry in
 ``async_converter._create_converter``:
     .sbf  (Septentrio / PolaRX / mosaic)   .T02 (Trimble NetR9)
     .T00  (Trimble NetRS)                  .m00 (Leica / G10)
+    .r00  (Trimble 4000SSi/4000Si)
 each optionally compressed (``.gz`` / ``.Z``).
 """
 
@@ -32,7 +33,9 @@ logger = logging.getLogger("receivers.rinex.raw_presence")
 
 # Base raw extensions (lowercase, compression stripped) we have a converter for.
 # Keep in sync with async_converter._create_converter's raw_extension returns.
-KNOWN_RAW_EXTENSIONS: frozenset[str] = frozenset({".sbf", ".t02", ".t00", ".m00"})
+KNOWN_RAW_EXTENSIONS: frozenset[str] = frozenset(
+    {".sbf", ".t02", ".t00", ".m00", ".r00"}
+)
 
 # Compression suffixes stripped before matching the base extension.
 _COMPRESSION_SUFFIXES = (".gz", ".z")

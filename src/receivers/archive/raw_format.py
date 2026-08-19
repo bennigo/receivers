@@ -42,6 +42,10 @@ SBF = "sbf"
 ASHTECH_U = "ashtech_u"
 ASHTECH_R = "ashtech_r"
 TRIMBLE = "trimble"
+#: Trimble "R00" raw image — the 4000SSi/4000Si era (pre-2013 archive).
+#: Unlike .T02/.T00 this container carries PRINTABLE magic ("TNL RAW DATA
+#: IMAGE" at offset 2), so it is identified by content, not by extension.
+TRIMBLE_R00 = "trimble_r00"
 UNKNOWN = "unknown"
 
 # teqc decoder flags per format — the dispatch table the magic check feeds.
@@ -103,6 +107,11 @@ def classify_raw(path: Optional[Path] = None, head: Optional[bytes] = None) -> s
         return ASHTECH_U
     if head[:4] == b"Z-12":
         return ASHTECH_R
+    # Trimble R00 raw image (4000SSi/4000Si). Printable magic at offset 2, so
+    # this one IS content-identified — checked before the extension fallback
+    # below so a mislabelled .r00 still routes correctly.
+    if b"TNL RAW DATA IMAGE" in head[:32]:
+        return TRIMBLE_R00
     if path is not None:
         suffixes = "".join(Path(path).suffixes).lower()
         if ".t02" in suffixes or ".t00" in suffixes:

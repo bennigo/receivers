@@ -33,7 +33,12 @@ from .metadata_provider import (
 )
 from .rinex_namer import NamingConvention, RinexNamer
 from .sbf_converter import SBFConverter
-from .trimble_converter import NetR9Converter, NetRSConverter, TrimbleConverter
+from .trimble_converter import (
+    NetR9Converter,
+    NetRSConverter,
+    R00Converter,
+    TrimbleConverter,
+)
 from .trimble_native_converter import TrimbleNativeConverter
 
 __all__ = [
@@ -61,6 +66,7 @@ __all__ = [
     "AshtechConverter",
     "NetR9Converter",
     "NetRSConverter",
+    "R00Converter",
     "LeicaConverter",
     "G10Converter",
 ]

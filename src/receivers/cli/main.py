@@ -3973,6 +3973,7 @@ def _create_rinex_converter(
     from ..rinex import (
         AshtechConverter,
         LeicaConverter,
+        R00Converter,
         SBFConverter,
         TrimbleConverter,
         TrimbleNativeConverter,
@@ -4021,6 +4022,23 @@ def _create_rinex_converter(
             session_type=session_type,
         )
         raw_extension = ".atc"
+
+    # --r00 is the same escape hatch for the Trimble 4000SSi/4000Si era: VMEY is
+    # a PolaRX5 today, but its 2008-2012 raw is .r00. Same runpkr00+teqc chain as
+    # .T02; the converter pins teqc's -week from the observation date.
+    elif getattr(args, "r00", False) or receiver_type == "r00":
+        converter = R00Converter(
+            station_id=station_id,
+            rinex_version=rinex_version,
+            apply_hatanaka=apply_hatanaka,
+            compression_format=compression_format,
+            naming_convention=naming_convention,
+            apply_header_corrections=not getattr(args, "no_header_correction", False),
+            keep_intermediate=getattr(args, "keep_intermediate", False),
+            loglevel=_conv_loglevel,
+            session_type=session_type,
+        )
+        raw_extension = ".r00*"  # match .r00 and .r00.gz
 
     elif getattr(args, "trimble", False) and not receiver_type_override:
         # --trimble restricts the run to Trimble raw regardless of the station's
@@ -4528,6 +4546,9 @@ def _rinex_convert_station_period(
         _per_file = (
             _is_rerinex_mode(args)
             and not getattr(args, "ashtech", False)
+            # --r00 is a single-converter force, like --ashtech: per-file
+            # re-dispatch would resolve by receiver_type and lose R00Converter.
+            and not getattr(args, "r00", False)
             and build_params is not None
         )
         _conv_cache: dict = {}
