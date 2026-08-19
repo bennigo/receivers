@@ -1340,11 +1340,15 @@ Examples:
         "--backup-old",
         action="store_true",
         help="During RE-CONVERSION (re-rinex): before a new RINEX overwrites the "
-        "existing one for the same observation date, move the existing file to a "
-        "sibling rinex_bak/ directory (filename unchanged). The _bak name marks it "
-        "a DELETABLE backup — clean it up with --del-backup once you've verified "
-        "the re-rinexed archive. Use when re-rinexing to RINEX3-short (same "
-        "filename as the old RINEX2, so it would overwrite).",
+        "existing one, COPY the current archive file to a LOCAL "
+        "'<work-dir>_prev/' tree. The copy is a verification-window artefact — "
+        "keep it until you have confirmed the regeneration is good, then delete "
+        "it. NOTHING is written to the archive: the archive holds raw/, rinex/ "
+        "and rinex_org/ only, where rinex_org is the terminal state for data "
+        "that CANNOT be regenerated (there, the preserved copy IS the original). "
+        "Copy, not move, so the archive's live file stays in place until rsync "
+        "replaces it — the old server-side move left a window where a failed "
+        "rsync stranded the only copy in rinex_bak/.",
     )
 
     mode_group.add_argument(

@@ -5666,23 +5666,58 @@ def _push_reconverted(work_dir, args, logger, only_rel=None) -> Dict[str, Any]:
             stats["note"] = f"regenerability gate failed: {exc}"
             return stats
 
-    # Archive-side backup-old: move the soon-to-be-overwritten archive RINEX to
-    # rinex_bak/ on the archive (before the rsync lands the new file).
-    if getattr(args, "backup_old", False) and ssh_target:
-        from ..archive.remove import backup_old_archive_files
+    # Pre-overwrite safety copy — LOCAL ONLY. Never writes rinex_bak/ to the
+    # archive.
+    #
+    # Policy (bgo, 2026-08-19): the archive holds raw/, rinex/ and rinex_org/
+    # and nothing else. rinex_org is the TERMINAL state for data that cannot be
+    # regenerated — at that point the preserved copy IS the original. A
+    # pre-overwrite backup is a different thing: a VERIFICATION-WINDOW artefact,
+    # kept only until the regeneration is confirmed good. So it belongs beside
+    # the staging tree, not in the archive (~265 GB of server-side rinex_bak had
+    # accumulated on a 98%-full volume).
+    #
+    # COPY, not move. The old server-side path MOVED rinex/FILE → rinex_bak/FILE
+    # BEFORE the rsync, so a failed rsync left the archive's rinex/ empty with
+    # the only copy sitting in rinex_bak — a real window where a bak cleanup
+    # would have destroyed the last copy. Copying leaves the live file in place
+    # until rsync replaces it, so that window does not exist.
+    if getattr(args, "backup_old", False) and rel:
+        import shutil as _shutil
 
+        backup_root = work.parent / f"{work.name}_prev"
+        copied = missing = failed = 0
         try:
-            res = backup_old_archive_files(
-                rel, ssh_target=ssh_target, dest_root=destpath or "", execute=not dry
-            )
-            done = res.would_backup if dry else res.backed_up
-            extra = f"  (MISSING={len(res.missing)})" if res.missing else ""
+            src_root_bak = Path(_reconvert_source_root(args, ""))
+            for r in rel:
+                a = src_root_bak / r
+                if not a.is_file():
+                    missing += 1
+                    continue
+                if dry:
+                    copied += 1
+                    continue
+                d = backup_root / r
+                try:
+                    d.parent.mkdir(parents=True, exist_ok=True)
+                    _shutil.copy2(str(a), str(d))
+                    copied += 1
+                except OSError:
+                    failed += 1
+            extra = f"  (absent={missing})" if missing else ""
+            extra += f"  ⚠️ FAILED={failed}" if failed else ""
             print(
-                f"  📦 archive backup-old: {len(done)} file(s) "
-                f"{'(dry-run)' if dry else '→ rinex_bak/'}{extra}"
+                f"  📦 local pre-overwrite copy: {copied} file(s) "
+                f"{'(dry-run)' if dry else f'→ {backup_root}'}{extra}"
             )
+            if failed:
+                # A backup we asked for and did not get is not a detail.
+                print(
+                    "  ⚠️  some pre-overwrite copies FAILED — the archive files "
+                    "they cover will be overwritten with no local fallback"
+                )
         except Exception as exc:  # noqa: BLE001
-            print(f"  ⚠️  archive backup-old failed (gateway): {exc}")
+            print(f"  ⚠️  local pre-overwrite copy failed: {exc}")
 
     dest = full.rstrip("/") + "/"
     src = str(work).rstrip("/") + "/"
