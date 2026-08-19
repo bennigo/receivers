@@ -19,11 +19,27 @@ from receivers.rinex import header_fix as hf
 from receivers.rinex import raw_presence as rp
 
 
-def _drive(monkeypatch, tmp_path, *, comparison, session=None, correct_hardware=frozenset()):
+def _drive(
+    monkeypatch,
+    tmp_path,
+    *,
+    comparison,
+    session=None,
+    correct_hardware=frozenset(),
+    resolved=None,
+):
     """Run fix_headers_in_file on one real (empty) file with everything mocked.
 
     Returns (result, captured) where captured["only_fields"] is the set handed
     to the corrector (None if the corrector was never called).
+
+    ``resolved`` is what the CORRECTOR's builder yields — deliberately a separate
+    mock from ``comparison``'s ``corrections``. The validator decides WHICH
+    fields differ, the corrector decides WHAT is written, and the two disagreed
+    in production (a TOS placeholder antenna serial previewed blank but was
+    written ``0000``). Keeping them separate here is what makes a future
+    divergence visible instead of silently agreeing by construction. Defaults to
+    the comparison's corrections, i.e. "the two agree".
     """
     if session is None:
         session = {"marker": "RHOF", "domes": "10216M001"}
@@ -43,6 +59,22 @@ def _drive(monkeypatch, tmp_path, *, comparison, session=None, correct_hardware=
 
     captured: dict = {"only_fields": None}
 
+    # The corrector's own builder, which the preview now resolves against so a
+    # dry-run reports the value that will actually be written.
+    import tostools.rinex.corrector as tc
+
+    _resolved = dict(comparison.get("corrections", {}) if resolved is None else resolved)
+
+    def fake_resolve(rinex_file, station, observation_date=None, **kw):
+        only = kw.get("only_fields")
+        out = {**_resolved, **(kw.get("extra_corrections") or {})}
+        if only is not None:
+            out = {k: v for k, v in out.items() if k in only}
+        captured["resolved"] = out
+        return out
+
+    monkeypatch.setattr(tc, "resolve_corrections", fake_resolve)
+
     def fake_correct(
         target,
         station,
@@ -52,6 +84,7 @@ def _drive(monkeypatch, tmp_path, *, comparison, session=None, correct_hardware=
         loglevel,
         only_fields,
         extra_corrections=None,
+        tos_metadata_cache=None,
     ):
         captured["only_fields"] = set(only_fields)
         captured["extra_corrections"] = extra_corrections
@@ -116,7 +149,10 @@ def test_domes_and_height_fixed_in_one_pass(monkeypatch, tmp_path):
         },
         "corrections": {
             "MARKER NUMBER": "10216M001",
-            "ANTENNA: DELTA H/E/N": "1.0140 0.0000 0.0000",
+            # The corrector's builder yields the H/E/N triplet, not a preformatted
+            # string — the preview renders these values, so the fixture has to be
+            # the real shape or it is not testing the real path.
+            "ANTENNA: DELTA H/E/N": [1.0140, 0.0, 0.0],
         },
     }
     result, captured = _drive(monkeypatch, tmp_path, comparison=comparison)
@@ -152,7 +188,12 @@ def test_correct_receiver_optin_writes_rec_type(monkeypatch, tmp_path):
     )
     assert result["fixed"] is True
     assert captured["only_fields"] == {"REC # / TYPE / VERS"}
-    assert result["changes"]["REC # / TYPE / VERS"] == ("TRIMBLE NETRS", "SEPT POLARX5")
+    # The new side is the exact header field the corrector will emit — serial,
+    # type and firmware in their A20 columns — not the validator's one-line
+    # summary. The whole point of the change is that the preview is the write.
+    old, new = result["changes"]["REC # / TYPE / VERS"]
+    assert old == "TRIMBLE NETRS"
+    assert new == "3001                SEPT POLARX5        5.5.0"
     # not left in the flag-only bucket
     assert "receiver" not in result["flagged"]
 
@@ -233,3 +274,71 @@ def test_nominal_interval_seconds():
     assert hf._nominal_interval_seconds("status_1hr") is None
     assert hf._nominal_interval_seconds(None) is None
     assert hf._nominal_interval_seconds("") is None
+
+
+class TestPreviewReportsWhatTheWriteWillDo:
+    """The preview must come from the corrector's builder, not the validator's.
+
+    These two disagree in production. TOS assigns a placeholder antenna serial
+    ``antenna-<STID>-<YYYYMMDD>``; the validator proposes suppressing it (blank)
+    while the corrector writes ``0000``. The dry-run used to show the former and
+    the run wrote the latter — measured on 66 VMEY files, 2026-08-19. A dry-run
+    that does not describe the action is worthless on the one run it exists for:
+    the review before rewriting archived files.
+    """
+
+    def test_preview_shows_the_correctors_value_not_the_validators(
+        self, monkeypatch, tmp_path
+    ):
+        comparison = {
+            "discrepancies": {
+                "antenna": {
+                    "rinex": "SEPCHOKE_B3E6/SPKE sn=antenna-VMEY-2023011",
+                    "tos": "SEPCHOKE_B3E6/SPKE sn=?",  # validator: suppress it
+                }
+            },
+            "corrections": {"ANT # / TYPE": ["", "SEPCHOKE_B3E6   SPKE"]},
+        }
+        result, _ = _drive(
+            monkeypatch,
+            tmp_path,
+            comparison=comparison,
+            correct_hardware=frozenset({"antenna"}),
+            # corrector: placeholder serial becomes 0000
+            resolved={"ANT # / TYPE": ["0000", "SEPCHOKE_B3E6   SPKE"]},
+        )
+        _, new = result["changes"]["ANT # / TYPE"]
+        assert new.startswith("0000"), "preview must report the written value"
+        assert "sn=?" not in new, "the validator's rendering must not leak in"
+        # A20,A20 — the field the truncation bug used to mangle.
+        assert new[20:].strip() == "SEPCHOKE_B3E6   SPKE".strip()
+
+    def test_a_field_the_corrector_will_not_write_is_not_reported_as_changed(
+        self, monkeypatch, tmp_path
+    ):
+        # The position guard drops a km-scale APPROX POSITION rewrite this way.
+        # Claiming a fix that never happens is the same defect in the other
+        # direction, so the label is dropped from changed_labels too.
+        comparison = {
+            "discrepancies": {"domes": {"rinex": "RHOF", "tos": "10216M001"}},
+            "corrections": {"MARKER NUMBER": "10216M001"},
+        }
+        result, captured = _drive(
+            monkeypatch, tmp_path, comparison=comparison, resolved={}
+        )
+        assert result["changed_labels"] == []
+        assert result["changes"] == {}
+        assert result["fixed"] is False
+        assert captured["only_fields"] is None, "corrector must not be called"
+
+    def test_a_stripped_line_is_previewed_as_a_removal(self, monkeypatch, tmp_path):
+        # STRIP_LINE (no real DOMES) removes the line; showing a blank field
+        # would misdescribe it as "written empty".
+        comparison = {
+            "discrepancies": {"domes": {"rinex": "RHOF", "tos": ""}},
+            "corrections": {"MARKER NUMBER": "10216M001"},
+        }
+        result, _ = _drive(
+            monkeypatch, tmp_path, comparison=comparison, resolved={"MARKER NUMBER": None}
+        )
+        assert result["changes"]["MARKER NUMBER"] == ("RHOF", "<line removed>")

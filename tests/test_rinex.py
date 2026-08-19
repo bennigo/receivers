@@ -295,7 +295,15 @@ class TestEquipmentMetadata:
         assert "0.0000" in delta_field
 
     def test_to_rinex_corrections_without_antenna_serial(self):
-        """Test that ANT # / TYPE is not included if no antenna serial."""
+        """A missing serial must not take the antenna TYPE and RADOME with it.
+
+        This used to assert the field was omitted entirely when the serial was
+        empty. That gate was wrong in the common case: TOS very often has no
+        manufacturer serial (it assigns a placeholder instead), and suppressing
+        the whole field then dropped the antenna model and radome — the two parts
+        that are known and that downstream processing actually needs. The field
+        is now emitted whenever EITHER part is known, with the serial left blank.
+        """
         metadata = EquipmentMetadata(
             marker_name="TEST",
             antenna_model="ASH701945C_M",
@@ -305,9 +313,18 @@ class TestEquipmentMetadata:
 
         corrections = metadata.to_rinex_corrections()
 
-        # ANT # / TYPE should NOT be included without serial
-        # (we don't want to overwrite the field if we don't have serial to fix)
-        assert "ANT # / TYPE" not in corrections
+        assert "ANT # / TYPE" in corrections
+        field = corrections["ANT # / TYPE"]
+        assert field[:20].strip() == "", "unknown serial is blank, not invented"
+        assert "ASH701945C_M" in field
+        assert "SCIS" in field
+
+    def test_to_rinex_corrections_without_antenna_model_or_serial(self):
+        """Neither part known ⇒ nothing to say, so the field stays out."""
+        metadata = EquipmentMetadata(
+            marker_name="TEST", antenna_model="", antenna_serial=""
+        )
+        assert "ANT # / TYPE" not in metadata.to_rinex_corrections()
 
     def test_to_rinex_corrections_with_receiver(self):
         """Test including receiver info with include_receiver=True."""
@@ -738,8 +755,15 @@ class TestRinexFieldFormatting:
         assert result[:20].startswith("CR620012345")
         assert "ASH701945C_M" in result
 
-        # No serial = None
-        assert format_rinex_field("ANT # / TYPE", ("", "TYPE")) is None
+        # A known type with an unknown serial still writes the type — dropping
+        # the field would discard the part we do know.
+        no_serial = format_rinex_field("ANT # / TYPE", ("", "TYPE"))
+        assert no_serial is not None
+        assert no_serial[:20].strip() == ""
+        assert no_serial[20:].strip() == "TYPE"
+
+        # Neither part known = nothing to write.
+        assert format_rinex_field("ANT # / TYPE", ("", "")) is None
 
     def test_format_antenna_delta(self):
         """Test ANTENNA: DELTA H/E/N formatting: 3 x F14.4."""

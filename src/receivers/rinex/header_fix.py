@@ -206,6 +206,7 @@ def fix_headers_in_file(
     source_base: Optional[Path] = None,
     session_type: Optional[str] = None,
     tos_cache: Any = None,
+    tos_metadata_cache: Optional[dict] = None,
     correct_hardware: frozenset = frozenset(),
     loglevel: int = logging.INFO,
 ) -> dict:
@@ -227,6 +228,7 @@ def fix_headers_in_file(
     Returns a summary dict: ``{file, fixed, changed_labels, archived, error}``.
     """
     from tostools.rinex import correct_rinex_from_tos
+    from tostools.rinex.corrector import render_correction, resolve_corrections
     from tostools.rinex.reader import _parse_daily_rinex_date
     from tostools.rinex.validator import compare_rinex_to_tos
 
@@ -347,13 +349,6 @@ def fix_headers_in_file(
     } & corrections_labels
     if not discrepant_labels:
         return result
-    result["changed_labels"] = sorted(discrepant_labels)
-    # Record the actual value transition (old header → TOS) per field.
-    for key in correctable_keys:
-        d = _disc.get(key)
-        label = correctable_map.get(key)
-        if d and label and label in discrepant_labels:
-            result["changes"][label] = (d.get("rinex"), d.get("tos"))
 
     # OBSERVER / AGENCY value must be injected — the corrector cannot resolve
     # agencies.yaml, so pass the receivers-resolved value from the session.
@@ -363,6 +358,49 @@ def fix_headers_in_file(
             str(tos_session.get("observer") or "").strip(),
             str(tos_session.get("agency") or "").strip(),
         ]
+
+    # The validator decides WHICH fields differ; the corrector decides WHAT is
+    # written. Ask the corrector's own builder so the preview is the write.
+    # Previously the preview showed the validator's proposed value, and for a TOS
+    # placeholder antenna serial the two disagree (blank vs "0000") — a dry-run
+    # that does not describe the action is worthless on the one run it exists for.
+    resolved = resolve_corrections(
+        source_path,
+        station_id,
+        observation_date,
+        loglevel=loglevel,
+        only_fields=discrepant_labels,
+        extra_corrections=extra_corrections or None,
+        tos_metadata_cache=tos_metadata_cache,
+    )
+
+    # A label the corrector will not write is not a change — drop it rather than
+    # report a fix that never happens (the position guard drops a km-scale
+    # APPROX POSITION rewrite exactly this way).
+    discrepant_labels = {lbl for lbl in discrepant_labels if lbl in resolved}
+    if not discrepant_labels:
+        logger.debug(
+            "%s: corrector produced no value for %s — nothing to fix",
+            source_path.name,
+            ", ".join(sorted(result["changed_labels"] or [])) or "any flagged field",
+        )
+        return result
+    result["changed_labels"] = sorted(discrepant_labels)
+
+    # Record the transition as the header field text: old = what is in the file,
+    # new = the exact 60-char field the corrector will emit (None = line removed).
+    _label_to_key = {lbl: key for key, lbl in correctable_map.items()}
+    for label in discrepant_labels:
+        old = str(rinex_info.get(label) or "").rstrip()
+        if not old:
+            # The header has no such line (the corrector will INSERT one). Fall
+            # back to what the validator saw so the summary still says what it
+            # was, rather than an empty string that reads like a blank field.
+            _d = _disc.get(_label_to_key.get(label, "")) or {}
+            old = str(_d.get("rinex") or "").rstrip()
+        rendered = render_correction(label, resolved[label])
+        new = "<line removed>" if rendered is None else rendered.rstrip()
+        result["changes"][label] = (old, new)
 
     if dry_run:
         logger.debug(
@@ -443,6 +481,9 @@ def fix_headers_in_file(
             loglevel=loglevel,
             only_fields=discrepant_labels,
             extra_corrections=extra_corrections or None,
+            # Same cache the preview resolved against — so the write re-derives
+            # the identical values without a second TOS fetch per file.
+            tos_metadata_cache=tos_metadata_cache,
         )
         result["fixed"] = out is not None
     except Exception as exc:  # noqa: BLE001
@@ -749,6 +790,11 @@ def fix_headers_station(
 
         tos_cache = TOSSesionCache()
 
+    # Date-independent gps_metadata(station) payload, shared by every file in
+    # this station run: the preview resolves against it and the write reuses it,
+    # so the pair costs one TOS call for the station, not two per file.
+    tos_metadata_cache: dict = {}
+
     # Progress: a ChunkProgress handle (parallel batch — tqdm bars from N
     # workers garble one terminal line, so the board reports instead), or a
     # tqdm bar for the interactive sequential run.
@@ -785,6 +831,7 @@ def fix_headers_station(
             source_base=source_base,
             session_type=session,
             tos_cache=tos_cache,
+            tos_metadata_cache=tos_metadata_cache,
             correct_hardware=correct_hardware,
             loglevel=loglevel,
         )
