@@ -208,6 +208,7 @@ def fix_headers_in_file(
     tos_cache: Any = None,
     tos_metadata_cache: Optional[dict] = None,
     correct_hardware: frozenset = frozenset(),
+    skip_fields: frozenset = frozenset(),
     loglevel: int = logging.INFO,
 ) -> dict:
     """Fix the discrepant TOS header fields of one RINEX file.
@@ -321,6 +322,21 @@ def fix_headers_in_file(
         if _hw_label:
             correctable_map[_hw] = _hw_label
             flag_only.discard(_hw)
+
+    # Narrow the run to a subset of fields. Dropping a key from correctable_map
+    # (rather than filtering later) means the field is never previewed, never
+    # written, and never counted as a fix — one gate, so a dry-run still
+    # describes the action exactly.
+    #
+    # The case this exists for: APPROX POSITION XYZ. A header's approximate
+    # position is the receiver's own autonomous solution and legitimately sits
+    # tens of metres from the surveyed value in TOS, so it flags on essentially
+    # every historical file (RHOF 2005: 347/347). Rewriting a station's entire
+    # archive as a side effect of repairing MARKER NUMBER is not a decision this
+    # tool should make silently — `--skip-fields coordinates` keeps the run to
+    # what was actually asked for.
+    for _skip in skip_fields:
+        correctable_map.pop(_skip, None)
 
     correctable_keys = discrepancy_keys & correctable_map.keys()
     flag_keys = discrepancy_keys & flag_only
@@ -600,6 +616,7 @@ def _retry_transient_failures(
     session: str,
     tos_cache: Any,
     correct_hardware: frozenset,
+    skip_fields: frozenset = frozenset(),
     loglevel: int,
 ) -> None:
     """Re-run the failures that a retry can plausibly fix, in place.
@@ -658,6 +675,7 @@ def _retry_transient_failures(
                 session_type=session,
                 tos_cache=tos_cache,
                 correct_hardware=correct_hardware,
+                skip_fields=skip_fields,
                 loglevel=loglevel,
             )
             if retry.get("error"):
@@ -721,6 +739,7 @@ def fix_headers_station(
     retry_attempts: int = 2,
     retry_backoff: float = 3.0,
     correct_hardware: frozenset = frozenset(),
+    skip_fields: frozenset = frozenset(),
     loglevel: int = logging.INFO,
     progress: Any = None,
 ) -> dict:
@@ -729,6 +748,11 @@ def fix_headers_station(
     ``correct_hardware`` (a subset of ``{"receiver", "antenna"}``) opts those
     normally-flag-only hardware fields into rewriting for this run — see
     ``fix_headers_in_file``. Empty preserves the safe flag-only default.
+
+    ``skip_fields`` is the inverse: keys removed from the correctable set for
+    this run (``marker``, ``domes``, ``antenna_height``, ``coordinates``,
+    ``observer_agency``). Chiefly ``coordinates`` — see ``fix_headers_in_file``
+    for why a position rewrite should not ride along with a marker repair.
 
     When ``work_dir`` is given, files are discovered from ``source_dir``
     (or ``data_prepath``) and COPIED to a mirror path under ``work_dir``
@@ -833,6 +857,7 @@ def fix_headers_station(
             tos_cache=tos_cache,
             tos_metadata_cache=tos_metadata_cache,
             correct_hardware=correct_hardware,
+            skip_fields=skip_fields,
             loglevel=loglevel,
         )
         summary["details"].append(r)
@@ -882,6 +907,7 @@ def fix_headers_station(
             session=session,
             tos_cache=tos_cache,
             correct_hardware=correct_hardware,
+            skip_fields=skip_fields,
             loglevel=loglevel,
         )
 
