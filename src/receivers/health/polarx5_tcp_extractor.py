@@ -91,6 +91,11 @@ class PolaRX5TCPExtractor:
         self._auth_failed = (
             False  # Set on first bad-creds response; skips login for rest of session
         )
+        self._auth_required = (
+            False  # Set when a receiver answers a command with "Not authorized" —
+            # definitive evidence it needs login, even when stations.cfg fw
+            # version is stale (e.g. probing a 5.7.0 unit mid receiver-swap).
+        )
         self.use_tls = (
             False  # Set on first TLS fallback; subsequent connections reuse TLS
         )
@@ -497,6 +502,7 @@ class PolaRX5TCPExtractor:
                             self.logger.debug(
                                 "ReceiverSetup unauthenticated esoc blocked — fw requires auth"
                             )
+                            self._auth_required = True
                             return None  # Needs auth — caller will retry with login
                         result = self._find_sbf_block(
                             response, self.BLOCK_RECEIVER_SETUP
@@ -1279,7 +1285,7 @@ class PolaRX5TCPExtractor:
         # brute-force counter that is harmless on pre-5.7 and becomes a GLOBAL
         # 3.5-9 h lockout the instant the station is flashed — blocking
         # rec-provision, the very command needed to recover.
-        if not should_attempt_login(self.firmware_version):
+        if not should_attempt_login(self.firmware_version) and not self._auth_required:
             self.logger.debug(
                 f"Skipping login for {self.station_id} "
                 f"(fw {self.firmware_version or 'unknown'} — not a known >=5.7.0)"

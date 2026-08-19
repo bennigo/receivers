@@ -73,6 +73,7 @@ def _extractor(fw):
     ex.tcp_username = "u"
     ex.tcp_password = "p"
     ex._auth_failed = False
+    ex._auth_required = False
     ex.logger = MagicMock()
     return ex
 
@@ -94,6 +95,32 @@ def test_extractor_still_logs_in_on_570():
     sock.sendall.assert_called_once()
     sent = sock.sendall.call_args[0][0].decode()
     assert sent.startswith("login, u, p")
+
+
+def test_extractor_logs_in_despite_stale_fw_when_receiver_requires_auth():
+    """Mid receiver-swap: stations.cfg still holds the OLD fw (5.4.0), but the
+    new 5.7.0 receiver answered 'Not authorized' — definitive proof auth is
+    required. The probe must log in anyway instead of bailing on the stale
+    version gate."""
+    ex = _extractor("5.4.0")  # stale — describes the OLD receiver
+    ex._auth_required = True  # set by the unauthenticated ReceiverSetup attempt
+    sock = MagicMock()
+    sock.recv.return_value = b"$R! LogIn\r\nIP10>"
+    ex._login(sock)
+    sock.sendall.assert_called_once()
+    sent = sock.sendall.call_args[0][0].decode()
+    assert sent.startswith("login, u, p")
+
+
+def test_extractor_does_not_log_in_without_auth_required_and_stale_fw():
+    """The lockout guard must hold: stale fw AND no 'Not authorized' signal
+    still means no login (an open pre-5.7 receiver must never be probed with
+    a login that feeds the brute-force counter)."""
+    ex = _extractor("5.4.0")
+    ex._auth_required = False
+    sock = MagicMock()
+    ex._login(sock)
+    sock.sendall.assert_not_called()
 
 
 def test_extractor_credentials_absent_is_unchanged():
