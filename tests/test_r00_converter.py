@@ -116,3 +116,50 @@ class TestConverterShape:
 
     def test_it_gates_on_r00_content(self):
         assert R00Converter.accepted_raw_formats == frozenset({TRIMBLE_R00})
+
+
+class TestSessionStartNaming:
+    """The archive stamps some R00 files with the moment the session OPENED.
+
+    ``…YYYYMMDD2359a.r00`` holds the data of the NEXT day. Measured fleet-wide
+    over 2008/2010/2012: 2,150 files named ``0000`` (same day) against 1,188
+    named ``2359`` (next day), plus ~270 at assorted hours. So it is a real
+    minority convention, not universal — VMEY happens to be a ``2359`` station
+    (951 of its 977 files), which is why it looked universal at first.
+
+    Confirmed by decoding both ways:
+        HVER201004010000a.r00 -> first obs 2010-04-01   (same day)
+        VMEY201006012359a.r00 -> first obs 2010-06-02   (next day)
+    """
+
+    @pytest.mark.parametrize(
+        "name,expect",
+        [
+            ("VMEY201006012359a.r00", "2010-06-02"),  # session start -> next day
+            ("HVER201004010000a.r00", "2010-04-01"),  # midnight -> same day
+            ("VMEY201212312359a.r00", "2013-01-01"),  # rolls the year
+        ],
+    )
+    def test_the_observation_date_follows_the_session(self, name, expect):
+        from pathlib import Path
+
+        got = R00Converter("VMEY")._extract_date_from_filename(Path(name))
+        assert got.date().isoformat() == expect
+
+    def test_an_odd_hour_is_left_alone_for_the_identity_gate(self):
+        # ~270 files carry assorted times (1900, 2200, …). Guessing for those
+        # would be worse than letting the base class's identity gate compare the
+        # decoded first-obs date against the claim and refuse a mismatch.
+        from pathlib import Path
+
+        got = R00Converter("VMEY")._extract_date_from_filename(Path("XXXX201004011900a.r00"))
+        assert got.date().isoformat() == "2010-04-01"
+
+    def test_the_week_is_derived_from_the_OBSERVATION_date(self):
+        # The whole point of the shift: a 2359 file must be decoded with the
+        # week of the day its data belongs to, not of its filename stamp.
+        from pathlib import Path
+
+        c = R00Converter("VMEY")
+        obs = c._extract_date_from_filename(Path("VMEY201006012359a.r00"))
+        assert c._teqc_extra_args(obs) == ["-week", "1586"]
