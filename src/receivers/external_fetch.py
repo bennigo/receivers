@@ -106,38 +106,49 @@ def _fetch_one(
 ) -> Path:
     """Fetch a single URL into ``dest`` (filename derived from the URL path).
 
-    Supports ``ftp://`` (ftplib) and ``http://`` / ``https://`` (urllib).
-    Returns the local path written.
+    Downloads to a ``.part`` temp file and atomically renames it into place on
+    success, so a failed/partial download never leaves a 0-byte (or truncated)
+    file at the final path — downstream archive tooling must not mistake junk
+    for real data. Supports ``ftp://`` (ftplib) and ``http://``/``https://``
+    (urllib). Returns the local path written.
     """
     parsed = urllib.parse.urlparse(url)
     filename = Path(urllib.parse.unquote(parsed.path)).name or "download"
     dest = dest / filename
     dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".part")
 
-    if parsed.scheme in ("http", "https"):
-        # urllib handles http(s) transparently; no auth needed for anonymous
-        # internal sources. (Credentials can be added later if a provider
-        # requires basic auth.)
-        urllib.request.urlretrieve(url, str(dest))
-        return dest
+    try:
+        if parsed.scheme in ("http", "https"):
+            # urllib handles http(s) transparently; no auth needed for anonymous
+            # internal sources. (Credentials can be added later if a provider
+            # requires basic auth.)
+            urllib.request.urlretrieve(url, str(tmp))
+        elif parsed.scheme == "ftp":
+            host = parsed.hostname or ""
+            port = parsed.port or 21
+            ftp = ftplib.FTP()
+            ftp.connect(host, port, timeout=30)
+            ftp.login(username or "anonymous", password or "")
+            try:
+                remote_dir = str(Path(parsed.path).parent) or "/"
+                if remote_dir != "/":
+                    ftp.cwd(remote_dir)
+                with open(tmp, "wb") as fh:
+                    ftp.retrbinary(f"RETR {filename}", fh.write)
+            finally:
+                ftp.quit()
+        else:
+            raise ValueError(
+                f"unsupported external URL scheme {parsed.scheme!r}: {url}"
+            )
+    except Exception:
+        # Remove the partial temp file so a failed fetch leaves no junk.
+        tmp.unlink(missing_ok=True)
+        raise
 
-    if parsed.scheme == "ftp":
-        host = parsed.hostname or ""
-        port = parsed.port or 21
-        ftp = ftplib.FTP()
-        ftp.connect(host, port, timeout=30)
-        ftp.login(username or "anonymous", password or "")
-        try:
-            remote_dir = str(Path(parsed.path).parent) or "/"
-            if remote_dir != "/":
-                ftp.cwd(remote_dir)
-            with open(dest, "wb") as fh:
-                ftp.retrbinary(f"RETR {filename}", fh.write)
-        finally:
-            ftp.quit()
-        return dest
-
-    raise ValueError(f"unsupported external URL scheme {parsed.scheme!r}: {url}")
+    tmp.replace(dest)
+    return dest
 
 
 def fetch_external_station(

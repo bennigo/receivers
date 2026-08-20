@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
+
 from receivers.external_fetch import (
     build_external_urls,
     external_station_config,
@@ -82,3 +84,52 @@ class TestExternalStations:
             "BBB": {},  # not external
         }
         assert external_stations(configs) == ["AAA", "ZZZ"]
+
+
+class TestFetchCleanup:
+    """Failed downloads must not leave 0-byte / partial junk files."""
+
+    def test_failed_ftp_leaves_no_file(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+
+        from receivers.external_fetch import _fetch_one
+
+        ftp = MagicMock()
+
+        def boom(*a, **k):
+            raise OSError("550 Can't open")
+
+        ftp.retrbinary.side_effect = boom
+        with patch("receivers.external_fetch.ftplib.FTP", return_value=ftp):
+            with pytest.raises(OSError):
+                _fetch_one(
+                    "ftp://h/15s_data/2026/2432/232/MYVA2320.26e",
+                    tmp_path,
+                    username=None,
+                    password=None,
+                )
+        assert list(tmp_path.iterdir()) == []  # no junk, no .part
+
+    def test_successful_ftp_renames_atomically(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+
+        from receivers.external_fetch import _fetch_one
+
+        ftp = MagicMock()
+
+        def write(cmd, callback):
+            callback(b"RINEXDATA")  # simulate streamed bytes
+            return "226 done"
+
+        ftp.retrbinary.side_effect = write
+        with patch("receivers.external_fetch.ftplib.FTP", return_value=ftp):
+            path = _fetch_one(
+                "ftp://h/15s_data/2026/2432/232/MYVA2320.26e",
+                tmp_path,
+                username=None,
+                password=None,
+            )
+        assert path.name == "MYVA2320.26e"
+        assert path.read_bytes() == b"RINEXDATA"
+        # no leftover .part file
+        assert [p.name for p in tmp_path.iterdir()] == ["MYVA2320.26e"]
