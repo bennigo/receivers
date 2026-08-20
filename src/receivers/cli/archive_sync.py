@@ -26,6 +26,29 @@ def _get_conn(host: Optional[str], required: bool):
     return optional_connection(host, required=required, log=logger)
 
 
+def _parse_bound(value: str, *, is_start: bool) -> datetime:
+    """Parse a --start/--end bound into a naive datetime.
+
+    ``YYYY-MM-DD`` expands to the whole day (start=00:00, end=23:59:59) so a
+    bare date selects a full calendar day; ``YYYY-MM-DD HH`` (and HH:MM[:SS])
+    pins the hour for the 1Hz_1hr session.
+    """
+    value = value.strip()
+    if len(value) == 10:  # YYYY-MM-DD
+        d = datetime.strptime(value, "%Y-%m-%d")
+        if is_start:
+            return d
+        return d.replace(hour=23, minute=59, second=59)
+    for fmt in ("%Y-%m-%d %H", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    raise argparse.ArgumentTypeError(
+        f"invalid --start/--end bound {value!r} — use 'YYYY-MM-DD' or 'YYYY-MM-DD HH'"
+    )
+
+
 def cmd_archive_sync(args: argparse.Namespace) -> int:
     from ..archive import ArchiveSync, load_sync_config
 
@@ -43,6 +66,12 @@ def cmd_archive_sync(args: argparse.Namespace) -> int:
 
     if args.status:
         return _cmd_status(args, targets)
+
+    # Selection mode: any of --station/--session/--start/--end switches from the
+    # watermark sweep to a targeted explicit push (no watermark advance).
+    selection_mode = bool(args.station or args.session or args.start or args.end)
+    start_dt = _parse_bound(args.start, is_start=True) if args.start else None
+    end_dt = _parse_bound(args.end, is_start=False) if args.end else None
 
     cutover_override = None
     if args.cutover:
@@ -77,7 +106,15 @@ def cmd_archive_sync(args: argparse.Namespace) -> int:
                 force=args.force,
                 cutover_override=cutover_override,
             )
-            result = engine.run()
+            if selection_mode:
+                result = engine.select(
+                    station=args.station,
+                    session=args.session,
+                    start=start_dt,
+                    end=end_dt,
+                )
+            else:
+                result = engine.run()
             results.append(result)
             if not result.ok:
                 exit_code = 1
@@ -1137,6 +1174,24 @@ def create_archive_sync_parser(subparsers) -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON results"
+    )
+    parser.add_argument(
+        "--station",
+        help="Selection mode: restrict to this station (4-char SID). "
+        "Skips the watermark sweep and pushes just the matching files.",
+    )
+    parser.add_argument(
+        "--session",
+        help="Selection mode: restrict to this session dir "
+        "(e.g. 15s_24hr, 1Hz_1hr, status_1hr).",
+    )
+    parser.add_argument(
+        "--start",
+        help="Selection mode: window start — 'YYYY-MM-DD' or 'YYYY-MM-DD HH'.",
+    )
+    parser.add_argument(
+        "--end",
+        help="Selection mode: window end — 'YYYY-MM-DD' or 'YYYY-MM-DD HH'.",
     )
     parser.set_defaults(func=cmd_archive_sync)
     return parser

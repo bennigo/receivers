@@ -18,6 +18,8 @@ cutover) so a preview works on a laptop. See design 1781867391.
 
 from __future__ import annotations
 
+import calendar
+import glob
 import logging
 import os
 import subprocess
@@ -191,6 +193,157 @@ class ArchiveSync:
                 continue
             out.append(path)
         return out
+
+    # ---- selection (targeted explicit push) --------------------------------
+
+    @staticmethod
+    def _file_window(parsed) -> Optional[tuple[datetime, datetime]]:
+        """(start, end) interval a file's content covers, or None if undatable.
+
+        Daily sessions cover their whole calendar day; hourly sessions cover the
+        single hour. Used for interval-overlap matching against --start/--end.
+        """
+        if parsed.file_date is None:
+            return None
+        d = parsed.file_date
+        if parsed.file_hour is not None:
+            lo = datetime(d.year, d.month, d.day, parsed.file_hour, 0, 0)
+            hi = datetime(d.year, d.month, d.day, parsed.file_hour, 59, 59)
+        else:
+            lo = datetime(d.year, d.month, d.day, 0, 0, 0)
+            hi = datetime(d.year, d.month, d.day, 23, 59, 59)
+        return lo, hi
+
+    def _selection_roots(
+        self,
+        station: Optional[str],
+        start: Optional[datetime],
+        end: Optional[datetime],
+    ) -> list[str]:
+        """Directory roots to walk for a selection, bounded as tightly as we can.
+
+        A station pins the walk to its ``YYYY/mon/STATION`` dirs. A date window
+        (without a station) bounds it to the ``YYYY/mon`` dirs inside the window
+        (start→now when only --start is given; cutover→end when only --end is
+        given). Otherwise the whole ``source_root`` is walked.
+        """
+        root = self.target.source_root
+        if station:
+            matches = glob.glob(os.path.join(root, "*", "*", station.upper()))
+            return [m for m in matches if os.path.isdir(m)]
+        lo = start
+        hi = end
+        if lo is None and hi is not None:
+            lo = self.target.cutover
+        if hi is None and lo is not None:
+            hi = datetime.now()
+        if lo is None:
+            return [root]
+        roots: list[str] = []
+        y, m = lo.year, lo.month
+        ey, em = hi.year, hi.month
+        while (y, m) <= (ey, em):
+            mon_dir = os.path.join(root, str(y), calendar.month_abbr[m].lower())
+            if os.path.isdir(mon_dir):
+                roots.append(mon_dir)
+            m += 1
+            if m > 12:
+                m = 1
+                y += 1
+        return roots
+
+    def enumerate_selection(
+        self,
+        station: Optional[str] = None,
+        session: Optional[str] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> list[str]:
+        """Absolute paths under source_root matching the selection filters.
+
+        Every given selector narrows the set (AND semantics). Dimensions come
+        from the authoritative directory components via parse_archive_path; the
+        date window is an interval-overlap test so a daily file counts when any
+        part of its day overlaps [start, end].
+        """
+        root = self.target.source_root
+        if not os.path.isdir(root):
+            logger.warning("source_root %s does not exist — empty selection", root)
+            return []
+        sessions = set(self.target.sessions)
+        cats = set(self.target.file_categories)
+        out: list[str] = []
+        for base in self._selection_roots(station, start, end):
+            for dirpath, _dirnames, filenames in os.walk(base):
+                for fn in filenames:
+                    p = os.path.join(dirpath, fn)
+                    parsed = parse_archive_path(p, root)
+                    if parsed is None:
+                        continue
+                    if station and parsed.station != station.upper():
+                        continue
+                    if session and parsed.session_type != session:
+                        continue
+                    if sessions and parsed.session_type not in sessions:
+                        continue
+                    if cats and parsed.file_category not in cats:
+                        continue
+                    if parsed.station in self.target.exclude_stations:
+                        continue
+                    if start is not None or end is not None:
+                        win = self._file_window(parsed)
+                        if win is None:
+                            continue
+                        f_lo, f_hi = win
+                        if start is not None and f_hi < start:
+                            continue
+                        if end is not None and f_lo > end:
+                            continue
+                    out.append(p)
+        return out
+
+    def select(
+        self,
+        station: Optional[str] = None,
+        session: Optional[str] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> SyncRunResult:
+        """Push files matching an explicit station/session/time-window selection.
+
+        The targeted escape hatch for the :45 sweep: enumerate matching files and
+        push them via the write-through path WITHOUT advancing the sweep watermark
+        — so the next full sweep still covers the window and cannot be masked.
+        """
+        result = SyncRunResult(
+            target=self.target.name,
+            floor=start or end or self.target.cutover,
+            dry_run=self.dry_run,
+        )
+        if not self.target.active and not self.force:
+            result.ok = True
+            result.message = "target inactive — skipped"
+            return result
+        paths = self.enumerate_selection(
+            station=station, session=session, start=start, end=end
+        )
+        result.delta_count = len(paths)
+        if not paths:
+            result.ok = True
+            result.message = "0 files matched the selection"
+            return result
+        pushed, errors, _digests = self.push_explicit(paths)
+        result.transferred = pushed
+        # dry-run: push_explicit counts would-transfer (nothing cataloged);
+        # match run()'s convention — cataloged stays 0 on a preview.
+        result.cataloged = 0 if self.dry_run else pushed
+        result.errors = list(errors)
+        result.ok = not errors
+        result.message = (
+            f"{'would transfer' if self.dry_run else 'transferred'} "
+            f"{pushed} file(s) (watermark NOT advanced)"
+        )
+        return result
 
     # ---- rsync -------------------------------------------------------------
 
@@ -410,6 +563,11 @@ class ArchiveSync:
                 errors.append(
                     stderr or f"rsync failed for {len(rels)} {category} file(s)"
                 )
+                continue
+            if self.dry_run:
+                # --dry-run: rsync itemized what WOULD transfer; never write the
+                # catalog (a selection-mode preview must be side-effect free).
+                pushed += len(transferred)
                 continue
             n, errs, cat_digests = self._catalog_transferred(transferred)
             pushed += n
