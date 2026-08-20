@@ -356,6 +356,17 @@ def _heartbeat_job() -> None:
         )
 
 
+def _external_fetch_job() -> None:
+    """Fetch external stations for the recent window (standalone job fn).
+
+    Routes ``operational_status = external`` stations (stations.cfg
+    ``external_url_template``) through :mod:`receivers.external_fetch` instead
+    of the receiver download path. See docs/architecture/external-download.md.
+    """
+    if _scheduler_instance is not None:
+        _scheduler_instance._run_external_fetch()
+
+
 _MIRROR_METRICS_LAST: Dict[str, int] = {}
 
 
@@ -1834,10 +1845,19 @@ class BulkDownloadScheduler:
                     "timeout_category": config.get("timeout_category", "default"),
                     "station_status": station_status,
                     "health_check": health_check,
+                    "operational_status": config.get("operational_status"),
                     "acquisition_mode": get_acquisition_mode(config),
                     "remote_sessions": remote_sessions,
                     "configured_serial": ident.get("configured_serial"),
                     "configured_firmware": ident.get("configured_firmware"),
+                    # External-fetch config (operational_status=external) —
+                    # carried verbatim so the external-fetch job can branch
+                    # without re-reading stations.cfg.
+                    "external_url_template": config.get("external_url_template", ""),
+                    "external_frequency": config.get("external_frequency", "1D"),
+                    "external_username": config.get("external_username", ""),
+                    "external_password": config.get("external_password"),
+                    "external_data_type": config.get("external_data_type", "rinex"),
                 }
 
         except Exception as e:
@@ -2419,6 +2439,9 @@ class BulkDownloadScheduler:
         # when it goes stale (the "active but wedged" detector, incident 2026-07-21)
         self._schedule_heartbeat()
 
+        # Fetch external stations (operational_status=external) on their own cadence
+        self._schedule_external_fetch()
+
         # Schedule backfill, gap detection, archive reconciler, and integrity checker
         self._schedule_multi_session_backfill()
         self._schedule_gap_detection()
@@ -2534,6 +2557,65 @@ class BulkDownloadScheduler:
             replace_existing=True,
         )
         self.logger.info("Scheduled liveness heartbeat (every 1 min)")
+
+    def _schedule_external_fetch(self) -> None:
+        """Schedule the external-station fetch (operational_status=external).
+
+        Runs hourly on the backfill executor — external providers publish daily
+        RINEX on a delay, so a 2-day rolling window re-fetches today + yesterday
+        and converges to a complete set without a cold-archive sweep.
+        """
+        self.scheduler.add_job(
+            func=_external_fetch_job,
+            trigger="interval",
+            minutes=60,
+            id="external_fetch",
+            replace_existing=True,
+            executor="backfill",
+            coalesce=True,
+            max_instances=1,
+        )
+        self.logger.info("Scheduled external fetch (every 60 min)")
+
+    def _run_external_fetch(self) -> None:
+        """Fetch external stations for a 2-day rolling window.
+
+        Enumerates ``self.stations`` for entries carrying an
+        ``external_url_template`` (set from stations.cfg when
+        ``operational_status = external``) and fetches them via
+        :mod:`receivers.external_fetch`, writing RINEX straight to
+        ``data_prepath/<y>/<mon>/<SID>/15s_24hr/rinex/`` (no conversion —
+        external sources are already RINEX).
+        """
+        from datetime import datetime, timedelta
+        from pathlib import Path
+
+        from ..config.receivers_config import get_receivers_config
+        from ..external_fetch import external_station_config, fetch_external_station
+
+        end = datetime.now()
+        start = end - timedelta(days=2)
+        data_prepath = Path(get_receivers_config().get_data_prepath())
+
+        for sid, config in self.stations.items():
+            ext = external_station_config(config)
+            if ext is None:
+                continue
+            dest = (
+                data_prepath
+                / end.strftime("%Y")
+                / end.strftime("%b").lower()
+                / sid.upper()
+                / "15s_24hr"
+                / "rinex"
+            )
+            try:
+                files = fetch_external_station(sid, config, start, end, dest)
+                self.logger.info("external %s: fetched %d file(s)", sid, len(files))
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - one station must not sink the sweep
+                self.logger.warning("external %s: fetch failed: %s", sid, exc)
 
         # Mirror dual-write counters — silent unless something actually failed.
         self.scheduler.add_job(
