@@ -477,7 +477,16 @@ _push_sem = _threading.BoundedSemaphore(_PUSH_CONCURRENCY)
 def _get_push_target():
     """Return the active sync target (imo_archive) for push-on-download, or None.
 
-    None = no active archive target → push-on-download is off (the cutover gate).
+    None = push-on-download is off. Gates, in order:
+
+    1. ``archive_sync.enabled`` in scheduler.yaml — the master switch for
+       pushing to the archive gateway; the write-through honours it too
+       (previously it only gated the :45 sweep, so ``enabled: false``
+       silently did not stop pushes). ``archive_sync.push_on_download``
+       overrides independently: set true to keep low-latency mirroring
+       while the sweep is off, false to stop pushes while the sweep runs.
+    2. A target being ``active`` in sync.yaml (the cutover gate).
+
     Cached for the process lifetime; failures resolve to None (push disabled).
     """
     global _push_target, _push_target_loaded
@@ -485,6 +494,15 @@ def _get_push_target():
         return _push_target
     _push_target_loaded = True
     try:
+        from .config_loader import load_scheduler_config
+
+        sync_cfg = load_scheduler_config().get("archive_sync", {})
+        push_on = sync_cfg.get("push_on_download")
+        if push_on is None:
+            push_on = sync_cfg.get("enabled", False)
+        if not push_on:
+            return None  # archive_sync disabled — sweep AND write-through off
+
         from ..archive import load_sync_config
 
         _push_target = next((t for t in load_sync_config() if t.active), None)
@@ -1571,6 +1589,11 @@ class BulkDownloadScheduler:
         # Initialize scheduler with persistent job store
         self._setup_scheduler()
 
+        # Persisted job ids to drop post-start because their feature is disabled
+        # in config. Populated by _mark_disabled(), consumed by start() —
+        # APScheduler 3.x refuses remove_job() while the scheduler is stopped.
+        self._disabled_jobs: List[str] = []
+
         # Load schedule configurations from YAML (with defaults as fallback)
         self.schedule_configs = {}
         for session_type in ["15s_24hr", "1Hz_1hr", "status_1hr"]:
@@ -2472,7 +2495,13 @@ class BulkDownloadScheduler:
         """
         sc_cfg = self.yaml_config.get("stream_capture", {})
         if not sc_cfg.get("enabled", False):
-            self.logger.debug("Stream capture disabled in config")
+            self._mark_disabled(
+                "Stream capture",
+                "stream_config_refresh",
+                "stream_supervise",
+                "stream_pipeline",
+                level=logging.DEBUG,
+            )
             return
 
         from .stream_scheduler import (
@@ -2652,7 +2681,7 @@ class BulkDownloadScheduler:
         """
         backfill_cfg = self.yaml_config.get("backfill", {})
         if not backfill_cfg.get("enabled", True):
-            self.logger.info("Backfill disabled in config")
+            self._mark_disabled("Backfill", "backfill_*")
             return
 
         from .backfill import _backfill_next_station_for_session
@@ -2711,7 +2740,7 @@ class BulkDownloadScheduler:
         """
         gap_cfg = self.yaml_config.get("gap_detection", {})
         if not gap_cfg.get("enabled", True):
-            self.logger.info("Gap detection disabled in config")
+            self._mark_disabled("Gap detection", "gap_detection", "gap_detection_startup")
             return
 
         from .gap_scheduler import _run_gap_detection_job
@@ -2780,7 +2809,9 @@ class BulkDownloadScheduler:
         """
         reconciler_cfg = self.yaml_config.get("archive_reconciler", {})
         if not reconciler_cfg.get("enabled", True):
-            self.logger.info("Archive reconciler disabled in config")
+            self._mark_disabled(
+                "Archive reconciler", "archive_reconciler", "archive_reconciler_startup"
+            )
             return
 
         from .archive_reconciler import _run_archive_reconciler_job
@@ -2832,7 +2863,7 @@ class BulkDownloadScheduler:
         """
         prune_cfg = self.yaml_config.get("local_prune", {})
         if not prune_cfg.get("enabled", False):
-            self.logger.info("Local prune disabled in config")
+            self._mark_disabled("Local prune", "local_prune")
             return
 
         from .local_prune import _run_local_prune_job
@@ -2867,7 +2898,11 @@ class BulkDownloadScheduler:
         """
         probe_cfg = self.yaml_config.get("receiver_horizon_probe", {})
         if not probe_cfg.get("enabled", False):
-            self.logger.info("Receiver horizon probe disabled in config")
+            self._mark_disabled(
+                "Receiver horizon probe",
+                "receiver_horizon_probe",
+                "receiver_horizon_probe_startup",
+            )
             return
 
         from .receiver_horizon_probe import _run_horizon_probe_job
@@ -2909,7 +2944,10 @@ class BulkDownloadScheduler:
         """
         cfg = self.yaml_config.get("long_term_backfill", {})
         if not cfg.get("enabled", False):
-            self.logger.info("Long-term backfill disabled in config")
+            # reconnection_backfill shares this config section (and its gate)
+            self._mark_disabled(
+                "Long-term backfill", "long_term_backfill", "reconnection_backfill"
+            )
             return
         from .long_term_backfill import _run_long_term_backfill_job
 
@@ -2975,7 +3013,9 @@ class BulkDownloadScheduler:
         """
         checker_cfg = self.yaml_config.get("integrity_checker", {})
         if not checker_cfg.get("enabled", True):
-            self.logger.info("Integrity checker disabled in config")
+            self._mark_disabled(
+                "Integrity checker", "integrity_checker", "integrity_checker_startup"
+            )
             return
 
         from .integrity_checker import _run_integrity_check_job
@@ -3047,11 +3087,14 @@ class BulkDownloadScheduler:
         Pushes raw files newer than each target's watermark to rawdata (-> ananas)
         and forward-indexes them in archive_catalog, then logs freshness.
         Disabled by default — double-gated: this scheduler flag in scheduler.yaml
-        AND ``active: true`` on a target in sync.yaml. See design 1781867391.
+        AND ``active: true`` on a target in sync.yaml. The flag ALSO gates the
+        push-on-download write-through (see ``_get_push_target``);
+        ``archive_sync.push_on_download`` overrides that independently.
+        See design 1781867391.
         """
         cfg = self.yaml_config.get("archive_sync", {})
         if not cfg.get("enabled", False):
-            self.logger.info("Archive sync disabled in config")
+            self._mark_disabled("Archive sync", "archive_sync")
             return
 
         from ..archive.job import run_archive_sync_job
@@ -3084,7 +3127,7 @@ class BulkDownloadScheduler:
         """
         cfg = self.yaml_config.get("epos_disseminate", {})
         if not cfg.get("enabled", False):
-            self.logger.info("EPOS dissemination disabled in config")
+            self._mark_disabled("EPOS dissemination", "epos_disseminate")
             return
 
         from ..dissemination.job import run_epos_disseminate_job
@@ -3118,7 +3161,7 @@ class BulkDownloadScheduler:
         """
         cfg = self.yaml_config.get("epos_reactive", {})
         if not cfg.get("enabled", False):
-            self.logger.info("EPOS reactive sweep disabled in config")
+            self._mark_disabled("EPOS reactive sweep", "epos_reactive")
             return
 
         from ..dissemination.job import run_epos_reactive_job
@@ -3155,7 +3198,7 @@ class BulkDownloadScheduler:
         """
         cfg = self.yaml_config.get("archive_verify", {})
         if not cfg.get("enabled", False):
-            self.logger.info("Archive verify disabled in config")
+            self._mark_disabled("Archive verify", "archive_verify")
             return
 
         from ..archive.job import run_archive_verify_job
@@ -3202,7 +3245,8 @@ class BulkDownloadScheduler:
         """
         cfg = self.yaml_config.get("morning_recovery", {})
         if not cfg.get("enabled", False):
-            self.logger.info("Morning recovery disabled in config")
+            # prefix covers `morning_recovery` and multi-fire `morning_recovery_N`
+            self._mark_disabled("Morning recovery", "morning_recovery*")
             return
 
         from .morning_recovery import _run_morning_recovery_job
@@ -3426,7 +3470,7 @@ class BulkDownloadScheduler:
         """
         bootstrap_cfg = self.yaml_config.get("bootstrap", {})
         if not bootstrap_cfg.get("enabled", True):
-            self.logger.info("Bootstrap disabled in config")
+            self._mark_disabled("Bootstrap", "bootstrap_*")
             return
 
         try:
@@ -3434,7 +3478,11 @@ class BulkDownloadScheduler:
 
             bootstrap_sessions = bootstrap_cfg.get("sessions")
             if not detect_cold_start(sessions=bootstrap_sessions):
-                self.logger.debug("Not a cold start — skipping bootstrap")
+                # Drop stale one-shot bootstrap jobs from an interrupted cold
+                # start — otherwise they misfire-run on this restart.
+                self._mark_disabled(
+                    "Bootstrap (not a cold start)", "bootstrap_*", level=logging.DEBUG
+                )
                 return
 
             jobs = schedule_bootstrap(
@@ -3558,13 +3606,13 @@ class BulkDownloadScheduler:
         """
         # Check scheduler_types filter
         if not self.scheduler_types.get("health", True):
-            self.logger.info("Health monitoring skipped (--only filter)")
+            self._mark_disabled("Health monitoring (--only filter)", "health_*")
             return
 
         # Check if health monitoring is enabled in config
         status_monitoring = self.yaml_config.get("status_monitoring", {})
         if not status_monitoring.get("enabled", True):
-            self.logger.info("Health monitoring disabled in config")
+            self._mark_disabled("Health monitoring", "health_*")
             return
 
         # Get schedule (default: every 5 minutes)
@@ -3614,7 +3662,9 @@ class BulkDownloadScheduler:
             )
 
         if not health_stations:
-            self.logger.info("No stations support health monitoring")
+            self._mark_disabled(
+                "Health monitoring (no eligible stations)", "health_*"
+            )
             return
 
         # Apply max stations limit
@@ -3790,6 +3840,46 @@ class BulkDownloadScheduler:
                     f"{session_type} --days 1"
                 )
 
+    def _mark_disabled(
+        self, feature: str, *job_ids: str, level: int = logging.INFO
+    ) -> None:
+        """Log a config-disabled feature and queue its persisted jobs for removal.
+
+        Every _schedule_* hook runs BEFORE start(), and APScheduler 3.x refuses
+        remove_job() while the scheduler is stopped — so the actual removal
+        happens in start() via _remove_disabled_jobs(). A trailing ``*`` marks
+        a job-id PREFIX (e.g. ``backfill_*`` for the per-session backfill jobs).
+
+        Why this matters: jobs are persisted in the SQLite jobstore and reloaded
+        on every start. Without removal, flipping ``enabled: false`` in
+        scheduler.yaml only stops the job being RE-scheduled — the persisted
+        copy keeps firing forever (the 'archive_sync disabled but still
+        pushing' bug, 2026-08).
+        """
+        self.logger.log(level, f"{feature} disabled in config")
+        self._disabled_jobs.extend(job_ids)
+
+    def _remove_disabled_jobs(self) -> None:
+        """Drop persisted jobs whose features are disabled (called post-start)."""
+        if not self._disabled_jobs:
+            return
+        from apscheduler.jobstores.base import JobLookupError
+
+        existing = {job.id for job in self.scheduler.get_jobs()}
+        for spec in dict.fromkeys(self._disabled_jobs):
+            if spec.endswith("*"):
+                targets = sorted(j for j in existing if j.startswith(spec[:-1]))
+            else:
+                targets = [spec] if spec in existing else []
+            for job_id in targets:
+                try:
+                    self.scheduler.remove_job(job_id)
+                    self.logger.info(
+                        f"Removed persisted job '{job_id}' (feature disabled in config)"
+                    )
+                except JobLookupError:
+                    pass  # raced with a one-shot completing — already gone
+
     def start(self):
         """Start the scheduler.
 
@@ -3798,6 +3888,7 @@ class BulkDownloadScheduler:
         self._acquire_lock()
         try:
             self.scheduler.start()
+            self._remove_disabled_jobs()
             self.logger.info(f"Scheduler started successfully (PID {os.getpid()})")
             self._log_misfire_status()
         except Exception as e:

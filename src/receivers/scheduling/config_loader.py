@@ -221,6 +221,10 @@ def get_default_config() -> Dict[str, Any]:
             "enabled": False,
             "schedule": ":45",
             "max_age_minutes": 120,
+            # Push-on-download (write-through) gate. null = follow `enabled`;
+            # true keeps low-latency mirroring while the :45 sweep is off,
+            # false stops per-file pushes while the sweep still runs.
+            "push_on_download": None,
         },
         # EPOS dissemination sweep (T8): disseminate a trailing window of daily
         # files for every EPOS station to the active sync.yaml dissemination
@@ -394,6 +398,7 @@ def merge_with_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
         "gap_detection",
         "archive_reconciler",
         "integrity_checker",
+        "archive_sync",
         "archive_verify",
         "local_prune",
         "epos_disseminate",
