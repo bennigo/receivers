@@ -360,20 +360,27 @@ def cmd_download(args) -> int:
     # External-fetch mode: stations whose data arrives from a third-party
     # server (stations.cfg external_url_template / operational_status=external)
     # instead of a receiver we reach directly. Reuses the resolved time range.
+    # Same flag contract as the receiver path: --sync actually fetches,
+    # --archive archives + indexes (file_tracking + archive_catalog).
     if getattr(args, "external", False):
         from pathlib import Path as _Path
 
         from ..config.receivers_config import get_receivers_config
         from ..external_fetch import (
+            build_external_urls,
             external_station_config,
             fetch_external_station,
             raw_station_config,
         )
 
         data_prepath = _Path(get_receivers_config().get_data_prepath())
-        from ..health.file_tracker import FileTracker
+        sync = getattr(args, "sync", False)
+        archive = getattr(args, "archive", False)
+        tracker = None
+        if archive:
+            from ..health.file_tracker import FileTracker
 
-        tracker = FileTracker()
+            tracker = FileTracker()
         session_type = f"{args.session}_rinex"
         for sid in args.stations:
             cfg = raw_station_config(sid)
@@ -381,7 +388,8 @@ def cmd_download(args) -> int:
                 logger.error("external %s: no stations.cfg section — skipping", sid)
                 total_errors += 1
                 continue
-            if external_station_config(cfg) is None:
+            ext = external_station_config(cfg)
+            if ext is None:
                 logger.error(
                     "external %s: no external_url_template in stations.cfg — "
                     "not an external station",
@@ -397,6 +405,17 @@ def cmd_download(args) -> int:
                 / args.session
                 / "rinex"
             )
+            if not sync:
+                # Dry-run: report the remote files that would be fetched.
+                urls = build_external_urls(
+                    sid, ext["url_template"], ext["frequency"], start_time, end_time
+                )
+                logger.info(
+                    "external %s: dry-run — %d file(s) would be fetched",
+                    sid,
+                    len(urls),
+                )
+                continue
             files = fetch_external_station(
                 sid,
                 cfg,

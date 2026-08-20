@@ -203,7 +203,8 @@ Examples:
         help=(
             "Fetch from an external server (stations.cfg "
             "external_url_template) instead of the receiver directly. "
-            "Implied by operational_status=external."
+            "Respects --sync (actually fetch) and --archive (archive + "
+            "index in file_tracking). Implied by operational_status=external."
         ),
     )
 
