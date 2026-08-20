@@ -5161,10 +5161,37 @@ def cmd_rec_upgrade_firmware(args) -> int:
             )
 
         if dry_run:
-            print(
-                "  [DRY-RUN] would: exeResetReceiver,Upgrade → stream .suf → reboot → "
-                "reconnect (plaintext→TLS) → verify"
-            )
+            if getattr(args, "flash_backend", "rxupgrade") == "rxupgrade":
+                # Show the literal argv (password masked). A dry run whose output
+                # cannot be compared against the real invocation is not much of a
+                # check — this is the line an operator can eyeball or paste.
+                from ..septentrio import rxupgrade as rxu
+
+                try:
+                    _cmd = rxu.build_command(
+                        rxu.resolve_binary(getattr(args, "rxupgrade_bin", None)),
+                        host=ip,
+                        suf=suf,
+                        port=port,
+                        username=tcp_user,
+                        password=tcp_pwd,
+                        log_path=Path("~/.cache/gps_receivers/logs").expanduser()
+                        / f"rxupgrade_{sid}_<stamp>.log",
+                        restore_config=not getattr(args, "no_restore_config", False),
+                        ignore_ssl_errors=getattr(args, "ignore_ssl_errors", False),
+                    )
+                    print(f"  [DRY-RUN] would run: {rxu.redact(_cmd)}")
+                except rxu.RxUpgradeError as exc:
+                    print(f"  [DRY-RUN] ⚠ vendor tool unavailable: {exc}")
+                print(
+                    "  [DRY-RUN] verdict would come from the transcript "
+                    "('Upgrade Finished'), not the exit code"
+                )
+            else:
+                print(
+                    "  [DRY-RUN] would: exeResetReceiver,Upgrade → stream .suf → "
+                    "reboot → reconnect (plaintext→TLS) → verify"
+                )
             aftermath = [
                 s
                 for s, on in (
@@ -5178,22 +5205,26 @@ def cmd_rec_upgrade_firmware(args) -> int:
             print(f"  [DRY-RUN] would chain: {', '.join(aftermath)}")
             continue
 
-        # HARD GUARD: the flash core (exeResetReceiver,Upgrade → upgrade-mode
-        # handshake → stream) is NOT yet hardware-proven. On OLAC it left the
-        # receiver in recovery mode needing a manual reboot. So a real flash is
-        # only allowed against a bench/direct receiver (--host) until the
-        # upgrade-mode handshake is validated. For deployed stations, use the
-        # web UI (Admin → Upgrade) — see docs/septentrio/rec-upgrade-firmware-scope.md.
-        if not args.host and not getattr(args, "allow_deployed_flash", False):
+        backend = getattr(args, "flash_backend", "rxupgrade")
+
+        # HARD GUARD — applies to the 'tcp' core ONLY. That core
+        # (exeResetReceiver,Upgrade → upgrade-mode handshake → stream) is NOT
+        # hardware-proven: on OLAC it left the receiver in recovery mode needing a
+        # manual reboot. The default 'rxupgrade' core is Septentrio's own tool and
+        # carries no such gate — it is what flashed VMEY on 2026-08-20.
+        if (
+            backend == "tcp"
+            and not args.host
+            and not getattr(args, "allow_deployed_flash", False)
+        ):
             print(
                 "  ❌ flash refused: the TCP flash core is EXPERIMENTAL / not yet "
-                "hardware-proven (it left OLAC in recovery mode). For a deployed "
-                f"station, flash via the web UI (http://{ip}:80→8060 → Admin → "
-                "Upgrade), then run the cfg reconcile / update-device chain."
+                "hardware-proven (it left OLAC in recovery mode)."
             )
             print(
-                "     Bench validation only: re-run with --host <ip> on a bench unit "
-                "(or --allow-deployed-flash once the handshake is proven)."
+                "     Use the default vendor core (drop --flash-backend tcp), or "
+                "bench-validate with --host <ip>, or force with "
+                "--allow-deployed-flash once the handshake is proven."
             )
             overall_ok = False
             continue
@@ -5211,39 +5242,108 @@ def cmd_rec_upgrade_firmware(args) -> int:
                 print("  skipped")
                 continue
 
-        # ---- the flash ----
-        try:
-            sock, _tls = fw.connect_control(ip, port, timeout=args.timeout)
-            fw.login(sock, tcp_user, tcp_pwd)
-            print("  flashing — DO NOT interrupt power/connection…")
+        # ---- the flash: vendor core ----
+        if backend == "rxupgrade":
+            import time
 
-            def _prog(sent: int, total: int) -> None:
-                pct = (sent * 100) // total if total else 0
-                print(f"\r    {pct:3d}%  ({sent}/{total})", end="", flush=True)
+            from ..septentrio import rxupgrade as rxu
 
-            fw.stream_suf(sock, suf, progress=_prog)
-            print()
+            log_path = (
+                Path.home()
+                / ".cache/gps_receivers/logs"
+                / f"rxupgrade_{sid}_{time.strftime('%Y%m%d_%H%M')}.log"
+            )
             try:
-                sock.close()
-            except OSError:
-                pass
-            print(
-                f"  streamed; waiting up to {args.reboot_wait}s for reboot + TLS reconnect…"
-            )
-            newver = fw.wait_for_reboot_and_verify(
-                ip,
-                port,
-                username=tcp_user,
-                password=tcp_pwd,
-                expect_version=target_version,
-                reboot_wait_s=args.reboot_wait,
-                tls_port=tls_port,
-            )
-            print(f"  ✓ {sid} now on firmware {newver}")
-        except fw.FirmwareUpgradeError as exc:
-            print(f"  ❌ flash failed: {exc}")
-            overall_ok = False
-            continue
+                res = rxu.run_upgrade(
+                    station_id=sid,
+                    host=ip,
+                    port=port,
+                    suf=suf,
+                    username=tcp_user,
+                    password=tcp_pwd,
+                    log_path=log_path,
+                    binary=getattr(args, "rxupgrade_bin", None),
+                    restore_config=not getattr(args, "no_restore_config", False),
+                    ignore_ssl_errors=getattr(args, "ignore_ssl_errors", False),
+                    timeout_s=getattr(args, "rxupgrade_timeout", 1800),
+                )
+            except rxu.RxUpgradeError as exc:
+                print(f"  ❌ rxupgrade could not run: {exc}")
+                overall_ok = False
+                continue
+
+            if not res.flashed:
+                print(
+                    f"  ❌ flash failed: no 'Upgrade Finished' in the transcript "
+                    f"(rc={res.returncode}); see {log_path}"
+                )
+                overall_ok = False
+                continue
+
+            print(f"  ✓ vendor reports 'Upgrade Finished' — log: {log_path}")
+            if res.verify_step_failed:
+                # EXPECTED, not a fault: the vendor's own post-flash reconnect
+                # fails whenever the reboot closed the port it came in on.
+                print(
+                    "    ℹ the tool's post-flash reconnect errored — expected when "
+                    "the reboot closes the control port; verifying independently"
+                )
+            try:
+                newver = fw.wait_for_reboot_and_verify(
+                    ip,
+                    port,
+                    username=tcp_user,
+                    password=tcp_pwd,
+                    expect_version=target_version,
+                    reboot_wait_s=args.reboot_wait,
+                    tls_port=tls_port,
+                )
+                print(f"  ✓ {sid} now on firmware {newver}")
+            except fw.FirmwareUpgradeError as exc:
+                # The image is in — only our confirmation failed. Say so precisely
+                # rather than implying the flash did not happen.
+                print(
+                    f"  ⚠ flashed, but could not confirm the running version: {exc}"
+                )
+                print(
+                    f"     check manually (plaintext {port}, TLS {tls_port}); "
+                    "rxupgrade restores the config, so plaintext often survives"
+                )
+
+        # ---- the flash: hand-rolled TCP core ----
+        else:
+            try:
+                sock, _tls = fw.connect_control(ip, port, timeout=args.timeout)
+                fw.login(sock, tcp_user, tcp_pwd)
+                print("  flashing — DO NOT interrupt power/connection…")
+
+                def _prog(sent: int, total: int) -> None:
+                    pct = (sent * 100) // total if total else 0
+                    print(f"\r    {pct:3d}%  ({sent}/{total})", end="", flush=True)
+
+                fw.stream_suf(sock, suf, progress=_prog)
+                print()
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+                print(
+                    f"  streamed; waiting up to {args.reboot_wait}s for reboot + TLS reconnect…"
+                )
+                newver = fw.wait_for_reboot_and_verify(
+                    ip,
+                    port,
+                    username=tcp_user,
+                    password=tcp_pwd,
+                    expect_version=target_version,
+                    reboot_wait_s=args.reboot_wait,
+                    tls_port=tls_port,
+                )
+                print(f"  ✓ {sid} now on firmware {newver}")
+            except fw.FirmwareUpgradeError as exc:
+                print(f"  ❌ flash failed: {exc}")
+                overall_ok = False
+                continue
 
         # ---- aftermath (chained existing verbs) ----
         def _run(label: str, argv: List[str]) -> None:
