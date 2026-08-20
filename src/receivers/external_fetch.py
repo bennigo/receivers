@@ -252,11 +252,18 @@ def fetch_external_station(
     start: datetime,
     end: Optional[datetime],
     dest_dir: Path,
+    *,
+    tracker: Optional[Any] = None,
+    session_type: str = "15s_24hr_rinex",
 ) -> List[Path]:
     """Download one external station's files over ``[start, end]`` into ``dest_dir``.
 
     Returns the list of local files written. A station without
     ``external_url_template`` yields an empty list (not an error).
+
+    ``tracker`` (a :class:`~receivers.health.file_tracker.FileTracker`) records
+    each normalized file in ``file_tracking`` + ``archive_catalog`` so the
+    archive-sync / catalog pipeline indexes it like a receiver download.
     """
     ext = external_station_config(config)
     if ext is None:
@@ -279,6 +286,25 @@ def fetch_external_station(
             )
             downloaded.append(final)
             logger.info("external %s: fetched %s", station_id, final.name)
+            if tracker is not None:
+                try:
+                    tracker.mark_file_archived(
+                        station_id=station_id,
+                        session_type=session_type,
+                        file_date=dt.date(),
+                        file_hour=dt.hour if "_1hr" in session_type else None,
+                        filename=final.name,
+                        file_size=final.stat().st_size,
+                    )
+                except (
+                    Exception
+                ) as exc:  # noqa: BLE001 — tracking must not fail the fetch
+                    logger.warning(
+                        "external %s: file_tracking failed for %s: %s",
+                        station_id,
+                        final.name,
+                        exc,
+                    )
         except (
             Exception
         ) as exc:  # noqa: BLE001 — one bad file must not abort the station

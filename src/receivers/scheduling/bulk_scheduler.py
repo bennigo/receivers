@@ -2595,10 +2595,12 @@ class BulkDownloadScheduler:
 
         from ..config.receivers_config import get_receivers_config
         from ..external_fetch import external_station_configs, fetch_external_station
+        from ..health.file_tracker import FileTracker
 
         end = datetime.now()
         start = end - timedelta(days=2)
         data_prepath = Path(get_receivers_config().get_data_prepath())
+        tracker = FileTracker()
 
         for sid, config in external_station_configs().items():
             dest = (
@@ -2610,7 +2612,15 @@ class BulkDownloadScheduler:
                 / "rinex"
             )
             try:
-                files = fetch_external_station(sid, config, start, end, dest)
+                files = fetch_external_station(
+                    sid,
+                    config,
+                    start,
+                    end,
+                    dest,
+                    tracker=tracker,
+                    session_type="15s_24hr_rinex",
+                )
                 self.logger.info("external %s: fetched %d file(s)", sid, len(files))
             except (
                 Exception

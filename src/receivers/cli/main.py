@@ -371,6 +371,10 @@ def cmd_download(args) -> int:
         )
 
         data_prepath = _Path(get_receivers_config().get_data_prepath())
+        from ..health.file_tracker import FileTracker
+
+        tracker = FileTracker()
+        session_type = f"{args.session}_rinex"
         for sid in args.stations:
             cfg = raw_station_config(sid)
             if cfg is None:
@@ -393,7 +397,15 @@ def cmd_download(args) -> int:
                 / args.session
                 / "rinex"
             )
-            files = fetch_external_station(sid, cfg, start_time, end_time, dest)
+            files = fetch_external_station(
+                sid,
+                cfg,
+                start_time,
+                end_time,
+                dest,
+                tracker=tracker,
+                session_type=session_type,
+            )
             total_downloaded += len(files)
         logger.info(
             f"External download complete. Files: {total_downloaded}, Errors: {total_errors}"
@@ -5664,6 +5676,73 @@ def _push_reconverted(work_dir, args, logger, only_rel=None) -> Dict[str, Any]:
             # The gate must never silently disappear: if it cannot run, say so.
             print(f"  ⚠️  regenerability gate could not run ({exc}) — push aborted")
             stats["note"] = f"regenerability gate failed: {exc}"
+            return stats
+
+    # DEGRADATION GATE — refuse a replacement that carries LESS data than the
+    # file it would overwrite.
+    #
+    # The regenerability gate above proves a raw file EXISTS. It never proves
+    # that raw decodes, nor that the result is as complete. That gap is the one
+    # thing rinex_bak was actually protecting against, and it is the silent
+    # class: a raw truncated mid-day converts to a valid-looking SHORTER RINEX,
+    # passes the staged-completeness check, the compression-format guard and the
+    # converter's identity gate (first-obs date and position are all fine), and
+    # replaces a fuller original. Nothing downstream would ever notice.
+    #
+    # VMEY's 7 truncated .sbf.gz and 11 bad .T02 fail outright, so they are safe
+    # by accident, not by design. This makes it by design.
+    #
+    # Cheap test on purpose: compare DECOMPRESSED size, not epoch counts. A
+    # Hatanaka .Z would need CRX2RNX to count epochs, a third decode per file on
+    # both sides; decompressed size is one gunzip and is monotonic in content.
+    # The tolerance absorbs header-only differences (a rewritten REC # / TYPE
+    # line changes the byte count slightly); real truncation is orders larger.
+    if rel and not dry:
+        import subprocess as _sp
+
+        def _decompressed_size(p: Path) -> Optional[int]:
+            """Uncompressed byte count, or None when it cannot be determined."""
+            try:
+                out = _sp.run(["gzip", "-dc", str(p)], capture_output=True, timeout=120)
+                if out.returncode == 0 and out.stdout:
+                    return len(out.stdout)
+            except Exception:  # noqa: BLE001 — a probe must never break a push
+                return None
+            return None
+
+        _DEGRADE_TOL = 0.02  # 2 % — below this is header churn, not data loss
+        refused_degraded: List[str] = []
+        try:
+            src_root_deg = Path(_reconvert_source_root(args, ""))
+            kept_deg: List[str] = []
+            for r in rel:
+                arch_f = src_root_deg / r
+                new_f = work / r
+                if not arch_f.is_file() or not new_f.is_file():
+                    kept_deg.append(r)  # nothing to lose, or nothing staged
+                    continue
+                old_n, new_n = _decompressed_size(arch_f), _decompressed_size(new_f)
+                if old_n is None or new_n is None or old_n == 0:
+                    kept_deg.append(r)  # undecidable — the other gates still apply
+                    continue
+                if new_n < old_n * (1 - _DEGRADE_TOL):
+                    refused_degraded.append(f"{r} ({new_n} < {old_n} bytes)")
+                else:
+                    kept_deg.append(r)
+            if refused_degraded:
+                rel = kept_deg
+                stats["refused_degraded"] = len(refused_degraded)
+                print(
+                    f"  🛡️  REFUSED to overwrite {len(refused_degraded)} archive "
+                    f"file(s) with a SMALLER replacement — the new conversion "
+                    f"carries less data than the file on the archive (truncated "
+                    f"raw, or a converter regression). Investigate before forcing."
+                )
+                for r in refused_degraded[:5]:
+                    print(f"        {r}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ⚠️  degradation gate could not run ({exc}) — push aborted")
+            stats["note"] = f"degradation gate failed: {exc}"
             return stats
 
     # Pre-overwrite safety copy — LOCAL ONLY. Never writes rinex_bak/ to the
