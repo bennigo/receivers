@@ -2580,27 +2580,27 @@ class BulkDownloadScheduler:
     def _run_external_fetch(self) -> None:
         """Fetch external stations for a 2-day rolling window.
 
-        Enumerates ``self.stations`` for entries carrying an
-        ``external_url_template`` (set from stations.cfg when
-        ``operational_status = external``) and fetches them via
-        :mod:`receivers.external_fetch`, writing RINEX straight to
-        ``data_prepath/<y>/<mon>/<SID>/15s_24hr/rinex/`` (no conversion —
-        external sources are already RINEX).
+        Enumerates stations.cfg directly for entries carrying an
+        ``external_url_template`` (``operational_status = external``) and
+        fetches them via :mod:`receivers.external_fetch`, writing RINEX
+        straight to ``data_prepath/<y>/<mon>/<SID>/15s_24hr/rinex/`` (no
+        conversion — external sources are already RINEX).
+
+        Deliberately does NOT iterate ``self.stations``: the scheduler's
+        station load excludes external stations (they lack
+        router_ip/receiver_type, so ``get_station_config`` returns None).
         """
         from datetime import datetime, timedelta
         from pathlib import Path
 
         from ..config.receivers_config import get_receivers_config
-        from ..external_fetch import external_station_config, fetch_external_station
+        from ..external_fetch import external_station_configs, fetch_external_station
 
         end = datetime.now()
         start = end - timedelta(days=2)
         data_prepath = Path(get_receivers_config().get_data_prepath())
 
-        for sid, config in self.stations.items():
-            ext = external_station_config(config)
-            if ext is None:
-                continue
+        for sid, config in external_station_configs().items():
             dest = (
                 data_prepath
                 / end.strftime("%Y")

@@ -168,3 +168,42 @@ def external_stations(station_configs: Dict[str, Dict[str, Any]]) -> Sequence[st
         for sid, cfg in station_configs.items()
         if external_station_config(cfg) is not None
     )
+
+
+def raw_station_config(station_id: str) -> Optional[Dict[str, Any]]:
+    """Raw stations.cfg section for one station, via gps_parser.
+
+    Unlike receivers' :func:`~receivers.config_utils.get_station_config`,
+    this does NOT require ``router_ip``/``receiver_type`` — external (and
+    passive) stations legitimately lack those, so the typed accessor returns
+    None for them. Returns the raw section dict (all stations.cfg keys,
+    including ``external_url_template``), or None when the section is absent.
+    """
+    import gps_parser
+
+    try:
+        info = gps_parser.ConfigParser().getStationInfo(station_id)
+    except Exception:  # noqa: BLE001 — treat as "no section"
+        return None
+    return (info or {}).get("station") or None
+
+
+def external_station_configs() -> Dict[str, Dict[str, Any]]:
+    """Map station_id → raw section for every station with an external template.
+
+    Raw read (``interpolation=None``) so the ``%Y``/``%j``/``#gpsw`` tokens in
+    ``external_url_template`` survive — default configparser interpolation
+    would raise on the bare ``%``.
+    """
+    import configparser
+
+    import gps_parser
+
+    cp = configparser.ConfigParser(interpolation=None)
+    cp.read(gps_parser.ConfigParser().get_stations_config_path())
+    out: Dict[str, Dict[str, Any]] = {}
+    for section in cp.sections():
+        raw = dict(cp.items(section))
+        if external_station_config(raw) is not None:
+            out[section] = raw
+    return out

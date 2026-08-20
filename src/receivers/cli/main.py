@@ -364,12 +364,15 @@ def cmd_download(args) -> int:
         from pathlib import Path as _Path
 
         from ..config.receivers_config import get_receivers_config
-        from ..config_utils import get_station_config
-        from ..external_fetch import external_station_config, fetch_external_station
+        from ..external_fetch import (
+            external_station_config,
+            fetch_external_station,
+            raw_station_config,
+        )
 
         data_prepath = _Path(get_receivers_config().get_data_prepath())
         for sid in args.stations:
-            cfg = get_station_config(sid)
+            cfg = raw_station_config(sid)
             if cfg is None:
                 logger.error("external %s: no stations.cfg section — skipping", sid)
                 total_errors += 1
