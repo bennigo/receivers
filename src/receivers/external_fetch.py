@@ -41,6 +41,19 @@ EXTERNAL_CONFIG_KEYS = (
     "external_data_type",
 )
 
+#: Config-safe aliases for gtimes' ``#`` patterns. stations.cfg treats ``#``
+#: as an inline comment (gps_parser strips it), so templates must not contain
+#: literal ``#gpsw`` / ``#Rin2`` / … — use the ``{...}`` alias in the config
+#: and this map restores the gtimes token before templating.
+_GTIMES_ALIASES = {
+    "{gpsw}": "#gpsw",
+    "{rin2}": "#Rin2",
+    "{rin3}": "#Rin3",
+    "{hourl}": "#hourl",
+    "{8hrin2}": "#8hRin2",
+    "{b}": "#b",
+}
+
 
 def external_station_config(config: Dict[str, Any]) -> Optional[Dict[str, str]]:
     """Extract the external-source config from a station config dict.
@@ -78,6 +91,8 @@ def build_external_urls(
 
     template = template.replace("{station_lower}", station_id.lower())
     template = template.replace("{station}", station_id.upper())
+    for alias, pattern in _GTIMES_ALIASES.items():
+        template = template.replace(alias, pattern)
     # gtimes defaults a missing endtime to an *aware* UTC now(), which breaks
     # the naive-vs-aware comparison against a naive starttime — default to
     # start (single-entry) instead, matching the docstring's "same as start"
