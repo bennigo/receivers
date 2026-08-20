@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import ftplib
 import logging
+import re
+import subprocess
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -39,6 +41,7 @@ EXTERNAL_CONFIG_KEYS = (
     "external_username",
     "external_password",
     "external_data_type",
+    "external_file_format",  # optional override: 'auto' (default) | crx_lzw | crx_gz | rnx3_plain | rnx2
 )
 
 #: Config-safe aliases for gtimes' ``#`` patterns. stations.cfg treats ``#``
@@ -70,6 +73,7 @@ def external_station_config(config: Dict[str, Any]) -> Optional[Dict[str, str]]:
         "username": (config.get("external_username") or "").strip() or None,
         "password": config.get("external_password") or None,
         "data_type": (config.get("external_data_type") or "rinex").strip(),
+        "file_format": (config.get("external_file_format") or "auto").strip(),
     }
 
 
@@ -151,6 +155,97 @@ def _fetch_one(
     return dest
 
 
+# ---------------------------------------------------------------------------
+# Format detection + normalization (archive contract: Hatanaka RINEX + LZW)
+# ---------------------------------------------------------------------------
+
+_MAGIC_LZW = b"\x1f\x9d"  # Unix compress (.Z)
+_MAGIC_GZIP = b"\x1f\x8b"  # gzip
+
+
+def _decompressed_head(path: Path, nbytes: int = 512) -> bytes:
+    """First ``nbytes`` of a file, transparently decompressing LZW/gzip."""
+    magic = path.read_bytes()[:2]
+    if magic in (_MAGIC_LZW, _MAGIC_GZIP):
+        # GNU gzip -dc decompresses both gzip and Unix-compress (.Z)
+        proc = subprocess.run(
+            ["gzip", "-dc", str(path)], capture_output=True, timeout=60
+        )
+        if proc.returncode != 0:
+            raise ValueError(
+                f"cannot decompress {path.name}: "
+                f"{proc.stderr.decode(errors='replace')[:200]}"
+            )
+        return proc.stdout[:nbytes]
+    return path.read_bytes()[:nbytes]
+
+
+def detect_file_format(path: Path) -> Dict[str, Any]:
+    """Sniff a downloaded file's format from magic bytes + decompressed header.
+
+    Returns ``{compression, compact, version}``:
+      * ``compression`` — ``lzw`` / ``gzip`` / ``none``
+      * ``compact``    — True when the file is Hatanaka (CRINEX)
+      * ``version``    — RINEX major version ``'2'`` / ``'3'`` or None
+    """
+    magic = path.read_bytes()[:2]
+    compression = (
+        "lzw" if magic == _MAGIC_LZW else "gzip" if magic == _MAGIC_GZIP else "none"
+    )
+    head = _decompressed_head(path).decode("latin1", errors="replace")
+    compact = "COMPACT RINEX" in head
+    version = None
+    for line in head.splitlines():
+        if "RINEX VERSION" in line:
+            m = re.search(r"(\d)\.\d+", line)
+            if m:
+                version = m.group(1)
+            break
+    return {"compression": compression, "compact": compact, "version": version}
+
+
+def standard_archive_name(station_id: str, dt: datetime, frequency: str) -> str:
+    """The archive-standard filename ``{station}{doy}{session}.{yy}D.Z``."""
+    import gtimes.timefunc as gt
+
+    return gt.datepathlist(
+        f"{station_id.upper()}#Rin2D.Z", frequency, starttime=dt, endtime=dt
+    )[0]
+
+
+def normalize_external_file(
+    path: Path, station_id: str, dt: datetime, dest_dir: Path, frequency: str
+) -> Path:
+    """Validate a downloaded external file and rename it to the archive standard.
+
+    The archive contract is Hatanaka (CRINEX) RINEX 2/3 + Unix-compress
+    (LZW), named ``{station}{doy}{session}.{yy}D.Z`` — exactly what the
+    receivers converter produces. A source that already serves that format
+    (e.g. LMI's ``.e``) is renamed + validated; any other format is REFUSED
+    (never stored as-is) until a conversion step is wired.
+
+    RINEX version is preserved (no R2→R3 conversion — lossy/ambiguous).
+    """
+    fmt = detect_file_format(path)
+    ok = fmt["compression"] == "lzw" and fmt["compact"] and fmt["version"] in ("2", "3")
+    if not ok:
+        raise ValueError(
+            f"{path.name}: unsupported external format {fmt} — expected "
+            "Hatanaka RINEX 2/3 + Unix-compress (LZW); refusing to archive"
+        )
+    target = dest_dir / standard_archive_name(station_id, dt, frequency)
+    path.replace(target)
+    return target
+
+
+def _datetimes(frequency: str, start: datetime, end: datetime) -> List[datetime]:
+    """The per-file datetimes covered by ``[start, end]`` at ``frequency``."""
+    import gtimes.timefunc as gt
+
+    out = gt.datepathlist("#datelist", frequency, starttime=start, endtime=end)
+    return list(out) if isinstance(out, (list, tuple)) else [out]
+
+
 def fetch_external_station(
     station_id: str,
     config: Dict[str, Any],
@@ -167,19 +262,23 @@ def fetch_external_station(
     if ext is None:
         return []
 
-    urls = build_external_urls(
-        station_id, ext["url_template"], ext["frequency"], start, end
-    )
-    logger.info("external %s: %d URL(s) to fetch", station_id, len(urls))
+    dts = _datetimes(ext["frequency"], start, end)
+    logger.info("external %s: %d file(s) to fetch", station_id, len(dts))
 
     downloaded: List[Path] = []
-    for url in urls:
+    for dt in dts:
+        url = build_external_urls(
+            station_id, ext["url_template"], ext["frequency"], dt, dt
+        )[0]
         try:
-            path = _fetch_one(
+            tmp = _fetch_one(
                 url, dest_dir, username=ext["username"], password=ext["password"]
             )
-            downloaded.append(path)
-            logger.info("external %s: fetched %s", station_id, path.name)
+            final = normalize_external_file(
+                tmp, station_id, dt, dest_dir, ext["frequency"]
+            )
+            downloaded.append(final)
+            logger.info("external %s: fetched %s", station_id, final.name)
         except (
             Exception
         ) as exc:  # noqa: BLE001 — one bad file must not abort the station

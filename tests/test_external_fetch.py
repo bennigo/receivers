@@ -133,3 +133,101 @@ class TestFetchCleanup:
         assert path.read_bytes() == b"RINEXDATA"
         # no leftover .part file
         assert [p.name for p in tmp_path.iterdir()] == ["MYVA2320.26e"]
+
+
+CRINEX_HEADER = (
+    "     3.05           O                   M                   RINEX VERSION / TYPE\n"
+    "RNX2CRX ver.4.1.0                       19-Aug-26 00:00     CRINEX PROG / DATE\n"
+    "3.0                 COMPACT RINEX FORMAT                    CRINEX VERS   / TYPE\n"
+)
+PLAIN_R3_HEADER = (
+    "     3.05           OBSERVATION DATA    M (MIXED)           RINEX VERSION / TYPE\n"
+)
+
+
+def _lzw(data: bytes) -> bytes:
+    import subprocess
+
+    return subprocess.run(["compress", "-c"], input=data, capture_output=True).stdout
+
+
+class TestDetectFileFormat:
+    def test_lzw_crinex_r3(self, tmp_path):
+        from receivers.external_fetch import detect_file_format
+
+        p = tmp_path / "MYVA2300.26e"
+        p.write_bytes(_lzw(CRINEX_HEADER.encode()))
+        assert detect_file_format(p) == {
+            "compression": "lzw",
+            "compact": True,
+            "version": "3",
+        }
+
+    def test_plain_r3(self, tmp_path):
+        from receivers.external_fetch import detect_file_format
+
+        p = tmp_path / "x.26o"
+        p.write_text(PLAIN_R3_HEADER)
+        fmt = detect_file_format(p)
+        assert fmt == {"compression": "none", "compact": False, "version": "3"}
+
+    def test_gzip_crinex(self, tmp_path):
+        import gzip
+
+        from receivers.external_fetch import detect_file_format
+
+        p = tmp_path / "x.26e"
+        p.write_bytes(gzip.compress(CRINEX_HEADER.encode()))
+        fmt = detect_file_format(p)
+        assert fmt["compression"] == "gzip"
+        assert fmt["compact"] is True
+        assert fmt["version"] == "3"
+
+    def test_plain_r2(self, tmp_path):
+        from receivers.external_fetch import detect_file_format
+
+        p = tmp_path / "x.26o"
+        p.write_text(
+            "     2.11           OBSERVATION DATA    M (MIXED)           RINEX VERSION / TYPE\n"
+        )
+        fmt = detect_file_format(p)
+        assert fmt["version"] == "2"
+        assert fmt["compact"] is False
+
+
+class TestStandardArchiveName:
+    def test_daily(self):
+        from receivers.external_fetch import standard_archive_name
+
+        assert (
+            standard_archive_name("MYVA", datetime(2026, 8, 18), "1D")
+            == "MYVA2300.26D.Z"
+        )
+
+
+class TestNormalizeExternalFile:
+    def test_rename_and_validate_lzw_crinex(self, tmp_path):
+        from receivers.external_fetch import normalize_external_file
+
+        p = tmp_path / "MYVA2300.26e"
+        p.write_bytes(_lzw(CRINEX_HEADER.encode()))
+        out = normalize_external_file(p, "MYVA", datetime(2026, 8, 18), tmp_path, "1D")
+        assert out.name == "MYVA2300.26D.Z"
+        assert out.exists()
+
+    def test_refuses_non_lzw(self, tmp_path):
+        from receivers.external_fetch import normalize_external_file
+
+        p = tmp_path / "MYVA2300.26e"
+        p.write_text(CRINEX_HEADER)  # plain — wrong compression
+        with pytest.raises(ValueError, match="unsupported external format"):
+            normalize_external_file(p, "MYVA", datetime(2026, 8, 18), tmp_path, "1D")
+        assert p.exists()  # original left in place (not archived)
+
+    def test_refuses_plain_r3(self, tmp_path):
+        from receivers.external_fetch import normalize_external_file
+
+        p = tmp_path / "MYVA2300.26o"
+        p.write_text(PLAIN_R3_HEADER)  # not Hatanaka
+        with pytest.raises(ValueError, match="unsupported external format"):
+            normalize_external_file(p, "MYVA", datetime(2026, 8, 18), tmp_path, "1D")
