@@ -1800,9 +1800,19 @@ class BulkDownloadScheduler:
         # Read configured_serial / configured_firmware directly from stations.cfg.
         # get_all_station_configs() does not expose these fields.
         cfg_identity: Dict[str, Dict[str, Any]] = {}
+        # Every station section in stations.cfg (4-char uppercase ID, not a
+        # data-source-only passive role), INCLUDING external stations
+        # (operational_status=external / health_check=passive) that
+        # get_all_station_configs() drops for lacking a receiver_type.
+        # _sync_station_status_to_db judges suppression against this full list
+        # so external stations are never marked 'suppressed' merely for being
+        # in cfg but not receiver-polled.
+        cfg_station_sections: set[str] = set()
         cfg_path = self._get_stations_cfg_path()
         if cfg_path and cfg_path.exists():
             import configparser as _cp
+
+            from ..config_utils import is_passive_role
 
             _parser = _cp.ConfigParser(strict=False)
             _parser.read(str(cfg_path))
@@ -1818,6 +1828,15 @@ class BulkDownloadScheduler:
                     )
                     or None,
                 }
+                if (
+                    len(section) == 4
+                    and section.isupper()
+                    and not is_passive_role(
+                        _parser.get(section, "station_role", fallback=None)
+                    )
+                ):
+                    cfg_station_sections.add(sid)
+        self._cfg_station_sections = cfg_station_sections
 
         try:
             # Use the existing station loading from CLI
@@ -1956,9 +1975,15 @@ class BulkDownloadScheduler:
                             "station_status/health_check/configured_identity already in sync with DB"
                         )
 
-                    # Suppress stations that disappeared from stations.cfg.
-                    if self.stations:
-                        placeholders = ",".join(["%s"] * len(self.stations))
+                    # Suppress stations that disappeared from stations.cfg —
+                    # judged against the FULL cfg section list (including external
+                    # / health_check=passive stations), not self.stations (the
+                    # schedulable subset). External stations are in cfg but not
+                    # schedulable, so judging by self.stations wrongly marks them
+                    # 'suppressed' and drops them from the dashboard map.
+                    cfg_sections = getattr(self, "_cfg_station_sections", None)
+                    if cfg_sections:
+                        placeholders = ",".join(["%s"] * len(cfg_sections))
                         cur.execute(
                             f"""
                             UPDATE stations
@@ -1967,7 +1992,7 @@ class BulkDownloadScheduler:
                               AND station_status IS NULL
                             RETURNING sid
                             """,
-                            list(self.stations.keys()),
+                            list(cfg_sections),
                         )
                         gone = [r[0] for r in cur.fetchall()]
                         if gone:
