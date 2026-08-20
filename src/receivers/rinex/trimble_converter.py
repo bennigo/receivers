@@ -25,7 +25,7 @@ import gzip
 import logging
 import shutil
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
@@ -553,6 +553,37 @@ class R00Converter(TrimbleConverter):
     @property
     def supported_extensions(self) -> List[str]:
         return [".r00", ".R00", ".r00.gz", ".R00.gz"]
+
+    def _extract_date_from_filename(self, file_path: Path) -> datetime:
+        """Observation date for an R00, honouring the SESSION-START naming.
+
+        The archive stamps some R00 files with the moment the session opened,
+        one minute before midnight, so ``…YYYYMMDD2359a.r00`` holds the data of
+        ``YYYYMMDD + 1``. Measured over 2008/2010/2012 fleet-wide: 2,150 files
+        named ``0000`` (same day) against 1,188 named ``2359`` (next day), plus
+        ~270 at assorted times. VMEY is a ``2359`` station — 951 of its 977.
+
+        Confirmed both ways by decoding:
+
+        * ``HVER201004010000a.r00`` -> first obs 2010-04-01  (same day)
+        * ``VMEY201006012359a.r00`` -> first obs 2010-06-02  (next day)
+
+        Only the unambiguous late-evening case is shifted. A file stamped at
+        some other hour is left alone: the base class's identity gate compares
+        the decoded first-obs date against the claim and refuses a mismatch, so
+        an odd one is caught rather than silently misfiled.
+        """
+        stamp = super()._extract_date_from_filename(file_path)
+        if stamp.hour == 23 and stamp.minute >= 55:
+            shifted = (stamp + timedelta(days=1)).replace(hour=0, minute=0)
+            self.logger.debug(
+                "R00 %s: session-start naming — observation date is %s, not %s",
+                file_path.name,
+                shifted.date().isoformat(),
+                stamp.date().isoformat(),
+            )
+            return shifted
+        return stamp
 
     def _teqc_extra_args(self, observation_date: datetime) -> List[str]:
         """``-week N`` for ``observation_date`` — never let teqc guess."""
