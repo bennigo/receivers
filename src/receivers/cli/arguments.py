@@ -1066,7 +1066,17 @@ Examples:
     parser.add_argument(
         "--no-provision",
         action="store_true",
-        help="Skip the chained rec-provision step.",
+        help="Skip the chained post-flash rec-provision step.",
+    )
+    parser.add_argument(
+        "--no-pre-provision",
+        action="store_true",
+        help="Skip the PRE-flash rec-provision that runs when the target crosses "
+        "the 5.7 auth cliff. Below 5.7 a receiver serves commands even with no "
+        "user accounts, so an account-less station looks healthy — until 5.7 "
+        "makes auth mandatory and the scheduler's health poll locks it out "
+        "globally for ~19 h (VONC, 2026-08-20). Only use this if you know the "
+        "accounts already exist.",
     )
     parser.add_argument(
         "--no-record",
