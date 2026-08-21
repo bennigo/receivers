@@ -34,7 +34,7 @@ from typing import Any, Dict, Optional, Tuple
 # RINEX header field formatting is generic (not receiver-specific) and now
 # lives in tostools.rinex.formatter. These re-exports keep the receivers
 # import surface stable for existing callers.
-from tostools.device import is_synthetic_serial
+from tostools.device import PUBLISHED_UNKNOWN_ANTENNA_SERIAL, is_synthetic_serial
 from tostools.rinex.formatter import (  # noqa: F401
     RINEX_FIELD_SPECS,
     format_antenna_type_with_radome,
@@ -153,11 +153,23 @@ class EquipmentMetadata:
         # which reads the truncated string back, fails to match TOS's 21-char
         # serial, and proposes creating a duplicate antenna.
         #
-        # Same rule the IGS site log already applies (tostools cb02a03): no
-        # factory serial means an EMPTY field, not a stand-in.
+        # A suppressed serial is published as "0000", NOT blank.
+        #
+        # This used to write an empty field, citing the IGS instruction (tostools
+        # cb02a03). That instruction is real, but M3G overrides it: an empty
+        # antenna Serial Number is rejected outright (422, bisected against the
+        # live API 2026-08-20 — M3G's own stored log with the serial emptied
+        # returns 422; the same log with "0000" returns 200). site_log.py and
+        # corrector.py moved to PUBLISHED_UNKNOWN_ANTENNA_SERIAL then; this path
+        # was missed, and it is the one that writes the converter's headers — so
+        # 463 archived 2026 daily files still carry a blank serial field.
+        #
+        # Must stay equal to tostools.rinex.validator's suppressed value, or a
+        # freshly converted file reads back as discrepant and --fix-headers
+        # re-injects what the converter just withheld.
         published_serial = self.antenna_serial or ""
         if is_synthetic_serial(published_serial):
-            published_serial = ""
+            published_serial = PUBLISHED_UNKNOWN_ANTENNA_SERIAL
         # Emit on model OR serial — gating on the serial alone (the old
         # behaviour) would drop the antenna TYPE and RADOME along with a
         # suppressed serial, which is a worse header than a blank serial field.
