@@ -5112,6 +5112,55 @@ def cmd_rec_upgrade_firmware(args) -> int:
             print("  ✓ already at target — skipping")
             continue
 
+        # ---- pre-flash provisioning (the 5.7 auth cliff) --------------------
+        # Below 5.7 a receiver serves unauthenticated commands even with NO user
+        # accounts, so an account-less station is indistinguishable from a healthy
+        # one. At 5.7 auth becomes mandatory: the same receiver now has nothing to
+        # authenticate against, and the scheduler's 5-minute health poll becomes a
+        # stream of failed logins. VONC was flashed at 19:20 on 2026-08-20 and was
+        # globally locked out (~19 h, ALL accounts) within minutes.
+        #
+        # rec-provision creates the accounts, and it must run BEFORE the flash —
+        # afterwards you are racing the scheduler for a receiver that may already
+        # be locked. Gated on the TARGET crossing the cliff, so ordinary 5.6.x
+        # work is untouched; re-provisioning an already-provisioned receiver is a
+        # no-op for accounts (it just refreshes FTP/HTTPS).
+        from ..septentrio import rxupgrade as _rxu
+
+        needs_pre_provision = (
+            _rxu.requires_auth(target_version)
+            and not _rxu.requires_auth(cur)
+            and not getattr(args, "no_pre_provision", False)
+        )
+        if needs_pre_provision:
+            if dry_run:
+                print(
+                    f"  [DRY-RUN] would PRE-PROVISION first: {cur or 'unknown'} →"
+                    f" {target_version} crosses the 5.7 auth cliff, and the"
+                    " receiver may have no user accounts"
+                )
+            else:
+                print(
+                    f"  pre-provisioning ({cur or 'unknown'} → {target_version}"
+                    " crosses the 5.7 auth cliff — accounts must exist BEFORE"
+                    " auth becomes mandatory)"
+                )
+                _pre = subprocess.run(
+                    [sys.executable, "-m", "receivers.cli.main", "rec-provision", sid]
+                )
+                if _pre.returncode != 0:
+                    # Refuse rather than flash: a receiver that cannot be
+                    # provisioned now is one that locks itself out afterwards,
+                    # and recovery costs ~19 h of downtime.
+                    print(
+                        f"  ❌ pre-provision failed (rc={_pre.returncode}) — NOT"
+                        " flashing. Fix the accounts first, or override with"
+                        " --no-pre-provision if you know they exist."
+                    )
+                    overall_ok = False
+                    continue
+                print("  ✓ pre-provision OK")
+
         # Post-upgrade reconnect. The web UI sends the SAME `erst, upgrade`
         # command this verb does, and JONC reconnected with plain reconcile after
         # a web-UI flash — because a deployed station reboots into its saved boot
@@ -5302,9 +5351,7 @@ def cmd_rec_upgrade_firmware(args) -> int:
             except fw.FirmwareUpgradeError as exc:
                 # The image is in — only our confirmation failed. Say so precisely
                 # rather than implying the flash did not happen.
-                print(
-                    f"  ⚠ flashed, but could not confirm the running version: {exc}"
-                )
+                print(f"  ⚠ flashed, but could not confirm the running version: {exc}")
                 print(
                     f"     check manually (plaintext {port}, TLS {tls_port}); "
                     "rxupgrade restores the config, so plaintext often survives"

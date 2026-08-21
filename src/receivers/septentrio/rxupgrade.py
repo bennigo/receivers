@@ -65,6 +65,37 @@ _VERIFY_STEP_RE = re.compile(r"Checking if upgrade succeeded", re.IGNORECASE)
 #: Generous default: the image is ~35 MB and stations sit on 3G/4G links.
 DEFAULT_TIMEOUT_S = 1800
 
+#: The release where authentication became MANDATORY on the command port.
+#:
+#: Below it a receiver answers unauthenticated commands even when it has no user
+#: accounts at all — ``main.py`` documents the tell: fw 5.6.0 with no accounts
+#: replies ``$R? LogIn: Wrong username or password!`` to every login form while
+#: still serving ``getReceiverCapabilities``. So an account-less receiver looks
+#: perfectly healthy right up until it is flashed.
+#:
+#: At and above this version the same receiver has nothing to authenticate
+#: against, and the scheduler's 5-minute health poll turns into a stream of
+#: failed logins. VONC hit exactly this on 2026-08-20: upgraded 19:20, globally
+#: locked out (~19 h, all accounts) within minutes. Provisioning BEFORE the flash
+#: is what prevents it — afterwards you are racing the scheduler.
+AUTH_REQUIRED_FROM = (5, 7, 0)
+
+
+def version_tuple(v: str) -> tuple:
+    """``"5.7.0"`` → ``(5, 7, 0)``. Non-numeric parts sort as 0."""
+    parts = []
+    for chunk in str(v).strip().split("."):
+        digits = "".join(c for c in chunk if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
+def requires_auth(version: Optional[str]) -> bool:
+    """True when ``version`` is at or above the auth-mandatory release."""
+    if not version:
+        return False
+    return version_tuple(version) >= AUTH_REQUIRED_FROM
+
 
 class RxUpgradeError(RuntimeError):
     """The vendor tool could not be run, or reported no successful flash."""

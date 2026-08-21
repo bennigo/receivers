@@ -174,3 +174,41 @@ class TestRunUpgrade:
         assert res.returncode == 0
         assert res.flashed is False
         assert res.ok is False
+
+
+class TestAuthCliff:
+    """5.7.0 is where authentication becomes mandatory on the command port.
+
+    Below it a receiver answers unauthenticated commands even with NO user
+    accounts, so an account-less station is indistinguishable from a healthy one.
+    At 5.7 the same receiver has nothing to authenticate against and the
+    scheduler's health poll locks it out globally (~19 h). VONC, 2026-08-20.
+    """
+
+    def test_below_the_cliff(self):
+        assert rxu.requires_auth("5.6.0") is False
+        assert rxu.requires_auth("5.5.0") is False
+        assert rxu.requires_auth("4.10.0") is False
+
+    def test_at_and_above_the_cliff(self):
+        assert rxu.requires_auth("5.7.0") is True
+        assert rxu.requires_auth("5.7.1") is True
+        assert rxu.requires_auth("5.8.0") is True
+        assert rxu.requires_auth("6.0.0") is True
+
+    def test_unknown_version_does_not_claim_auth(self):
+        # An unprobeable receiver must not be treated as post-cliff: that would
+        # skip the pre-provision on exactly the station we know least about.
+        assert rxu.requires_auth(None) is False
+        assert rxu.requires_auth("") is False
+
+    def test_crossing_is_what_matters_not_the_target_alone(self):
+        # 5.7.0 → 5.7.1 does NOT cross: accounts already exist.
+        assert rxu.requires_auth("5.7.1") and rxu.requires_auth("5.7.0")
+        # 5.6.0 → 5.7.0 DOES cross.
+        assert rxu.requires_auth("5.7.0") and not rxu.requires_auth("5.6.0")
+
+    def test_version_tuple_tolerates_noise(self):
+        assert rxu.version_tuple("5.7.0") == (5, 7, 0)
+        assert rxu.version_tuple("5.70") == (5, 70)
+        assert rxu.version_tuple("v5.7.0-rc1") == (5, 7, 1)
