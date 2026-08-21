@@ -5120,6 +5120,14 @@ def cmd_rec_upgrade_firmware(args) -> int:
         # stream of failed logins. VONC was flashed at 19:20 on 2026-08-20 and was
         # globally locked out (~19 h, ALL accounts) within minutes.
         #
+        # NOT a complete explanation, and don't let it become one: ISAK (2026-08-01)
+        # locked out the same way with its accounts INTACT — recovery logged in
+        # with the normal credentials and reported "accounts already exist". So
+        # missing accounts are one sufficient cause, not the only one, and VONC's
+        # own case is unproven (the lockout blocks the query that would settle it).
+        # Pre-provisioning is the right precaution either way: it is a no-op when
+        # the accounts already exist, and the alternative costs ~19 h.
+        #
         # rec-provision creates the accounts, and it must run BEFORE the flash —
         # afterwards you are racing the scheduler for a receiver that may already
         # be locked. Gated on the TARGET crossing the cliff, so ordinary 5.6.x
