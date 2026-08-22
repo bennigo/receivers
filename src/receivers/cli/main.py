@@ -5255,6 +5255,7 @@ def cmd_rec_upgrade_firmware(args) -> int:
                     ("rec-provision", not args.no_provision),
                     ("update-device --change", not args.no_record),
                     ("reconcile (local)", not args.no_record),
+                    ("vitjun", not args.no_record),
                     ("health", True),
                 )
                 if on
@@ -5433,6 +5434,29 @@ def cmd_rec_upgrade_firmware(args) -> int:
                     "receiver_firmware_version",
                     "--source",
                     "receiver",
+                ],
+            )
+            # A firmware flash is exactly the kind of intervention the vitjun
+            # record exists for, and it was the one step this chain did NOT
+            # cover — so it was the one most likely to be forgotten, precisely
+            # because everything around it is automated. VONC's 5.6.0→5.7.0 on
+            # 2026-08-20 went unrecorded for two days for that reason.
+            _run(
+                "vitjun (TOS maintenance record)",
+                [
+                    "cfg",
+                    "visit",
+                    "--station",
+                    sid,
+                    "--type",
+                    "remote",
+                    "--reason",
+                    "improvements",
+                    "--work",
+                    f"Firmware upgrade {cur or 'unknown'} → {target_version} "
+                    f"via rec-upgrade-firmware ({backend} backend); "
+                    "rec-provision re-enabled FTP and disabled the HTTPS redirect",
+                    "--no-dry-run",
                 ],
             )
             print(
