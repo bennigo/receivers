@@ -3,9 +3,21 @@
 EPOS §3.2 makes the station site log the canonical metadata record, maintained
 in the M3G portal (https://gnss-metadata.eu) within one business day of any TOS
 change. This module is the dissemination-side wiring around the existing tostools
-generator (``tos sitelog`` / :func:`tostools.core.site_log.generate_igs_site_log`):
-it reads the station's TOS metadata, renders the IGS site log, and writes it to a
-target directory (a ``gps-sitelogs`` repo working tree in production).
+generator: it reads the station's TOS metadata, renders the IGS site log, and
+writes it to a target directory (a ``gps-sitelogs`` repo working tree in
+production).
+
+**The renderer is** :func:`tostools.legacy.gps_metadata_functions.site_log`
+(imported at the call site below), **NOT**
+``tostools.core.site_log.generate_igs_site_log``, which this docstring named
+until 2026-08-22 and which has no production caller at all. Only the file
+writer, ``core.site_log.export_site_log_to_file``, comes from that module.
+
+That distinction is load-bearing: what M3G receives is produced by the legacy
+renderer, so a fix applied to ``core/site_log.py`` changes nothing that is
+published. This is the shape of the VMEY HTTP 422 incident (2026-08-20, empty
+antenna serial), and ``tostools/tests/test_sitelog_unknown_antenna_serial.py``
+pins both modules for exactly that reason.
 
 The repo-commit and M3G submission steps are deliberately split out (see
 :func:`commit_site_log` / the M3G submitter stub) because they need the
