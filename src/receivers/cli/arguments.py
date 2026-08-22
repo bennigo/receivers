@@ -1128,24 +1128,44 @@ Supported formats:
   - Trimble T00 (.T00) - using runpkr00 + GFZRNX
   - Leica m00 (.m00, .m00.gz) - using teqc + GFZRNX
 
+THREE MODES - pick ONE (they are mutually exclusive):
+  1. Daily convert (default) - convert recent raw from the live collection
+     dir, in place. No archive read/write.
+  2. Header fix (--fix-headers) - rewrite stale header fields in ARCHIVED
+     RINEX files to match TOS. No re-conversion from raw.
+  3. Re-rinex (--from-archive) - re-convert the ARCHIVE from raw (e.g. to
+     upgrade RINEX 2 -> 3 and recover GLONASS/Galileo/BeiDou). Converts and
+     stages into a work-dir, then --push writes back via the rawdata gateway.
+
+Version defaults: RINEX 3 for modern receivers (PolaRX5, NetR9); NetRS pins
+RINEX 2 (its L2 is codeless - RINEX 3 codes it C2D, which GAMIT drops).
+--version overrides.
+
 Examples:
-  # Convert last 7 days of daily data
+  # Daily: convert the last 7 days
   receivers rinex ELDC -d 7
 
-  # Convert specific date range
-  receivers rinex ELDC -s 20260101 -e 20260107
+  # Daily: a specific range, RINEX 3, long naming
+  receivers rinex ELDC -s 20260101 -e 20260107 --version 3 --naming long
 
-  # RINEX 3 with long naming convention
-  receivers rinex ELDC -d 7 --version 3 --naming long
-
-  # RINEX 2 with short naming (legacy)
-  receivers rinex MANA --version 2 --naming short
-
-  # Validate existing RINEX headers against TOS
+  # Validate existing RINEX headers against TOS (read-only)
   receivers rinex ELDC --validate-only -d 30
 
-  # Dry run - show what would be done
-  receivers rinex ELDC -d 7 --dry-run
+  # Header fix: repair stale headers across the WHOLE archive, then push
+  receivers rinex RHOF --fix-headers --all --session 15s_24hr \\
+      --push --catalog-prod
+
+  # Re-rinex: re-convert the whole archive R2 -> R3, then push it back
+  receivers rinex VONC --session 15s_24hr --from-archive \\
+      -s 20130801 -e 20260820 --parallel --push --catalog-prod --backup-old
+
+  # Re-rinex: convert + stage ONLY (no push - verify before writing the archive)
+  receivers rinex VONC --session 15s_24hr --from-archive \\
+      -s 20130801 -e 20260820 --parallel
+
+RESUME: --fix-headers and re-rinex runs resume on re-run - already-fixed /
+already-staged files are skipped. Re-run WITHOUT --force (--force restarts from
+zero) and keep the same --work-dir (the staging tree IS the resume state).
         """,
     )
 
@@ -1310,16 +1330,18 @@ Examples:
     mode_group.add_argument(
         "--work-dir",
         default="~/tmp/rinex_fixes",
-        help="With --fix-headers: stage fixed files into this directory instead "
-        "of overwriting the source archive (default: ~/tmp/rinex_fixes). Staging "
-        "is the NORMAL mode, not a fallback: the long-term archive "
-        "(ananas:/gps/gpsdata) is mounted READ-ONLY everywhere — including "
-        "rek-d01, where it is /mnt/rawgpsdata — because rawdata.vedur.is is the "
-        "sole writer, by design, for traceability. The tools are built for that: "
-        "read over NFS, stage here, push via the gpsops@rawdata gateway with "
-        "--push. Pass an empty string (--work-dir '') to fix in place, which "
-        "works ONLY on a locally-writable tree such as rek-d01's rolling "
-        "collection dir /mnt/data/gpsdata — never on the historical archive.",
+        help="Staging directory for --fix-headers AND re-rinex (--from-archive). "
+        "Default: ~/tmp/rinex_fixes for --fix-headers, ~/tmp/rinex_reconvert for "
+        "re-rinex. Stage on a DATA volume (e.g. /mnt/data/gpsops_scratch), not "
+        "/home — a full-station run can be tens of GB and /home is the small OS "
+        "volume. Staging is the NORMAL mode, not a fallback: the long-term "
+        "archive (ananas:/gps/gpsdata) is mounted READ-ONLY everywhere — "
+        "including rek-d01, where it is /mnt/rawgpsdata — because "
+        "rawdata.vedur.is is the sole writer, by design, for traceability. Read "
+        "over NFS, stage here, push via the gpsops@rawdata gateway with --push. "
+        "Pass an empty string (--work-dir '') to fix in place, which works ONLY "
+        "on a locally-writable tree such as rek-d01's rolling collection dir "
+        "/mnt/data/gpsdata — never on the historical archive.",
     )
 
     mode_group.add_argument(
@@ -1384,9 +1406,10 @@ Examples:
         metavar="YYYYMMDD[,..]|@FILE",
         help="Convert ONLY these dates (comma-separated, or @file with one "
         "per line) — the targeted-regen path, typically fed by "
-        "'receivers archive-audit'. Overrides -s/-e. Pair with --force to "
-        "redo dates whose existing product is bad (resume-skip would "
-        "otherwise protect it).",
+        "'receivers archive-audit'. Overrides -s/-e. NOTE: the list collapses "
+        "to the full min..max range, so `a,b,z` scans EVERY date between a and "
+        "z, not just the listed ones. Pair with --force to redo dates whose "
+        "existing product is bad (resume-skip would otherwise protect it).",
     )
 
     mode_group.add_argument(
@@ -1429,11 +1452,15 @@ Examples:
     mode_group.add_argument(
         "--push",
         action="store_true",
-        help="With --fix-headers --work-dir: after fixing, rsync ONLY the files "
-        "rewritten this run back to the source archive (skipped entirely when 0 "
-        "files were fixed) via an explicit file list — no whole-tree scan. Note "
-        "each fixed file transfers in full: a header change rewrites the "
-        "Hatanaka/.Z compressed stream, so rsync block-deltas save nothing here.",
+        help="With --fix-headers OR re-rinex (--from-archive): rsync the files "
+        "staged in --work-dir back to the archive via the gpsops@rawdata gateway "
+        "(the archive itself is read-only everywhere). Pushes ONLY the files this "
+        "run staged — no whole-tree scan; skipped entirely when 0 files were "
+        "produced. In re-rinex mode the push is incremental (every --push-batch "
+        "files) and three gates — regenerability, degradation, format — refuse "
+        "any file that would be unsafe to overwrite. Each file transfers in "
+        "full: a header change rewrites the Hatanaka/.Z stream, so rsync "
+        "block-deltas save nothing.",
     )
 
     mode_group.add_argument(
@@ -1470,10 +1497,10 @@ Examples:
         type=int,
         default=100,
         metavar="N",
-        help="With --fix-headers --push: push+reindex every N fixed files instead "
-        "of once at the end, so an interruption loses at most one batch (a re-run "
-        "skips already-pushed files — their headers now match TOS). Default: 100. "
-        "Use a large value to push once at the end.",
+        help="With --push (--fix-headers or re-rinex): push+reindex every N "
+        "staged files instead of once at the end, so an interruption loses at "
+        "most one batch. Default: 100 for --fix-headers, 300 for re-rinex. Use a "
+        "large value to push once at the end.",
     )
     mode_group.add_argument(
         "--retry-attempts",
