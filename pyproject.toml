@@ -55,14 +55,14 @@ dependencies = [
     "psutil>=5.9.0",
     "psycopg2-binary>=2.9.0",
     "gtimes @ git+https://github.com/bgo-gnss/gtimes@v0.5.1",
-    # tostools master @c9181aa: sitelog renderer reads the TOS tectonic_plate
-    # attribute (was falling back to a stale bundled station-plate file ->
-    # UNKNOWN). Earlier bumps: @bdc8a52 adds TRM115000.00 (Zephyr 3 Geodetic)
-    # to ANTENNA_IGS — blocks NPSK without it; @fae6bc2 exported
-    # INSTALL_SCOPED_CODES + close_attribute_period (cfg retire path). Bumping
-    # is mandatory, not cosmetic — the laptop mamba env has tostools editable,
-    # so an unbumped pin fails only in CI / on rek-d01.
-    "tostools @ git+https://github.com/bgo-gnss/tostools@c9181aa",
+    # tostools master @f42dee4: station verify/triage --include-closed audits
+    # historical (closed-join) devices too. Earlier: @c9181aa sitelog reads the
+    # TOS tectonic_plate attribute (was falling back to a stale bundled
+    # station-plate file -> UNKNOWN); @bdc8a52 adds TRM115000.00 (Zephyr 3
+    # Geodetic) to ANTENNA_IGS — blocks NPSK without it. Bumping is mandatory,
+    # not cosmetic — the laptop mamba env has tostools editable, so an unbumped
+    # pin fails only in CI / on rek-d01.
+    "tostools @ git+https://github.com/bgo-gnss/tostools@f42dee4",
     # gps_parser main @257a2ee: passive-station schema (2c5b428) + canonical
     # module-level parse_station_role (257a2ee) — the API config_utils imports.
     "gps-parser @ git+https://github.com/bgo-gnss/gps_parser@257a2ee",
