@@ -7,17 +7,23 @@ generator: it reads the station's TOS metadata, renders the IGS site log, and
 writes it to a target directory (a ``gps-sitelogs`` repo working tree in
 production).
 
-**The renderer is** :func:`tostools.legacy.gps_metadata_functions.site_log`
-(imported at the call site below), **NOT**
-``tostools.core.site_log.generate_igs_site_log``, which this docstring named
-until 2026-08-22 and which has no production caller at all. Only the file
-writer, ``core.site_log.export_site_log_to_file``, comes from that module.
+**Rendering goes through** :func:`tostools.core.site_log.build_site_log` —
+the single entry point shared with ``tosGPS sitelog`` (2026-08-23). It in
+turn calls :func:`tostools.legacy.gps_metadata_functions.site_log`, **NOT**
+``core.site_log.generate_igs_site_log``, which this docstring named until
+2026-08-22 and which has no production caller at all.
 
-That distinction is load-bearing: what M3G receives is produced by the legacy
-renderer, so a fix applied to ``core/site_log.py`` changes nothing that is
-published. This is the shape of the VMEY HTTP 422 incident (2026-08-20, empty
-antenna serial), and ``tostools/tests/test_sitelog_unknown_antenna_serial.py``
-pins both modules for exactly that reason.
+Both of those distinctions are load-bearing:
+
+- A fix applied to ``generate_igs_site_log`` changes nothing that is
+  published — the shape of the VMEY HTTP 422 incident (2026-08-20, empty
+  antenna serial). ``tostools/tests/test_sitelog_unknown_antenna_serial.py``
+  pins both modules for that reason.
+- Before ``build_site_log``, this module and ``tosGPS sitelog`` called the
+  renderer directly with *different* argument sets (this one passed
+  ``monument_number``/``country_code``, tosGPS passed
+  ``report_type``/``modified_sections``) and agreed only because the omitted
+  arguments shared defaults. Route new callers through ``build_site_log``.
 
 The repo-commit and M3G submission steps are deliberately split out (see
 :func:`commit_site_log` / the M3G submitter stub) because they need the
@@ -133,7 +139,7 @@ def _render_sitelog(
     failure (logged). Shared by :func:`generate_site_log` and the change-gate."""
     from datetime import datetime
 
-    from tostools.legacy.gps_metadata_functions import site_log as render_site_log
+    from tostools.core.site_log import build_site_log
     from tostools.tosGPS import generate_igs_sitelog_filename
 
     sid = station.upper()
@@ -159,13 +165,19 @@ def _render_sitelog(
 
     agencies = resolve_sitelog_agencies(client, meta, agency_resolver)
     try:
-        content = render_site_log(
+        # build_site_log is the ONE entry point both site-log callers use —
+        # this and `tosGPS sitelog`. They previously called the renderer
+        # directly with different argument sets and agreed only because the
+        # omitted arguments shared defaults. Agencies are resolved here rather
+        # than inside, because this path may be handed an injected resolver.
+        content = build_site_log(
             sid,
-            loglevel=loglevel,
-            previous_log=previous,
+            client=client,
             agencies=agencies,
+            previous_log=previous,
             monument_number=mon,
-            country_code=country_code.upper(),
+            country_code=country_code,
+            loglevel=loglevel,
         )
     except Exception as exc:  # noqa: BLE001 - renderer/TOS failure ⇒ skip (logged)
         logger.warning("site log: renderer failed for %s: %s", sid, exc)
