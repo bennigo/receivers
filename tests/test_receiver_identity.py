@@ -42,18 +42,30 @@ class TestReceiverSetupParsing:
         tow = struct.pack("<I", 0)  # TOW placeholder
         wnc = struct.pack("<H", 0)  # WNc placeholder
 
+        # ReceiverSetup carries a 2-byte Reserved field between WNc and
+        # MarkerName, so the strings start at offset 16 — not 14. This fixture
+        # omitted it and laid every field 2 bytes early, which shifted the whole
+        # block: the parser read "laRx5" out of "PolaRx5". It also made the
+        # block 214 bytes, short of the parser's 216-byte minimum, so the
+        # earlier symptom was a silent None. Both are the one missing field.
+        reserved = struct.pack("<H", 0)
+
         fields = (
-            _pad(marker_name, 60)  # 14-73
-            + _pad(marker_number, 20)  # 74-93
-            + _pad(observer, 20)  # 94-113
-            + _pad(agency, 40)  # 114-153
-            + _pad(serial_number, 20)  # 154-173
-            + _pad(rx_name, 20)  # 174-193
-            + _pad(rx_version, 20)  # 194-213
+            _pad(marker_name, 60)  # 16-75
+            + _pad(marker_number, 20)  # 76-95
+            + _pad(observer, 20)  # 96-115
+            + _pad(agency, 40)  # 116-155
+            + _pad(serial_number, 20)  # 156-175
+            + _pad(rx_name, 20)  # 176-195
+            + _pad(rx_version, 20)  # 196-215
         )
 
-        payload = tow + wnc + fields
+        payload = tow + wnc + reserved + fields
         total_length = 8 + len(payload)
+        # 8 header + 4 TOW + 2 WNc + 2 Reserved + 200 strings = 216, which is
+        # both the parser's minimum and 4-byte aligned as every SBF block must be.
+        assert total_length == 216, total_length
+        assert total_length % 4 == 0, "SBF block length must be 4-byte aligned"
 
         # SBF header
         sync = b"$@"
@@ -75,7 +87,16 @@ class TestReceiverSetupParsing:
             rx_version="5.5.2",
         )
 
-        # Mock _send_sbf_request to return our test block
+        # `_query_receiver_setup` tries an UNAUTHENTICATED request first (the
+        # fw 5.7.0 bootstrap added in ee09519: pre-5.7 receivers are fully open,
+        # and the fw version is itself what decides whether to authenticate).
+        # `_send_sbf_request` is only the authenticated fallback, so stubbing it
+        # alone left the real unauthenticated call to run — it returned None off
+        # the network, and with no credentials configured the method bailed out
+        # before ever reaching the stub.
+        extractor._request_receiver_setup_unauthenticated = MagicMock(
+            return_value=sbf_data
+        )
         extractor._send_sbf_request = MagicMock(return_value=sbf_data)
 
         result = extractor._query_receiver_setup()
