@@ -80,27 +80,12 @@ from tostools.core.agencies import (
     station_role_orgs as _station_role_orgs,  # noqa: F401 — re-export
 )
 
-
-def find_previous_site_log(out_dir: Path, nine_char: str, current_date: str) -> str:
-    """The latest dated site log for ``nine_char`` older than ``current_date``.
-
-    The M3G convention is a dated series (``rhof00isl_20240827.log``); §0
-    "Previous Site Log" chains each log to its predecessor. Lexicographic sort ==
-    chronological for ``YYYYMMDD`` names; the current date's own file is excluded
-    so a same-day regeneration doesn't reference itself. Empty string when no
-    prior log exists (first log in the series).
-    """
-    prefix = nine_char.lower()
-    current_name = f"{prefix}_{current_date}.log"
-    try:
-        names = sorted(
-            p.name
-            for p in Path(out_dir).glob(f"{prefix}_*.log")
-            if p.name < current_name
-        )
-    except OSError:
-        return ""
-    return names[-1] if names else ""
+# find_previous_site_log moved to tostools.core.site_log 2026-08-23 so both
+# site-log callers share one dated-series implementation. Re-exported: this
+# module's own tests import it from here.
+from tostools.core.site_log import (
+    find_previous_site_log,  # noqa: F401 — re-export
+)
 
 
 def _normalize_sitelog(text: str) -> str:
