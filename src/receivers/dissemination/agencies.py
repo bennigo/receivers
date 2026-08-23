@@ -1,190 +1,38 @@
-"""Agency reference data for EPOS dissemination (deployed config).
+"""Agency reference data — re-exported from tostools.
 
-The RINEX header OBSERVER/AGENCY and the IGS site-log §11/§12/§13 need each station's
-agency in **English**, with an abbreviation / URL / generic GNSS-team email — none of
-which a TOS *contact entity* can carry (single Icelandic ``name``, no english-name /
-abbreviation / url field). So a curated ``agencies.yaml`` supplies the presentation,
-while TOS contact **roles** say which agency plays each part (see
-``docs/architecture/epos-observer-agency-and-sitelog.md``).
+The implementation moved to :mod:`tostools.core.agencies` on 2026-08-23.
 
-``agencies.yaml`` is a **deployed config file** — it lives in ``gps-config-data`` under
-version control and is synced to ``~/.config/gpsconfig/`` (or ``GPS_CONFIG_PATH``), the
-same mechanism as ``stations.cfg`` / ``sync.yaml``. This module loads it and resolves a
-TOS owner organization → :class:`AgencyInfo`, with the IMO default for the operator /
-data-center roles a station may not carry.
+It had to: both site-log callers need it, and only one could reach it here.
+``tosGPS sitelog`` could not import from receivers (receivers depends on
+tostools, not the reverse), so it silently fell back to the renderer's legacy
+TOS-contact path and produced a **different** §11/§12/§13 from the block
+actually published to M3G — a single-line mailing address instead of the IGS
+continuation lines, among others. Duplicating the resolver into tostools would
+have created a second implementation to drift; moving it and re-exporting here
+keeps one.
+
+This module is kept as a shim so existing imports
+(``from .agencies import AgencyResolver``, and the tests that import
+``receivers.dissemination.agencies``) continue to work unchanged. Prefer
+importing from ``tostools.core.agencies`` in new code.
 """
 
 from __future__ import annotations
 
-import logging
-import os
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Optional
+from tostools.core.agencies import (  # noqa: F401 — re-export
+    AgencyInfo,
+    AgencyResolver,
+    agency_dict,
+    default_agencies_path,
+    resolve_sitelog_agencies,
+    station_role_orgs,
+)
 
-logger = logging.getLogger("receivers.dissemination.agencies")
-
-
-def default_agencies_path() -> Path:
-    """``agencies.yaml`` in ``GPS_CONFIG_PATH`` (else ``~/.config/gpsconfig``).
-
-    Mirrors :func:`receivers.archive.config._default_config_path` for ``sync.yaml`` so
-    the whole config set resolves the same way.
-    """
-    base = os.getenv("GPS_CONFIG_PATH")
-    root = Path(base) if base else Path.home() / ".config" / "gpsconfig"
-    return root / "agencies.yaml"
-
-
-@dataclass(frozen=True)
-class AgencyInfo:
-    """One agency's render data (from ``agencies.yaml``).
-
-    English fields (``english_name`` / ``abbrev``) are the international IGS/EPOS site-log
-    forms; ``observer`` / ``agency_label`` are the RINEX header strings. ``address`` is a
-    tuple of mailing-address lines (site-log Mailing Address is multi-line).
-    """
-
-    org: str
-    """The Icelandic TOS org key this entry resolves (contact.owner.organization)."""
-    english_name: str
-    icelandic_name: str = ""
-    department_en: str = ""
-    department_is: str = ""
-    abbrev: str = ""
-    """English preferred abbreviation (site-log Preferred Abbreviation)."""
-    abbrev_is: str = ""
-    observer: str = ""
-    """RINEX OBSERVER (e.g. ``GNSSatIMO``)."""
-    agency_label: str = ""
-    """RINEX AGENCY (≤40 chars, e.g. ``Vedurstofa Islands``)."""
-    address: tuple[str, ...] = ()
-    contact_name: str = ""
-    phone: str = ""
-    email: str = ""
-    url: str = ""
-    dc_label: str = ""
-    """Short label used in site-log §13 Data Center fields (defaults to ``abbrev``;
-    NATT overrides — the user-facing short name is NATT, not the EN abbrev NSII)."""
-
-    @property
-    def rinex_agency(self) -> str:
-        """The RINEX AGENCY string (A40 field). Prefer the full English
-        institutional name for a human-readable header; fall back to the short
-        ``agency_label`` (else ``abbrev``) only when the full name would overflow
-        the 40-char field (e.g. IES's "Institute of Earth Sciences, University of
-        Iceland")."""
-        name = (self.english_name or "").strip()
-        if name and len(name) <= 40:
-            return name
-        return (self.agency_label or self.abbrev or name).strip()
-
-
-class AgencyResolver:
-    """Resolve a TOS owner organization → :class:`AgencyInfo` via ``agencies.yaml``.
-
-    Exact-match by org string; :meth:`resolve` returns None for an unknown org (the
-    caller then uses the config/hardcoded default). The operator / data-center
-    **defaults** (IMO) back the site-log §11/§13 when a station carries no operator /
-    data-owner role — see the role-guided model in the design doc.
-    """
-
-    def __init__(
-        self, agencies: dict[str, AgencyInfo], defaults: dict[str, str]
-    ) -> None:
-        self._by_org = agencies
-        self._defaults = defaults
-
-    # -- construction ------------------------------------------------------
-    @classmethod
-    def load(cls, path: Optional[Path] = None) -> AgencyResolver:
-        """Load from ``agencies.yaml``; a missing/empty file yields an empty resolver.
-
-        Non-fatal by design: the config is optional infrastructure, so a missing file
-        must not crash dissemination — callers fall back to their config defaults.
-        """
-        p = path or default_agencies_path()
-        if not p.is_file():
-            logger.warning("agencies.yaml not found at %s — using empty resolver", p)
-            return cls({}, {})
-        try:
-            import yaml
-
-            raw = yaml.safe_load(p.read_text()) or {}
-        except Exception as exc:  # noqa: BLE001 - bad config ⇒ empty, never fatal
-            logger.warning("could not read %s (%s) — using empty resolver", p, exc)
-            return cls({}, {})
-        return cls.from_dict(raw)
-
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> AgencyResolver:
-        """Build from a parsed ``agencies.yaml`` mapping (testable offline)."""
-        agencies: dict[str, AgencyInfo] = {}
-        for org, d in (raw.get("agencies") or {}).items():
-            d = d or {}
-            addr = d.get("address") or ()
-            if isinstance(addr, str):
-                addr = (addr,)
-            agencies[org] = AgencyInfo(
-                org=org,
-                english_name=str(d.get("english_name", "")),
-                icelandic_name=str(d.get("icelandic_name", "")),
-                department_en=str(d.get("department_en", "")),
-                department_is=str(d.get("department_is", "")),
-                abbrev=str(d.get("abbrev", "")),
-                abbrev_is=str(d.get("abbrev_is", "")),
-                observer=str(d.get("observer", "")),
-                agency_label=str(d.get("agency_label", "")),
-                address=tuple(str(x) for x in addr),
-                contact_name=str(d.get("contact_name", "")),
-                phone=str(d.get("phone", "")),
-                email=str(d.get("email", "")),
-                url=str(d.get("url", "")),
-                dc_label=str(d.get("dc_label") or d.get("abbrev", "")),
-            )
-        defaults = {k: str(v) for k, v in (raw.get("defaults") or {}).items()}
-        return cls(agencies, defaults)
-
-    # -- resolution --------------------------------------------------------
-    def resolve(self, org: Optional[str]) -> Optional[AgencyInfo]:
-        """The :class:`AgencyInfo` for ``org``, or None if unknown/blank."""
-        if not org:
-            return None
-        return self._by_org.get(org.strip())
-
-    def default_agency(self) -> Optional[AgencyInfo]:
-        """Fallback :class:`AgencyInfo` for a station with no resolvable owner org —
-        IMO, which owns and operates the fleet (``defaults.operator_agency``). Drives
-        the RINEX OBSERVER/AGENCY default, so both come from agencies.yaml (English
-        name via :attr:`AgencyInfo.rinex_agency`), not a sync.yaml literal."""
-        return self.resolve(self._defaults.get("operator_agency"))
-
-    def resolve_by_code(self, code: Optional[str]) -> Optional[AgencyInfo]:
-        """The :class:`AgencyInfo` whose English ``abbrev`` or Icelandic
-        ``abbrev_is`` matches ``code`` (case-insensitive) — the stations.cfg
-        ``station_operator`` key (e.g. ``IMO`` / ``NATT`` / ``IES``). This is the
-        offline join used by the daily convert (no TOS call), the mirror of
-        :meth:`resolve` which keys on the TOS owner-org string. None if
-        unknown/blank."""
-        if not code:
-            return None
-        c = code.strip().upper()
-        for info in self._by_org.values():
-            if c in {
-                (info.abbrev or "").strip().upper(),
-                (info.abbrev_is or "").strip().upper(),
-            }:
-                return info
-        return None
-
-    def operator_default(self) -> Optional[AgencyInfo]:
-        """§11 On-Site POC default (``defaults.operator_agency`` → its AgencyInfo)."""
-        return self.resolve(self._defaults.get("operator_agency"))
-
-    def data_center_default(self) -> Optional[AgencyInfo]:
-        """§13 Primary Data Center default (``defaults.data_center_agency``)."""
-        return self.resolve(self._defaults.get("data_center_agency"))
-
-    def url_default(self) -> str:
-        """§13 URL for More Information (``defaults.url``)."""
-        return self._defaults.get("url", "")
+__all__ = [
+    "AgencyInfo",
+    "AgencyResolver",
+    "agency_dict",
+    "default_agencies_path",
+    "resolve_sitelog_agencies",
+    "station_role_orgs",
+]
