@@ -59,97 +59,20 @@ def resolve_sitelogs_repo(override: Optional[str] = None) -> Path:
     return Path(raw or DEFAULT_SITELOGS_REPO).expanduser()
 
 
-def _agency_dict(info: Any) -> dict[str, Any]:
-    """AgencyInfo → the plain dict :func:`generate_igs_site_log` renders (§11/§12)."""
-    return {
-        "name_lines": [ln for ln in (info.english_name, info.department_en) if ln],
-        "abbrev": info.abbrev,
-        "address": list(info.address),
-        "contact_name": info.contact_name,
-        "phone": info.phone,
-        "email": info.email,
-    }
-
-
-def _station_role_orgs(client: Any, meta: dict[str, Any]) -> dict[str, str]:
-    """The station's contact-role → organization map from raw TOS contacts.
-
-    Reads ``get_contacts(id_entity)`` (raw rows) rather than the processed
-    ``meta['contact']`` dict — the processed view keeps one contact per bucket and
-    its 'eigandi' substring match cannot distinguish *Eigandi stöðvar* (station
-    owner) from *Eigandi gagna* (data owner). Best-effort: any failure → empty map
-    (the IMO defaults then apply).
-    """
-    roles: dict[str, str] = {}
-    try:
-        rows = client.get_contacts(meta.get("id_entity")) or []
-    except Exception as exc:  # noqa: BLE001 - roles are enrichment, not required
-        logger.warning("site log: contact-role lookup failed: %s", exc)
-        return roles
-    for row in rows:
-        role = f"{row.get('role_is') or ''} {row.get('role') or ''}".lower()
-        org = (row.get("organization") or row.get("name") or "").strip()
-        if not org:
-            continue
-        if "eigandi gagna" in role or "data_owner" in role or "data owner" in role:
-            roles.setdefault("data_owner", org)
-        elif "eigandi" in role or "owner" in role:
-            roles.setdefault("owner", org)
-        elif "rekstrar" in role or "operator" in role or "tengili" in role:
-            roles.setdefault("operator", org)
-    return roles
-
-
-def resolve_sitelog_agencies(
-    client: Any, meta: dict[str, Any], resolver: Any = None
-) -> dict[str, Any]:
-    """Role-guided §11/§12/§13 agency data (TOS roles = who, agencies.yaml = render).
-
-    - §11 On-Site POC        ← always the IMO default: IMO runs the network and
-      disseminates the data, so it is the on-site/data point of contact even when
-      TOS records another org as Rekstraraðili (that upkeep role belongs in §12).
-    - §12 Responsible Agency ← owner role — only when it differs from §11.
-    - §13 Primary DC         ← data-owner role, else the IMO default;
-      Secondary DC           ← owner (when ≠ primary); URL ← agencies.yaml default.
-
-    Unknown-org fallbacks keep the log renderable: an owner org missing from
-    agencies.yaml is emitted by its raw TOS name (never dropped silently).
-    """
-    from .agencies import AgencyResolver
-
-    if resolver is None:
-        resolver = AgencyResolver.load()
-    roles = _station_role_orgs(client, meta)
-
-    poc_info = resolver.operator_default()
-    dc_info = (
-        resolver.resolve(roles.get("data_owner")) or resolver.data_center_default()
-    )
-    owner_org = roles.get("owner") or ""
-    owner_info = resolver.resolve(owner_org)
-
-    agencies: dict[str, Any] = {
-        "poc": _agency_dict(poc_info) if poc_info else None,
-        "responsible": None,
-        "data_center": {
-            "primary": dc_info.dc_label if dc_info else "",
-            "secondary": "",
-            "url": resolver.url_default(),
-        },
-    }
-    # §12 only when the responsible (owner) agency differs from the §11 contact.
-    poc_org = poc_info.org if poc_info else ""
-    if owner_org and owner_org != poc_org:
-        agencies["responsible"] = (
-            _agency_dict(owner_info) if owner_info else {"name_lines": [owner_org]}
-        )
-    # §13 secondary = the owner, when it isn't already the primary data center.
-    dc_org = dc_info.org if dc_info else ""
-    if owner_org and owner_org != dc_org:
-        agencies["data_center"]["secondary"] = (
-            owner_info.dc_label if owner_info else owner_org
-        )
-    return agencies
+# _agency_dict / _station_role_orgs / resolve_sitelog_agencies moved to
+# tostools.core.agencies on 2026-08-23 so `tosGPS sitelog` can reach them too —
+# it could not import from receivers, so it fell back to the renderer's legacy
+# TOS-contact path and produced a different §11/§12/§13 from what is published.
+# Re-exported under the old names; this module's callers are unchanged.
+from tostools.core.agencies import (  # noqa: E402 — after the module docstring
+    agency_dict as _agency_dict,  # noqa: F401 — re-export
+)
+from tostools.core.agencies import (
+    resolve_sitelog_agencies,  # noqa: F401 — re-export
+)
+from tostools.core.agencies import (
+    station_role_orgs as _station_role_orgs,  # noqa: F401 — re-export
+)
 
 
 def find_previous_site_log(out_dir: Path, nine_char: str, current_date: str) -> str:
