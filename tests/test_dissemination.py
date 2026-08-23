@@ -61,8 +61,7 @@ def _target(tmp_root, **over):
 class TestConfig:
     def test_loads_only_dissemination_tier(self, tmp_path):
         cfg = tmp_path / "sync.yaml"
-        cfg.write_text(
-            """
+        cfg.write_text("""
 targets:
   - name: imo_archive
     tier: archive
@@ -93,8 +92,7 @@ targets:
         hatanaka: true
         compression: gz
       dir_template: "%Y/#b/{station}/15s_24hr/rinex/"
-"""
-        )
+""")
         targets = load_dissemination_config(cfg)
         assert [t.name for t in targets] == ["epos"]  # archive tier filtered out
         t = targets[0]
@@ -1001,8 +999,7 @@ class TestRawFallback:
 class TestDisseminateJob:
     def _active_cfg(self, tmp_path):
         cfg = tmp_path / "sync.yaml"
-        cfg.write_text(
-            """
+        cfg.write_text("""
 targets:
   - name: epos
     tier: dissemination
@@ -1012,8 +1009,7 @@ targets:
     dest: /tmp/epos_stage
     source_root: /mnt/data/gpsdata
     sessions: [15s_24hr]
-"""
-        )
+""")
         return cfg
 
     def test_no_active_target_is_noop(self, tmp_path):
@@ -2082,9 +2078,7 @@ class TestAgencyResolver:
         from receivers.dissemination.agencies import AgencyResolver
 
         p = tmp_path / "agencies.yaml"
-        p.write_text(
-            textwrap.dedent(
-                """
+        p.write_text(textwrap.dedent("""
                 defaults: {url: "https://x"}
                 agencies:
                   "Org A":
@@ -2093,9 +2087,7 @@ class TestAgencyResolver:
                     observer: "GNSSatA"
                     agency_label: "A"
                     address: "Single Line"
-                """
-            )
-        )
+                """))
         a = AgencyResolver.load(p).resolve("Org A")
         assert a.english_name == "A EN"
         assert a.address == ("Single Line",)  # scalar promoted to 1-tuple
@@ -2319,8 +2311,12 @@ class TestSitelogDatedSeries:
             agency_resolver=resolver,
         )
         assert p1 is not None and p1.name == "rhof00isl_20240827.log"
-        assert (
-            "Previous Site Log       : \n" in p1.read_text()
+        # IGS site logs are written latin-1 (site_log.py:63), deliberately —
+        # `read_text()` defaults to UTF-8 and blows up on the 'ö' in the
+        # Icelandic agency block. That is what broke this test when the corpus
+        # moved UTF-8 -> ISO-8859 on 2026-08-19; the writer is right.
+        assert "Previous Site Log       : \n" in p1.read_text(
+            encoding="latin-1"
         )  # first in series (empty; M3G keeps trailing space)
 
         p2 = generate_site_log(
@@ -2331,7 +2327,9 @@ class TestSitelogDatedSeries:
             agency_resolver=resolver,
         )
         assert p2 is not None and p2.name == "rhof00isl_20241011.log"
-        assert "Previous Site Log       : rhof00isl_20240827.log" in p2.read_text()
+        assert "Previous Site Log       : rhof00isl_20240827.log" in p2.read_text(
+            encoding="latin-1"
+        )
 
     def test_plain_name_still_available(self, tmp_path):
         from receivers.dissemination.agencies import AgencyResolver
