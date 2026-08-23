@@ -164,9 +164,28 @@ def test_crash_mid_finalize_leaves_no_partial_in_cache(
             set_header=True,
         )
 
-    # No plain obs left anywhere under the cache (the partial died in the temp dir)
-    plain = [p for p in cache.rglob("*.rnx") if p.is_file()]
-    assert plain == [], f"partial obs leaked into cache: {plain}"
+    # The invariant is "no INCOMPLETE obs in the cache", not "no obs at all".
+    #
+    # This used to assert `cache.rglob("*.rnx") == []`. That was right when the
+    # cache had one layer, and became wrong with the decode/head split: the
+    # decode layer legitimately keeps the fully decoded .rnx so a later --force
+    # can re-head without paying for another raw decode. Its presence is the
+    # point of that design, not a leak.
+    #
+    # Verified rather than assumed: at this point the decode entry is complete
+    # (END OF HEADER present, no "TRUNCATED" marker) — the half-written file
+    # died in the same-fs temp dir before atomic placement, which is exactly
+    # what the test is here to prove.
+    partial = [p for p in cache.rglob("*.rnx") if p.is_file() and not _obs_complete(p)]
+    assert partial == [], f"partial obs leaked into cache: {partial}"
+
+    # And the truncation the stub wrote must not be anywhere in the cache at all.
+    leaked = [
+        p
+        for p in cache.rglob("*")
+        if p.is_file() and "TRUNCATED" in p.read_text(errors="ignore")
+    ]
+    assert leaked == [], f"truncated content leaked into cache: {leaked}"
 
 
 def test_poisoned_cache_hit_is_evicted_and_reconverted(stub_convert, tmp_path):
