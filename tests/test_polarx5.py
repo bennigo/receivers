@@ -24,7 +24,15 @@ class TestPolaRX5:
         assert self.receiver.station_id == "REYK"
         assert self.receiver.ip_number == "10.4.1.100"
         assert self.receiver.ip_port == 21
-        assert not self.receiver.pasv  # 10.4.1.x should use non-passive
+        # FTP mode is NOT inferred from the subnet any more. This line used to
+        # assert `not pasv` with the comment "10.4.1.x should use non-passive";
+        # b9c8eb2 removed that heuristic and defaulted auto/unset to passive,
+        # because almost all stations sit behind NAT routers where active-mode
+        # PORT commands fail on the IP mismatch. The full contract (which
+        # section ftp_mode is read from, and the `receiver.ftp_mode` decoy) is
+        # already covered by TestPolaRX5FtpModeFromStationConfig below — not
+        # repeated here.
+        assert self.receiver.pasv
 
     def test_init_missing_config(self):
         """Test initialization with missing configuration."""
@@ -79,15 +87,58 @@ class TestPolaRX5:
         assert status["error"] is not None
 
     def test_get_health_status(self):
-        """Test health status reporting."""
-        with patch.object(self.receiver, "get_connection_status") as mock_conn:
-            mock_conn.return_value = {"receiver": True, "router": True}
+        """Test health status reporting.
 
+        This used to stub only `get_connection_status`, which was enough when
+        health was derived from it alone. It no longer is: `get_health_status`
+        builds its own PolaRX5TCPExtractor and probes ports itself. With only
+        the old stub the test **opened a real TCP connection to 10.4.1.100:28784**
+        — a production receiver — and then asserted on whatever the sandbox's
+        failure looked like ("warning"). A unit test must not touch the network,
+        and on a host that can route to 10.4.1.x this one reached live hardware.
+
+        Both collaborators are stubbed at their source modules, since
+        `get_health_status` imports them lazily inside the call.
+        """
+        healthy_ports = {
+            name: {"status": "ok", "open": True} for name in ("ftp", "http", "control")
+        }
+        extractor = Mock()
+        extractor._check_port_status.return_value = healthy_ports
+        extractor.extract_health_data.return_value = {
+            "metrics": {"ports": healthy_ports},
+            "data_quality": {},
+        }
+
+        # The ping result is formatted with `:.1f`, so a bare Mock raises
+        # TypeError and the whole TCP branch is skipped — the stub needs real
+        # numbers, not just truthiness.
+        ping_result = Mock(
+            accessible=True, response_time_ms=12.5, details={"packet_loss": 0}
+        )
+        checker = Mock()
+        checker.check_ping.return_value = ping_result
+
+        with (
+            patch.object(
+                self.receiver,
+                "get_connection_status",
+                return_value={"receiver": True, "router": True},
+            ),
+            patch(
+                "receivers.health.polarx5_tcp_extractor.PolaRX5TCPExtractor",
+                return_value=extractor,
+            ),
+            patch(
+                "receivers.health.connection_checker.ConnectionChecker",
+                return_value=checker,
+            ),
+        ):
             health = self.receiver.get_health_status()
 
-            assert health["station_id"] == "REYK"
-            assert health["receiver_type"] == "PolaRX5"
-            assert health["overall_status"] == "healthy"
+        assert health["station_id"] == "REYK"
+        assert health["receiver_type"] == "PolaRX5"
+        assert health["overall_status"] == "healthy"
 
     def test_is_gz_file(self):
         """Test gzip file detection."""

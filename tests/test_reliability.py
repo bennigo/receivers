@@ -265,11 +265,12 @@ class TestDiskDataRouting:
         """Verify disk data goes to health_data['metrics']['disk']."""
         from receivers.health.polarx5_tcp_extractor import PolaRX5TCPExtractor
 
-        ext = PolaRX5TCPExtractor.__new__(PolaRX5TCPExtractor)
-        ext.host = "127.0.0.1"
-        ext.port = 28784
-        ext.station_id = "TEST"
-        ext.timeout = 5
+        # Construct normally rather than via __new__ + hand-set attributes.
+        # __init__ does no I/O (it only assigns), and bypassing it meant every
+        # new field added there broke this test from a distance — that is how it
+        # ended up failing on `_auth_failed`, a flag added by the fw 5.7.0 work
+        # and read unconditionally by extract_health_data.
+        ext = PolaRX5TCPExtractor("127.0.0.1", "TEST", port=28784, timeout=5)
         ext.logger = MagicMock()
         ext.metric_checker = MagicMock()
 
