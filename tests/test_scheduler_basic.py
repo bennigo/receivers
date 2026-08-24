@@ -625,7 +625,23 @@ class TestOutageRecovery:
 @pytest.mark.unit
 @pytest.mark.scheduler
 class TestRinexAfterDownload:
-    """Phase 1: Test that RINEX conversion uses correct download result key."""
+    """The live download path must hand RINEX the files it actually got.
+
+    The original bug this class guards: the code read an ``archived_files``
+    key that the download result does not have, so RINEX silently never
+    ran. The rule is still `result["downloaded_files"]` — but the live path
+    no longer calls `_run_rinex_conversion`. It submits an ASYNC conversion
+    (`rinex.async_converter.submit_rinex_conversion`), and
+    `_run_rinex_conversion` survives only for the backfill path, which its
+    own docstring states (bulk_scheduler.py: "called only from the backfill
+    path (never the inline submit_rinex_* pool)").
+
+    Every test here patched `_run_rinex_conversion`, so they asserted
+    against a function this path stopped calling: one failed, and the three
+    `assert_not_called()` ones passed VACUOUSLY — green while checking
+    nothing. Repointed at the submit seam, so they constrain the live path
+    again.
+    """
 
     def _patch_download_job(
         self,
@@ -633,10 +649,8 @@ class TestRinexAfterDownload:
         station_id="ELDC",
         session_type="1Hz_1hr",
         run_rinex=True,
-        mock_rinex=None,
-        mock_health=None,
     ):
-        """Helper: run _download_station_data_job with mocked internals."""
+        """Run _download_station_data_job with mocked internals."""
         from receivers.scheduling.bulk_scheduler import _download_station_data_job
 
         mock_receiver = MagicMock()
@@ -662,51 +676,61 @@ class TestRinexAfterDownload:
 
         return station_config
 
-    @patch("receivers.scheduling.bulk_scheduler._run_rinex_conversion")
+    @patch("receivers.rinex.async_converter.submit_rinex_conversion")
     @patch("receivers.scheduling.bulk_scheduler._extract_and_store_health_data")
-    def test_rinex_called_with_downloaded_files(self, mock_health, mock_rinex):
-        """Verify _run_rinex_conversion receives files from 'downloaded_files' key."""
-        fake_files = ["/data/2026/feb/ELDC/1Hz_1hr/raw/ELDC202602101400b.sbf.gz"]
+    def test_rinex_submitted_after_a_successful_download(self, _health, mock_submit):
         mock_result = {
             "status": "completed",
             "files_downloaded": 1,
             "duration": 5.0,
-            "downloaded_files": fake_files,
-            # Note: 'archived_files' key does NOT exist — that was the bug
+            "downloaded_files": [
+                "/data/2026/feb/ELDC/1Hz_1hr/raw/ELDC202602101400b.sbf.gz"
+            ],
         }
+        self._patch_download_job(mock_result, session_type="1Hz_1hr", run_rinex=True)
 
-        station_config = self._patch_download_job(
-            mock_result,
-            session_type="1Hz_1hr",
-            run_rinex=True,
-        )
+        mock_submit.assert_called_once()
+        args = mock_submit.call_args[0]
+        assert args[0] == "ELDC"
+        assert args[1] == "1Hz_1hr"
+        # The async converter re-derives the file list from the time window,
+        # so the raw paths are NOT passed — only the window is.
+        assert args[2] == datetime(2026, 2, 10)
+        assert args[3] == datetime(2026, 2, 10, 1)
 
-        # RINEX should be called with the downloaded_files list
-        mock_rinex.assert_called_once()
-        call_args = mock_rinex.call_args[0]
-        assert call_args[0] == "ELDC"  # station_id
-        assert call_args[1] == "1Hz_1hr"  # session_type
-        assert call_args[2] == fake_files  # raw_files
-        assert call_args[3] == station_config  # station_config
-
-    @patch("receivers.scheduling.bulk_scheduler._run_rinex_conversion")
+    @patch("receivers.rinex.async_converter.submit_rinex_conversion")
     @patch("receivers.scheduling.bulk_scheduler._extract_and_store_health_data")
-    def test_rinex_not_called_when_disabled(self, _mock_health, mock_rinex):
-        """Verify RINEX is NOT called when run_rinex=False."""
+    def test_archived_files_key_does_not_trigger_rinex(self, _health, mock_submit):
+        """The original bug, pinned: the gate reads `downloaded_files`.
+
+        A result carrying only `archived_files` must not look like a
+        successful download to the RINEX gate — reading that key is what
+        made RINEX silently never run.
+        """
+        mock_result = {
+            "status": "completed",
+            "files_downloaded": 1,
+            "duration": 5.0,
+            "archived_files": ["/data/some/file.sbf.gz"],
+        }
+        self._patch_download_job(mock_result, run_rinex=True)
+        mock_submit.assert_not_called()
+
+    @patch("receivers.rinex.async_converter.submit_rinex_conversion")
+    @patch("receivers.scheduling.bulk_scheduler._extract_and_store_health_data")
+    def test_rinex_not_submitted_when_disabled(self, _health, mock_submit):
         mock_result = {
             "status": "completed",
             "files_downloaded": 1,
             "duration": 5.0,
             "downloaded_files": ["/data/some/file.sbf.gz"],
         }
-
         self._patch_download_job(mock_result, run_rinex=False)
-        mock_rinex.assert_not_called()
+        mock_submit.assert_not_called()
 
-    @patch("receivers.scheduling.bulk_scheduler._run_rinex_conversion")
+    @patch("receivers.rinex.async_converter.submit_rinex_conversion")
     @patch("receivers.scheduling.bulk_scheduler._extract_and_store_health_data")
-    def test_rinex_not_called_on_failed_download(self, _mock_health, mock_rinex):
-        """Verify RINEX is NOT called when download fails."""
+    def test_rinex_not_submitted_on_failed_download(self, _health, mock_submit):
         mock_result = {
             "status": "failed",
             "files_downloaded": 0,
@@ -714,33 +738,24 @@ class TestRinexAfterDownload:
             "downloaded_files": [],
             "error_message": "Connection refused",
         }
+        self._patch_download_job(mock_result, session_type="15s_24hr", run_rinex=True)
+        mock_submit.assert_not_called()
 
-        self._patch_download_job(
-            mock_result,
-            session_type="15s_24hr",
-            run_rinex=True,
-        )
-        mock_rinex.assert_not_called()
-
-    @patch("receivers.scheduling.bulk_scheduler._run_rinex_conversion")
+    @patch("receivers.rinex.async_converter.submit_rinex_conversion")
     @patch("receivers.scheduling.bulk_scheduler._extract_and_store_health_data")
-    def test_rinex_not_called_with_empty_files(self, _mock_health, mock_rinex):
-        """Verify RINEX is NOT called when downloaded_files is empty."""
+    def test_rinex_not_submitted_with_empty_files(self, _health, mock_submit):
         mock_result = {
             "status": "up_to_date",
             "files_downloaded": 0,
             "duration": 1.0,
             "downloaded_files": [],
         }
-
         self._patch_download_job(mock_result, run_rinex=True)
-        mock_rinex.assert_not_called()
+        mock_submit.assert_not_called()
 
-    @patch("receivers.scheduling.bulk_scheduler._run_rinex_conversion")
+    @patch("receivers.rinex.async_converter.submit_rinex_conversion")
     @patch("receivers.scheduling.bulk_scheduler._extract_and_store_health_data")
-    def test_health_extraction_still_uses_downloaded_files(
-        self, mock_health, _mock_rinex
-    ):
+    def test_health_extraction_still_uses_downloaded_files(self, mock_health, _submit):
         """Verify health extraction (status_1hr) still works correctly."""
         status_files = [
             "/data/2026/feb/ELDC/status_1hr/raw/ELDC202602101400_status.sbf.gz"
@@ -751,14 +766,10 @@ class TestRinexAfterDownload:
             "duration": 3.0,
             "downloaded_files": status_files,
         }
-
         self._patch_download_job(
-            mock_result,
-            session_type="status_1hr",
-            run_rinex=False,
+            mock_result, session_type="status_1hr", run_rinex=False
         )
 
-        # Health extraction should be called with downloaded_files for status_1hr
         mock_health.assert_called_once()
         call_args = mock_health.call_args[0]
         assert call_args[0] == "ELDC"
@@ -1095,12 +1106,29 @@ class TestPipelineTracking:
         assert stats["by_session_type"]["15s_24hr"] == 2
         assert stats["by_session_type"]["1Hz_1hr"] == 1
 
-    @patch("receivers.scheduling.bulk_scheduler._run_rinex_conversion")
+    @patch("receivers.rinex.async_converter.submit_rinex_conversion")
     @patch("receivers.scheduling.bulk_scheduler._extract_and_store_health_data")
     def test_pipeline_created_during_download(
-        self, _mock_health, _mock_rinex, tmp_path
+        self, _mock_health, mock_submit, tmp_path
     ):
-        """Verify pipeline job is created and tracked during download."""
+        """Verify pipeline job is created and tracked during download.
+
+        The RINEX stage does not complete inline — the live path submits an
+        async conversion and marks the stage complete from the future's
+        done-callback. So the seam to drive is
+        `submit_rinex_conversion`, returning an ALREADY-RESOLVED future:
+        `add_done_callback` then fires immediately, in this thread, exactly
+        as it does when a real conversion finishes.
+
+        This test used to patch `_run_rinex_conversion`, which the live path
+        stopped calling — so nothing ever resolved the RINEX stage and
+        `complete_jobs` was 0.
+        """
+        from concurrent.futures import Future
+
+        resolved: Future = Future()
+        resolved.set_result({"output_files": []})
+        mock_submit.return_value = resolved
         import receivers.scheduling.bulk_scheduler as bs_module
         from receivers.scheduling.bulk_scheduler import (
             _download_station_data_job,
