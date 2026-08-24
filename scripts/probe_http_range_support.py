@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Test script to check if Trimble NetR9 HTTP API supports range requests.
+"""Probe whether a Trimble NetR9's HTTP API honours Range requests.
 
-This script tests whether the NetR9 receiver responds to HTTP Range headers,
-which would enable resume functionality for interrupted downloads.
+Answers whether resume-on-interrupt is implementable for a given receiver.
+It talks to the LIVE receiver over the station network, so it is a manual
+diagnostic, not a test — it lived in ``tests/`` as
+``test_http_range_support.py`` until 2026-08-24, where pytest collected
+``test_range_support`` as a test case, could not supply its ``station_id``
+argument as a fixture, and errored on every run.
 
 Usage:
-    python tests/test_http_range_support.py STATION_ID
+    python scripts/probe_http_range_support.py STATION_ID
 
 Example:
-    python tests/test_http_range_support.py MANA
+    python scripts/probe_http_range_support.py MANA
 """
 
 import sys
@@ -22,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from receivers.config_utils import get_station_config
 
 
-def test_range_support(station_id: str):
+def probe_range_support(station_id: str):
     """Test if a NetR9 receiver supports HTTP range requests.
 
     Args:
@@ -154,13 +158,13 @@ def test_range_support(station_id: str):
 
 def main():
     if len(sys.argv) != 2:
-        print("Usage: python test_http_range_support.py STATION_ID")
-        print("Example: python test_http_range_support.py MANA")
+        print("Usage: python scripts/probe_http_range_support.py STATION_ID")
+        print("Example: python scripts/probe_http_range_support.py MANA")
         sys.exit(1)
 
     station_id = sys.argv[1].upper()
 
-    result = test_range_support(station_id)
+    result = probe_range_support(station_id)
 
     print()
     print("=" * 60)
