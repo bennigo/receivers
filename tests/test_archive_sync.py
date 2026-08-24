@@ -481,12 +481,22 @@ class TestEndToEndLocal:
             dst / rnx_rel
         ).read_bytes() == b"\x1f\x9d\x90r\xd2\xb8)\x83\x07\x84\x9d\x18"
 
-        # regenerate BOTH with newer content + newer mtime, re-sync.
-        write(raw_rel, b"raw v2 MUST NOT WIN", CUTOVER + timedelta(days=2))
+        # Regenerate BOTH, with a mtime of NOW.
+        #
+        # Not CUTOVER+2d, which is what this test used to do: run 1 advances
+        # the `sync_state` watermark to wall-clock now, and the next delta
+        # scan floors at `max(last_success_ts - overlap, cutover)`. A file
+        # stamped June 2026 is below that floor, so it is never scanned and
+        # the archive keeps v1 — which is correct engine behaviour, not the
+        # immutability rule this test is about. A real regeneration (a
+        # `--fix-headers` rewrite) stamps the file NOW, which is above the
+        # floor, so this is also the faithful fixture.
+        regenerated_at = datetime.now()
+        write(raw_rel, b"raw v2 MUST NOT WIN", regenerated_at)
         write(
             rnx_rel,
             b"\x1f\x9d\x90r\xd2\xb8)\x83\x07\x84\x1d\x19",
-            CUTOVER + timedelta(days=2),
+            regenerated_at,
         )  # compress(1) of b"rinex v2"
         eng.run()
 
