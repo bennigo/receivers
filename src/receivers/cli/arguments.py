@@ -1755,4 +1755,9 @@ For subcommand help: receivers <command> --help
 
     create_m3g_parser(subparsers)
 
+    # station onboard (EPOS onboarding pipeline orchestration, todo #150)
+    from .station_onboard import create_station_onboard_parser
+
+    create_station_onboard_parser(subparsers)
+
     return parser
