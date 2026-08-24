@@ -51,6 +51,8 @@ MIN_RAW_BYTES = 4096
 # (one knob: receivers.cfg [rinex] position_gate_m; default 30 m).
 STATION_GATE_M = 10.0
 
+Xyz = tuple
+
 
 def resolve_position_gate_m(override=None) -> float:
     """explicit override > receivers.cfg [rinex] position_gate_m (default 10)."""
@@ -74,6 +76,10 @@ class MovePlan:
     reasons: tuple = ()  # subset of ('wrong-date','wrong-station','wrong-ext')
     true_station: str = ""
     station_dist_m: Optional[float] = None
+    # Where the identity evidence came from: "raw teqc +meta" or
+    # "RINEX header <rel>" (the --check-station fallback for undecodable raw,
+    # e.g. Septentrio SBF where teqc +meta reports the (90,0) placeholder).
+    evidence: str = ""
 
 
 @dataclass(frozen=True)
@@ -121,6 +127,131 @@ def nearest_station(lat: float, lon: float, fleet: dict) -> tuple[Optional[str],
         if d < best_d:
             best, best_d = sta, d
     return best, best_d
+
+
+def _ecef_to_latlon(xyz) -> Optional[tuple[float, float]]:
+    """ECEF metres → (lat, lon) degrees via pyproj; ``None`` if unavailable.
+
+    Fail-open by design — a probe must never break the surrounding sweep.
+    Shared with :mod:`receivers.archive.file_identity`.
+    """
+    try:
+        import pyproj
+
+        tr = pyproj.Transformer.from_crs("EPSG:4978", "EPSG:4979", always_xy=True)
+        lon, lat, _h = tr.transform(xyz[0], xyz[1], xyz[2])
+        return (lat, lon)
+    except Exception as exc:  # noqa: BLE001 - probe is fail-open
+        logger.debug("ecef->latlon failed: %s", exc)
+        return None
+
+
+def _position_verdict(
+    lat: Optional[float],
+    lon: Optional[float],
+    path_station: str,
+    fleet: dict,
+    gate_m: float,
+) -> tuple[str, Optional[str], Optional[float]]:
+    """Classify a decoded position against the filed station.
+
+    Returns ``(verdict, nearest_station, dist_m)`` where verdict is one of:
+
+    * ``no-position`` — lat/lon unavailable (teqc gave nothing usable);
+    * ``confirmed``  — nearest station IS the filed one, within the gate;
+    * ``noisy-self`` — nearest is the filed one but outside the gate
+      (degraded single-point solution, not an identity problem);
+    * ``unknown``    — no fleet station within the gate (genuine remote
+      position, or teqc's (90,0) placeholder for undecodable raw);
+    * ``wrong``      — a DIFFERENT station's mark is within the gate (stray).
+    """
+    if lat is None or lon is None:
+        return ("no-position", None, None)
+    near, dist = nearest_station(lat, lon, fleet)
+    if near == path_station.upper():
+        return (("confirmed" if dist <= gate_m else "noisy-self"), near, dist)
+    if near is None or dist > gate_m:
+        return ("unknown", near, dist)
+    return ("wrong", near, dist)
+
+
+def _rinex_name_matches_date(name: str, station: str, claimed) -> bool:
+    """Whether a RINEX filename names ``station`` on ``claimed``'s date.
+
+    Matches both name shapes: RINEX 2 short Hatanaka
+    (``<STA>DDDn.YYD.Z`` — station + day-of-year + session digit + year + D/O)
+    and RINEX 3 long IGS (``<STA>…_YYYYDDD0000_…``). A bare ``startswith``
+    + day-of-year substring is too weak (day 123 would match ``0123``
+    inside a DOMES/marker number), so each shape is pinned to its field.
+    """
+    if not name.startswith(station):
+        return False
+    doy = claimed.timetuple().tm_yday
+    # RINEX 2 short: STA + 3-digit doy + session digit + '.' + 2-digit year
+    # + [DO] + optional .Z/.gz — e.g. VMOS0300.24D.Z
+    if (
+        len(name) >= 11
+        and name[4:7] == f"{doy:03d}"
+        and name[7].isdigit()
+        and name[8] == "."
+        and name[9:11] == f"{claimed:%y}"
+    ):
+        return True
+    # RINEX 3 long: STA + 4-char country/marker + '_R_' + YYYYDDD0000…
+    return f"_{claimed:%Y}{doy:03d}" in name
+
+
+def _read_rinex_approx_position(path: Path):
+    """(lat, lon) from a RINEX header's first APPROX POSITION XYZ, or None.
+
+    Deferred imports avoid the module-level cycle (``file_identity`` imports
+    the fleet-geometry helpers from this module).
+    """
+    from tostools.rinex.reader import read_rinex_file
+
+    from .file_identity import parse_first_approx_xyz
+
+    try:
+        content = read_rinex_file(str(path))
+    except Exception as exc:  # noqa: BLE001 - probe is fail-open
+        logger.debug("rinex fallback: cannot read %s: %s", path, exc)
+        return None
+    if not content:
+        return None
+    text = content.decode("utf-8", errors="ignore")
+    return _ecef_to_latlon(parse_first_approx_xyz(text))
+
+
+def _sibling_rinex_position(
+    root: Path, rel: str, parsed
+) -> Optional[tuple[float, float, str]]:
+    """The sibling RINEX's position for the raw file at ``rel``.
+
+    Looks in the sibling ``…/<session>/rinex/`` directory for a file naming
+    the same station + date as ``parsed.claimed``, and returns
+    ``(lat, lon, rinex_rel)`` from its first ``APPROX POSITION XYZ``.
+    ``None`` when there is no sibling tree, no date-matching file, or the
+    header is unreadable. This is the ``--check-station`` fallback for raw
+    files whose position teqc cannot decode (Septentrio SBF reports the
+    (90,0) placeholder), because the archive RINEX header carries the
+    converter-embedded position.
+    """
+    parts = rel.split("/")
+    if len(parts) != 6 or parts[4] != "raw":
+        return None
+    station = parts[2]
+    rinex_dir = Path(root) / "/".join(parts[:4] + ["rinex"])
+    if not rinex_dir.is_dir():
+        return None
+    for f in sorted(rinex_dir.iterdir()):
+        if not f.is_file():
+            continue
+        if not _rinex_name_matches_date(f.name, station, parsed.claimed):
+            continue
+        latlon = _read_rinex_approx_position(f)
+        if latlon is not None:
+            return (latlon[0], latlon[1], str(f.relative_to(root)))
+    return None
 
 
 def _expected_rel(
@@ -217,12 +348,32 @@ def plan_relocations(
         reasons: list[str] = []
         path_station = rel.split("/")[2] if len(rel.split("/")) == 6 else parsed.station
 
-        # Station identity: the decoded position decides.
+        # Station identity: the decoded position decides — with a RINEX-header
+        # fallback when the raw decode cannot (Septentrio SBF: teqc +meta
+        # reports the (90,0) placeholder for every .sbf.gz, so every SBF
+        # station otherwise reads 'unknown-station' — the VMOS/GRVV class).
         true_station = ""
         dist: Optional[float] = None
-        if verify_station and meta.lat is not None and meta.lon is not None:
-            near, dist = nearest_station(meta.lat, meta.lon, fleet)
-            if near == path_station.upper() and dist > station_gate_m:
+        evidence = "raw teqc +meta"
+        rinex_evidence_rel: Optional[str] = None
+        if verify_station:
+            verdict, near, dist = _position_verdict(
+                meta.lat, meta.lon, path_station, fleet, station_gate_m
+            )
+            if verdict in ("no-position", "unknown", "noisy-self"):
+                fb = _sibling_rinex_position(root, rel, parsed)
+                if fb is not None:
+                    rx_lat, rx_lon, rx_rel = fb
+                    v2, near2, dist2 = _position_verdict(
+                        rx_lat, rx_lon, path_station, fleet, station_gate_m
+                    )
+                    if v2 in ("confirmed", "wrong"):
+                        # The RINEX header carries a decision the raw could
+                        # not give — adopt it as the identity evidence.
+                        verdict, near, dist = v2, near2, dist2
+                        evidence = f"RINEX header {rx_rel}"
+                        rinex_evidence_rel = rx_rel
+            if verdict == "noisy-self":
                 # Nearest station IS the claimed one, just outside the tight
                 # gate — a degraded single-point solution, not a mystery.
                 # Informational only; never blocks the date/ext checks.
@@ -236,7 +387,7 @@ def plan_relocations(
                     )
                 )
                 continue
-            if near is None or dist > station_gate_m:
+            if verdict == "unknown":
                 skips.append(
                     SkipInfo(
                         rel,
@@ -247,7 +398,7 @@ def plan_relocations(
                     )
                 )
                 continue
-            if near != path_station.upper():
+            if verdict == "wrong":
                 reasons.append("wrong-station")
                 true_station = near
 
@@ -261,7 +412,10 @@ def plan_relocations(
             new_ext = canon_ext + (".gz" if parsed.ext.lower().endswith(".gz") else "")
 
         if not reasons:
-            skips.append(SkipInfo(rel, "verified-correct", fmt))
+            detail = fmt
+            if verify_station and rinex_evidence_rel is not None:
+                detail += " (station confirmed via RINEX header)"
+            skips.append(SkipInfo(rel, "verified-correct", detail))
             continue
 
         new_name = build_raw_name(
@@ -281,8 +435,45 @@ def plan_relocations(
                 reasons=tuple(reasons),
                 true_station=true_station or path_station.upper(),
                 station_dist_m=dist,
+                evidence=evidence if "wrong-station" in reasons else "",
             )
         )
+
+        # The stray RINEX that provided the identity evidence is itself a
+        # stray by its own content — plan its co-move (station prefix swap)
+        # when the ONLY disagreement is the station (a date mismatch would
+        # also need a date rename in the RINEX name, which needs eyes).
+        if (
+            rinex_evidence_rel is not None
+            and true_station
+            and reasons == ["wrong-station"]
+        ):
+            rx_parts = rinex_evidence_rel.split("/")
+            rx_name = rx_parts[-1]
+            rx_dst = "/".join(
+                [
+                    rx_parts[0],
+                    rx_parts[1],
+                    true_station.upper(),
+                    rx_parts[3],
+                    rx_parts[4],
+                    true_station.upper() + rx_name[len(path_station):],
+                ]
+            )
+            plans.append(
+                MovePlan(
+                    src_rel=rinex_evidence_rel,
+                    dst_rel=rx_dst,
+                    fmt="rinex",
+                    decoded_start=start,
+                    claimed=parsed.claimed,
+                    reasons=("wrong-station",),
+                    true_station=true_station.upper(),
+                    station_dist_m=dist,
+                    evidence=f"RINEX header {rinex_evidence_rel}",
+                )
+            )
+
         logger.info("remediation: %s [%s] -> %s", rel, ",".join(reasons), dst_rel)
     return plans, skips
 

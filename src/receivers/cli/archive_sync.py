@@ -1649,6 +1649,8 @@ def cmd_archive_sort(args: argparse.Namespace) -> int:
                 f" — position is {p.station_dist_m:.0f} m from "
                 f"{p.true_station}'s mark"
             )
+            if p.evidence:
+                extra += f" (via {p.evidence})"
         print(
             f"   {p.src_rel}  [{why}]\n"
             f"     claims {p.claimed:%Y-%m-%d}, decodes to "
@@ -1660,7 +1662,7 @@ def cmd_archive_sort(args: argparse.Namespace) -> int:
         with open(args.plan_out, "w") as fh:
             fh.write("# src\tdst\treasons\tdecoded\tevidence\n")
             for p in plans:
-                ev = (
+                ev = p.evidence or (
                     f"{p.station_dist_m:.0f}m from {p.true_station}"
                     if p.station_dist_m is not None
                     else ""
@@ -1792,7 +1794,10 @@ def create_archive_sort_parser(subparsers) -> argparse.ArgumentParser:
         help="Also verify STATION identity from the decoded antenna position "
         "(coordinates decide) — a file matching another station's mark is "
         "relocated to that station's tree; no match within the gate = "
-        "reported, never moved",
+        "reported, never moved. When the raw decode cannot place the antenna "
+        "(Septentrio SBF: teqc +meta reports the (90,0) placeholder), the "
+        "sibling RINEX header's APPROX POSITION XYZ is used as fallback "
+        "evidence — a stray it proves is moved together with its RINEX.",
     )
     parser.add_argument(
         "--station-gate-m",

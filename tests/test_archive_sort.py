@@ -486,3 +486,153 @@ class TestStationFirstScan:
         assert not plans
         assert skips[0].reason == "path-name-mismatch"
         assert "2021-01-03" in skips[0].detail
+
+
+# ── RINEX APPROX POSITION fallback (todo #151) ──────────────────────────────
+
+
+def _ecef(lat: float, lon: float) -> tuple:
+    """ECEF metres for a lat/lon — the inverse of sort._ecef_to_latlon."""
+    import pyproj
+
+    tr = pyproj.Transformer.from_crs("EPSG:4979", "EPSG:4978", always_xy=True)
+    x, y, z = tr.transform(lon, lat, 0.0)
+    return x, y, z
+
+
+def _rinex_bytes(station: str, lat: float, lon: float) -> bytes:
+    x, y, z = _ecef(lat, lon)
+    return (
+        f"     2.11           OBSERVATION DATA    G (GPS)             RINEX VERSION / TYPE\n"
+        f"{station}                                                        MARKER NAME\n"
+        f"{x:14.4f}{y:14.4f}{z:14.4f}                  APPROX POSITION XYZ\n"
+        "                                                            END OF HEADER\n"
+    ).encode()
+
+
+def _mk_rinex(root: Path, rel: str, content: bytes) -> str:
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(content)
+    return rel
+
+
+class TestRinexPositionFallback:
+    """Septentrio SBF raw decodes to the teqc (90,0) placeholder — the station
+    identity must fall back to the sibling RINEX header's APPROX POSITION."""
+
+    FLEET = {"RHOF": (66.461123, -15.946707), "REYK": (64.1388, -21.9555)}
+
+    def _sbf_meta(self, lat=90.0, lon=0.0):
+        from receivers.archive.raw_format import RawMeta
+
+        return RawMeta(
+            start=datetime(2010, 4, 2),
+            end=datetime(2010, 4, 2, 23),
+            lat=lat,
+            lon=lon,
+        )
+
+    def test_rinex_name_matching(self):
+        claimed = datetime(2010, 4, 2)  # doy 92
+        # R2 short Hatanaka
+        assert sort._rinex_name_matches_date("RHOF0920.10D.Z", "RHOF", claimed)
+        assert sort._rinex_name_matches_date("RHOF0920.10D", "RHOF", claimed)
+        # R3 long IGS name
+        assert sort._rinex_name_matches_date(
+            "RHOF00ISL_R_20100920000_01D_15S_MO.crx.Z", "RHOF", claimed
+        )
+        # wrong day / wrong station / day-digit run-in
+        assert not sort._rinex_name_matches_date("RHOF0930.10D.Z", "RHOF", claimed)
+        assert not sort._rinex_name_matches_date("REYK0920.10D.Z", "RHOF", claimed)
+        assert not sort._rinex_name_matches_date(
+            "RHOF00ISL_R_20100930000_01D_15S_MO.crx.Z", "RHOF", claimed
+        )
+
+    def test_sbf_placeholder_confirmed_via_rinex(self, tmp_path, monkeypatch):
+        rel = _mk(
+            tmp_path,
+            "2010/apr/RHOF/15s_24hr/raw/RHOF201004020000a.sbf.gz",
+            _gzip_compress(b"$@Sic" + b"\x00" * 32),
+        )
+        _mk_rinex(
+            tmp_path,
+            "2010/apr/RHOF/15s_24hr/rinex/RHOF0920.10D",
+            _rinex_bytes("RHOF", 66.461123, -15.946707),
+        )
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+        monkeypatch.setattr(sort, "teqc_meta", lambda *a, **k: self._sbf_meta())
+        plans, skips = plan_relocations(tmp_path, [rel], verify_station=True)
+        assert not plans
+        assert skips[0].reason == "verified-correct"
+        assert "RINEX" in skips[0].detail
+
+    def test_sbf_placeholder_rinex_reveals_stray_and_co_moves(self, tmp_path, monkeypatch):
+        rel = _mk(
+            tmp_path,
+            "2010/apr/REYK/15s_24hr/raw/REYK201004020000a.sbf.gz",
+            _gzip_compress(b"$@Sic" + b"\x00" * 32),
+        )
+        _mk_rinex(
+            tmp_path,
+            "2010/apr/REYK/15s_24hr/rinex/REYK0920.10D",
+            _rinex_bytes("REYK", 66.461123, -15.946707),  # RHOF's mark, filed REYK
+        )
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+        monkeypatch.setattr(sort, "teqc_meta", lambda *a, **k: self._sbf_meta())
+        plans, skips = plan_relocations(tmp_path, [rel], verify_station=True)
+        assert len(plans) == 2  # the raw + the stray RINEX that proved it
+        raw, rx = plans
+        assert raw.reasons == ("wrong-station",)
+        assert raw.true_station == "RHOF"
+        assert raw.dst_rel == "2010/apr/RHOF/15s_24hr/raw/RHOF201004020000a.sbf.gz"
+        assert "RINEX header" in raw.evidence
+        assert rx.fmt == "rinex"
+        assert rx.dst_rel == "2010/apr/RHOF/15s_24hr/rinex/RHOF0920.10D"
+        assert rx.src_rel == "2010/apr/REYK/15s_24hr/rinex/REYK0920.10D"
+
+    def test_no_sibling_rinex_still_unknown_station(self, tmp_path, monkeypatch):
+        rel = _mk(
+            tmp_path,
+            "2010/apr/REYK/15s_24hr/raw/REYK201004020000a.sbf.gz",
+            _gzip_compress(b"$@Sic" + b"\x00" * 32),
+        )
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+        monkeypatch.setattr(sort, "teqc_meta", lambda *a, **k: self._sbf_meta())
+        plans, skips = plan_relocations(tmp_path, [rel], verify_station=True)
+        assert not plans
+        assert skips[0].reason == "unknown-station"
+
+    def test_date_mismatch_suppresses_rinex_co_move(self, tmp_path, monkeypatch):
+        # wrong-station (via RINEX) AND wrong-date: the RINEX name's date would
+        # also be wrong, so it is left for eyes — only the raw moves.
+        rel = _mk(
+            tmp_path,
+            "2010/apr/REYK/15s_24hr/raw/REYK201004020000a.sbf.gz",
+            _gzip_compress(b"$@Sic" + b"\x00" * 32),
+        )
+        _mk_rinex(
+            tmp_path,
+            "2010/apr/REYK/15s_24hr/rinex/REYK0920.10D",
+            _rinex_bytes("REYK", 66.461123, -15.946707),
+        )
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+        from receivers.archive.raw_format import RawMeta
+
+        meta = RawMeta(
+            start=datetime(2010, 4, 3),  # decodes one day later than claimed
+            end=datetime(2010, 4, 3, 23),
+            lat=90.0,
+            lon=0.0,
+        )
+        monkeypatch.setattr(sort, "teqc_meta", lambda *a, **k: meta)
+        plans, skips = plan_relocations(tmp_path, [rel], verify_station=True)
+        assert len(plans) == 1
+        assert set(plans[0].reasons) == {"wrong-station", "wrong-date"}
+        assert plans[0].fmt != "rinex"
+
+
+def _gzip_compress(data: bytes) -> bytes:
+    import gzip as _gzip
+
+    return _gzip.compress(data)

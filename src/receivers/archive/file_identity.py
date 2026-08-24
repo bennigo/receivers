@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
 from .sort import (
+    _ecef_to_latlon,
     _haversine_m,
     fleet_coordinates,
     nearest_station,
@@ -100,19 +101,6 @@ def parse_first_approx_xyz(text: str) -> Optional[Xyz]:
     try:
         return (float(parts[0]), float(parts[1]), float(parts[2]))
     except ValueError:
-        return None
-
-
-def _ecef_to_latlon(xyz: Xyz) -> Optional[Tuple[float, float]]:
-    """ECEF metres → (lat, lon) degrees via pyproj; ``None`` if unavailable."""
-    try:
-        import pyproj
-
-        tr = pyproj.Transformer.from_crs("EPSG:4978", "EPSG:4979", always_xy=True)
-        lon, lat, _h = tr.transform(xyz[0], xyz[1], xyz[2])
-        return (lat, lon)
-    except Exception as exc:  # noqa: BLE001 - probe is fail-open
-        logger.debug("ecef->latlon failed: %s", exc)
         return None
 
 
