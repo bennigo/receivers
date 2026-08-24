@@ -71,6 +71,12 @@ class MovePlan:
     src_rel: str
     dst_rel: str
     fmt: str
+    # The date this file is filed under AFTER the move. Normally teqc's
+    # decoded start; when the format has no date decoder (Septentrio SBF —
+    # teqc reports only its 1980-01-01 placeholder) it is the CLAIMED date,
+    # because such a move is station/extension-only and must not rewrite the
+    # date. Never None: three report writers format it. 'wrong-date' in
+    # ``reasons`` is what tells you the date actually changed.
     decoded_start: object  # datetime
     claimed: object  # datetime
     reasons: tuple = ()  # subset of ('wrong-date','wrong-station','wrong-ext')
@@ -324,11 +330,14 @@ def plan_relocations(
         claimed_ym = (f"{parsed.claimed:%Y}", MONTH_DIRS[parsed.claimed.month])
 
         meta = teqc_meta(path, fmt) if fmt != TRIMBLE else None
-        if meta is None or meta.start is None:
-            # No cheap decoder — but the NAME-vs-PATH consistency needs none:
-            # a file claiming a different year/month than its directory is
-            # wrong SOMEWHERE (which side lies needs a decode/eyes). Caught
-            # the 324 MB 'RHOF202101031833a.T02' living in 2017/dec.
+        no_date = meta is None or meta.start is None
+        path_station = rel.split("/")[2] if len(rel.split("/")) == 6 else parsed.station
+
+        if no_date:
+            # The NAME-vs-PATH consistency check needs no decoder: a file
+            # claiming a different year/month than its directory is wrong
+            # SOMEWHERE (which side lies needs a decode/eyes). Caught the
+            # 324 MB 'RHOF202101031833a.T02' living in 2017/dec.
             if dir_ym is not None and dir_ym != claimed_ym:
                 skips.append(
                     SkipInfo(
@@ -340,13 +349,18 @@ def plan_relocations(
                     )
                 )
                 continue
-            reason = "no-date-decoder" if fmt == TRIMBLE else "decode-failed"
-            skips.append(SkipInfo(rel, reason, fmt))
-            continue
-        start = meta.start
+            # An undecodable DATE must not disable the STATION check. On
+            # Septentrio SBF teqc decodes neither (it reports 1980-01-01 and
+            # (90,0) for every file), but the sibling RINEX header carries a
+            # real position — which is the whole point of --check-station for
+            # this fleet, and the class the VMOS/GRVV strays belonged to.
+            if not (verify_station and _sibling_rinex_position(root, rel, parsed)):
+                reason = "no-date-decoder" if fmt == TRIMBLE else "decode-failed"
+                skips.append(SkipInfo(rel, reason, fmt))
+                continue
 
+        start = None if no_date else meta.start
         reasons: list[str] = []
-        path_station = rel.split("/")[2] if len(rel.split("/")) == 6 else parsed.station
 
         # Station identity: the decoded position decides — with a RINEX-header
         # fallback when the raw decode cannot (Septentrio SBF: teqc +meta
@@ -357,8 +371,10 @@ def plan_relocations(
         evidence = "raw teqc +meta"
         rinex_evidence_rel: Optional[str] = None
         if verify_station:
+            raw_lat = meta.lat if meta is not None else None
+            raw_lon = meta.lon if meta is not None else None
             verdict, near, dist = _position_verdict(
-                meta.lat, meta.lon, path_station, fleet, station_gate_m
+                raw_lat, raw_lon, path_station, fleet, station_gate_m
             )
             if verdict in ("no-position", "unknown", "noisy-self"):
                 fb = _sibling_rinex_position(root, rel, parsed)
@@ -388,11 +404,16 @@ def plan_relocations(
                 )
                 continue
             if verdict == "unknown":
+                where = (
+                    f"({raw_lat:.5f},{raw_lon:.5f})"
+                    if raw_lat is not None and raw_lon is not None
+                    else "the decoded position"
+                )
                 skips.append(
                     SkipInfo(
                         rel,
                         "unknown-station",
-                        f"position ({meta.lat:.5f},{meta.lon:.5f}) matches no "
+                        f"position {where} matches no "
                         f"station within {station_gate_m:.0f} m "
                         f"(nearest {near} at {dist / 1000:.1f} km)",
                     )
@@ -402,7 +423,7 @@ def plan_relocations(
                 reasons.append("wrong-station")
                 true_station = near
 
-        if start.date() != parsed.claimed.date():
+        if start is not None and start.date() != parsed.claimed.date():
             reasons.append("wrong-date")
 
         canon_ext = CANONICAL_EXT.get(fmt)
@@ -418,10 +439,16 @@ def plan_relocations(
             skips.append(SkipInfo(rel, "verified-correct", detail))
             continue
 
+        # With no decodable date the claimed one stands — the move is then a
+        # station (and/or extension) correction only, and must NOT rewrite the
+        # date portion of the name or the YYYY/mon directories. This is the
+        # Septentrio path: teqc decodes no date for SBF, so every SBF
+        # relocation is date-preserving by construction.
+        move_date = start if start is not None else parsed.claimed
         new_name = build_raw_name(
-            parsed, start, station=true_station or None, ext=new_ext
+            parsed, move_date, station=true_station or None, ext=new_ext
         )
-        dst_rel = _expected_rel(rel, start, new_name, station=true_station or None)
+        dst_rel = _expected_rel(rel, move_date, new_name, station=true_station or None)
         if dst_rel is None:
             skips.append(SkipInfo(rel, "unexpected-layout"))
             continue
@@ -430,7 +457,7 @@ def plan_relocations(
                 src_rel=rel,
                 dst_rel=dst_rel,
                 fmt=fmt,
-                decoded_start=start,
+                decoded_start=move_date,
                 claimed=parsed.claimed,
                 reasons=tuple(reasons),
                 true_station=true_station or path_station.upper(),
@@ -457,7 +484,7 @@ def plan_relocations(
                     true_station.upper(),
                     rx_parts[3],
                     rx_parts[4],
-                    true_station.upper() + rx_name[len(path_station):],
+                    true_station.upper() + rx_name[len(path_station) :],
                 ]
             )
             plans.append(
@@ -465,7 +492,7 @@ def plan_relocations(
                     src_rel=rinex_evidence_rel,
                     dst_rel=rx_dst,
                     fmt="rinex",
-                    decoded_start=start,
+                    decoded_start=move_date,
                     claimed=parsed.claimed,
                     reasons=("wrong-station",),
                     true_station=true_station.upper(),

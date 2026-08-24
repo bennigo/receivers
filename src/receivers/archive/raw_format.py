@@ -183,7 +183,54 @@ def teqc_meta(path: Path, fmt: str, *, timeout: int = 120) -> Optional[RawMeta]:
             "teqc +meta gave nothing for %s (fmt=%s, rc=%s)", path, fmt, proc.returncode
         )
         return None
-    return RawMeta(**vals)
+    return RawMeta(**_drop_placeholders(vals, path, fmt))
+
+
+#: teqc's "I could not decode this" values, which it reports as if they were
+#: measurements. On Septentrio SBF it emits ALL of them for every file:
+#: ``start/final date & time: 1980-01-01``, ``antenna latitude 90``,
+#: ``antenna longitude 0``. They must become None — a placeholder taken as
+#: data is worse than no data, because every downstream check trusts it.
+_GPS_TIME_ZERO = datetime(1980, 1, 6)
+_PLACEHOLDER_LATLON = (90.0, 0.0)
+
+
+def _drop_placeholders(vals: dict, path, fmt: str) -> dict:
+    """Blank teqc's undecodable-input placeholders so they read as absent.
+
+    A date before GPS time zero (1980-01-06) cannot be an observation — it
+    is teqc's epoch default. ``(lat, lon) == (90, 0)`` is the north pole,
+    which is not a station. Both mean "teqc could not decode this input",
+    and both are what teqc reports for EVERY Septentrio ``.sbf.gz``.
+
+    Left as data, the date placeholder made ``archive-sort`` classify every
+    correctly-filed Septentrio file as ``wrong-date`` and propose relocating
+    it to ``1980/jan/`` — where every file of a station also collides on one
+    filename. That is the entire Septentrio fleet, which is most of it.
+    """
+    out = dict(vals)
+    for key in ("start", "end"):
+        dt = out.get(key)
+        if dt is not None and dt < _GPS_TIME_ZERO:
+            logger.debug(
+                "teqc +meta: %s is a pre-GPS placeholder (%s) for %s (fmt=%s) "
+                "— treating the date as undecodable",
+                key,
+                dt,
+                path,
+                fmt,
+            )
+            out[key] = None
+    if (out.get("lat"), out.get("lon")) == _PLACEHOLDER_LATLON:
+        logger.debug(
+            "teqc +meta: position is the (90,0) placeholder for %s (fmt=%s) "
+            "— treating the position as undecodable",
+            path,
+            fmt,
+        )
+        out["lat"] = None
+        out["lon"] = None
+    return out
 
 
 def _parse_meta_float(line: str) -> Optional[float]:

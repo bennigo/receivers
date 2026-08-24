@@ -321,8 +321,7 @@ class TestRelocateGatewayReset:
 
     def test_full_output_ok(self):
         out = (
-            f"WOULD_MOVE|{self.SRC1}|{self.DST1}\n"
-            f"WOULD_MOVE|{self.SRC2}|{self.DST2}\n"
+            f"WOULD_MOVE|{self.SRC1}|{self.DST1}\nWOULD_MOVE|{self.SRC2}|{self.DST2}\n"
         )
         with patch("subprocess.run", return_value=_Proc(out)):
             res = relocate_archive_files(
@@ -376,7 +375,9 @@ class TestStationAndExtRemediation:
         )
         monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
         monkeypatch.setattr(
-            sort, "teqc_meta", lambda *a, **k: self._meta(51.0, -1.0)  # not Iceland
+            sort,
+            "teqc_meta",
+            lambda *a, **k: self._meta(51.0, -1.0),  # not Iceland
         )
         plans, skips = plan_relocations(tmp_path, [rel], verify_station=True)
         assert not plans
@@ -524,6 +525,11 @@ class TestRinexPositionFallback:
     FLEET = {"RHOF": (66.461123, -15.946707), "REYK": (64.1388, -21.9555)}
 
     def _sbf_meta(self, lat=90.0, lon=0.0):
+        """SBF meta with a DECODED date — the position-only placeholder case.
+
+        Note this is NOT what teqc returns for a real .sbf.gz: it blanks the
+        date too. See `_sbf_meta_real` and `TestSeptentrioNoDateDecoder`.
+        """
         from receivers.archive.raw_format import RawMeta
 
         return RawMeta(
@@ -532,6 +538,18 @@ class TestRinexPositionFallback:
             lat=lat,
             lon=lon,
         )
+
+    def _sbf_meta_real(self):
+        """What `teqc_meta` actually returns for a Septentrio .sbf.gz.
+
+        teqc reports the placeholder triple (1980-01-01, 90, 0) for every
+        such file; `_drop_placeholders` turns all three into None. So the
+        date is unavailable, not merely the position — measured on VMOS
+        2025-07-01.
+        """
+        from receivers.archive.raw_format import RawMeta
+
+        return RawMeta()
 
     def test_rinex_name_matching(self):
         claimed = datetime(2010, 4, 2)  # doy 92
@@ -567,7 +585,9 @@ class TestRinexPositionFallback:
         assert skips[0].reason == "verified-correct"
         assert "RINEX" in skips[0].detail
 
-    def test_sbf_placeholder_rinex_reveals_stray_and_co_moves(self, tmp_path, monkeypatch):
+    def test_sbf_placeholder_rinex_reveals_stray_and_co_moves(
+        self, tmp_path, monkeypatch
+    ):
         rel = _mk(
             tmp_path,
             "2010/apr/REYK/15s_24hr/raw/REYK201004020000a.sbf.gz",
@@ -636,3 +656,122 @@ def _gzip_compress(data: bytes) -> bytes:
     import gzip as _gzip
 
     return _gzip.compress(data)
+
+
+class TestSeptentrioNoDateDecoder:
+    """teqc decodes NEITHER date nor position for SBF — most of the fleet.
+
+    Before this was handled, `plan_relocations` read teqc's 1980-01-01
+    placeholder as the true observation date and proposed moving every
+    correctly-filed Septentrio file to `1980/jan/` — where every file of a
+    station also collides on a single filename. Applying that would have
+    collapsed a station's history.
+    """
+
+    FLEET = {"RHOF": (66.461123, -15.946707), "REYK": (64.138640, -21.955270)}
+
+    def _meta(self):
+        from receivers.archive.raw_format import RawMeta
+
+        return RawMeta()  # start/lat/lon all None, post-placeholder-drop
+
+    def _sbf(self, tmp_path, rel):
+        return _mk(tmp_path, rel, _gzip_compress(b"$@Sic" + b"\x00" * 32))
+
+    def test_correctly_filed_sbf_is_never_planned_to_1980(self, tmp_path, monkeypatch):
+        """The regression, pinned at its most dangerous point."""
+        rel = self._sbf(tmp_path, "2010/apr/RHOF/15s_24hr/raw/RHOF201004020000a.sbf.gz")
+        _mk_rinex(
+            tmp_path,
+            "2010/apr/RHOF/15s_24hr/rinex/RHOF0920.10D",
+            _rinex_bytes("RHOF", 66.461123, -15.946707),
+        )
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+        monkeypatch.setattr(sort, "teqc_meta", lambda *a, **k: self._meta())
+
+        plans, skips = plan_relocations(tmp_path, [rel], verify_station=True)
+
+        assert plans == []
+        assert not any("1980" in p.dst_rel for p in plans)
+        assert skips[0].reason == "verified-correct"
+
+    def test_station_check_still_runs_without_a_date(self, tmp_path, monkeypatch):
+        """An undecodable DATE must not disable the STATION check.
+
+        This is the whole point of --check-station on Septentrio: the raw
+        gives nothing, the sibling RINEX header gives the position.
+        """
+        rel = self._sbf(tmp_path, "2010/apr/RHOF/15s_24hr/raw/RHOF201004020000a.sbf.gz")
+        _mk_rinex(
+            tmp_path,
+            "2010/apr/RHOF/15s_24hr/rinex/RHOF0920.10D",
+            _rinex_bytes("RHOF", 64.138640, -21.955270),  # REYK's mark
+        )
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+        monkeypatch.setattr(sort, "teqc_meta", lambda *a, **k: self._meta())
+
+        plans, _ = plan_relocations(tmp_path, [rel], verify_station=True)
+
+        raw_plan = next(p for p in plans if p.src_rel == rel)
+        assert raw_plan.reasons == ("wrong-station",)
+        assert raw_plan.true_station == "REYK"
+        assert "RINEX header" in raw_plan.evidence
+
+    def test_a_dateless_move_preserves_the_claimed_date(self, tmp_path, monkeypatch):
+        """Station-only correction: same date, same YYYY/mon, new station."""
+        rel = self._sbf(tmp_path, "2010/apr/RHOF/15s_24hr/raw/RHOF201004020000a.sbf.gz")
+        _mk_rinex(
+            tmp_path,
+            "2010/apr/RHOF/15s_24hr/rinex/RHOF0920.10D",
+            _rinex_bytes("RHOF", 64.138640, -21.955270),
+        )
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+        monkeypatch.setattr(sort, "teqc_meta", lambda *a, **k: self._meta())
+
+        plans, _ = plan_relocations(tmp_path, [rel], verify_station=True)
+
+        dst = next(p.dst_rel for p in plans if p.src_rel == rel)
+        assert dst == "2010/apr/REYK/15s_24hr/raw/REYK201004020000a.sbf.gz"
+        assert "wrong-date" not in next(p.reasons for p in plans if p.src_rel == rel)
+
+    def test_decoded_start_is_never_none_for_the_report_writers(
+        self, tmp_path, monkeypatch
+    ):
+        """Three report writers format it with %Y-%m-%d; None would raise."""
+        rel = self._sbf(tmp_path, "2010/apr/RHOF/15s_24hr/raw/RHOF201004020000a.sbf.gz")
+        _mk_rinex(
+            tmp_path,
+            "2010/apr/RHOF/15s_24hr/rinex/RHOF0920.10D",
+            _rinex_bytes("RHOF", 64.138640, -21.955270),
+        )
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+        monkeypatch.setattr(sort, "teqc_meta", lambda *a, **k: self._meta())
+
+        plans, _ = plan_relocations(tmp_path, [rel], verify_station=True)
+
+        for p in plans:
+            assert p.decoded_start is not None
+            assert f"{p.decoded_start:%Y-%m-%d}" == "2010-04-02"
+
+    def test_no_rinex_sibling_still_skips_cleanly(self, tmp_path, monkeypatch):
+        """No date AND no position evidence — report it, never guess."""
+        rel = self._sbf(tmp_path, "2010/apr/RHOF/15s_24hr/raw/RHOF201004020000a.sbf.gz")
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+        monkeypatch.setattr(sort, "teqc_meta", lambda *a, **k: self._meta())
+
+        plans, skips = plan_relocations(tmp_path, [rel], verify_station=True)
+
+        assert plans == []
+        assert skips[0].reason == "decode-failed"
+
+    def test_path_name_mismatch_still_wins_without_a_decoder(
+        self, tmp_path, monkeypatch
+    ):
+        """The no-decoder consistency check must keep its precedence."""
+        rel = self._sbf(tmp_path, "2017/dec/RHOF/15s_24hr/raw/RHOF201004020000a.sbf.gz")
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+        monkeypatch.setattr(sort, "teqc_meta", lambda *a, **k: self._meta())
+
+        _plans, skips = plan_relocations(tmp_path, [rel], verify_station=True)
+
+        assert skips[0].reason == "path-name-mismatch"
