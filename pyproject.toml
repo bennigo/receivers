@@ -55,14 +55,28 @@ dependencies = [
     "psutil>=5.9.0",
     "psycopg2-binary>=2.9.0",
     "gtimes @ git+https://github.com/bgo-gnss/gtimes@v0.5.1",
-    # tostools master @ea5e2d5: require azimuth for closed-join antennas
-    # installed after 2011 (true-north assumed). Earlier: @f42dee4 station
+    # tostools master @a5f1b7d: MUST NOT stay at @668964b. That commit carries
+    # tostools d467807 (F1 step 2 widened the default attribute list) WITHOUT
+    # its fix 8fa822c, so deploying it puts a regression into `--fix-headers`:
+    # the era-resolution chain (gps_metadata -> get_device_sessions) splits on
+    # constellation boundaries, a mid-tenure toggle can drop the earlier window,
+    # and corrector then falls back to device_history[-1] — the most RECENT
+    # equipment — writing the wrong era into a historical RINEX header, silently.
+    # Also brings GAMIT station.info back off that split, and makes site-log §12
+    # publish a dialable "+354 " phone. Earlier: @668964b R2 'M' (mixed) ->
+    # GPS+GLO constellation probe; @ea5e2d5 require azimuth for closed-join
+    # antennas installed after 2011 (true-north assumed); @f42dee4 station
     # verify/triage --include-closed audits historical (closed-join) devices;
     # @c9181aa sitelog reads the TOS tectonic_plate attribute; @bdc8a52 adds
     # TRM115000.00 (Zephyr 3 Geodetic) to ANTENNA_IGS — blocks NPSK. Bumping is
     # mandatory, not cosmetic — the laptop mamba env has tostools editable, so
     # an unbumped pin fails only in CI / on rek-d01.
-    "tostools @ git+https://github.com/bgo-gnss/tostools@668964b",
+    #
+    # NOTE the tostools version is still 0.6.1, so this is a SAME-VERSION SHA
+    # bump: pip will not re-fetch a direct-URL dep whose installed version
+    # already satisfies it. It takes effect only via install.sh's uninstall
+    # step — a plain `pip install -e .` on rek-d01 will silently keep 668964b.
+    "tostools @ git+https://github.com/bgo-gnss/tostools@a5f1b7d",
     # gps_parser main @257a2ee: passive-station schema (2c5b428) + canonical
     # module-level parse_station_role (257a2ee) — the API config_utils imports.
     "gps-parser @ git+https://github.com/bgo-gnss/gps_parser@257a2ee",
