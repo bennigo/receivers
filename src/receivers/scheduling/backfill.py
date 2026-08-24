@@ -42,6 +42,17 @@ def clean_stale_tmp(
         logger.warning(f"clean_stale_tmp: cannot resolve tmp_dir: {e}")
         return 0, []
 
+    # No tmp dir means nothing staged, so nothing stale — the answer is
+    # (0, []), not an exception. Production's tmp_dir is /tmp/gps_receivers,
+    # created once by install.sh; /tmp does not survive a reboot, and this
+    # runs at the TOP of _backfill_next_station_for_session, before anything
+    # would recreate it. So the first backfill after a reboot raised
+    # FileNotFoundError out of a cleanup helper and took the whole backfill
+    # tick with it.
+    if not tmp_root.is_dir():
+        logger.debug("clean_stale_tmp: %s does not exist — nothing to clean", tmp_root)
+        return 0, []
+
     deleted = 0
     affected: List[str] = []
 
@@ -224,8 +235,7 @@ def _backfill_next_station_for_session(
         except Exception as e:
             # One station's failure must not abort the rest of the batch.
             logger.error(
-                f"Backfill {session_type} {station_id} error: "
-                f"{type(e).__name__}: {e}"
+                f"Backfill {session_type} {station_id} error: {type(e).__name__}: {e}"
             )
 
     try:
