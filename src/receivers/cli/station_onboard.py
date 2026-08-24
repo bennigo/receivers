@@ -7,17 +7,21 @@ stage**. Manual oversight is the point: every stage reports what it sees (or
 would do) and waits for a confirmation before its mutating half runs, so a
 station is onboarded with eyes on each step rather than blind.
 
-Stage order::
+Stage order: ::
 
     1  tos-review           tos station verify --include-closed (+ triage emit)
     2  rinex-review         archive facts: years, RINEX version + header fields
     3  re-rinex             re-convert archive R2→R3 from raw (long, detached)
-    4  fix-headers          header-only repair of archived RINEX
-    5  constellation-audit  tos audit constellations
+    4  constellation-audit  tos audit constellations — AFTER re-rinex (R3 data)
+    5  fix-headers          header-only repair of the R2-stuck remainder
     6  sitelog              generate + commit the IGS/M3G site log
     7  m3g                  validate → publish to M3G
     8  sync-yaml            print the allowlist stanza + commit/push steps
     9  epos-disseminate     full-history push (long, detached)
+
+Ordering is load-bearing: the constellation cross-check reads RINEX-3
+headers (R2 under-reports), so it must run AFTER the re-rinex step, and
+fix-headers then mops up only the R2-stuck remainder (no-raw days).
 
 The underlying work is NOT reimplemented here — each stage composes the
 existing verbs (``tos``, ``receivers rinex``, ``receivers epos-disseminate``,
@@ -191,9 +195,14 @@ def _preview_tos_review(ctx: OnboardContext) -> str:
         f"   … edit the ACTION file (uncomment + fill <FILL_VALUE>) …\n"
         f"   $ tos audit apply <action-file> --dry-run   # then --apply\n"
         f"   $ tos station verify {ctx.station} --include-closed   # re-verify clean\n"
-        f"\nHand-checks the audit still misses (per the recipe): receiver GPS/GLO "
-        f"on closed receivers, antenna azimuth on post-2011 antennas, "
-        f"foundation_depth (needs a real value)."
+        f"\nHand-checks the audit still misses (per the recipe):\n"
+        f"   · azimuth on antennas installed ≥2012 → assume true north (0.0) by "
+        f"rule; pre-2012 campaign setups stay skipped\n"
+        f"   · receiver GPS/GLO on CLOSED receivers (--include-closed covers them, "
+        f"but the missing-attributes default is an ASSUMPTION — the data check is "
+        f"stage 4 constellation-audit)\n"
+        f"   · foundation_depth needs a real measured value where it applies "
+        f"(bedrock-on-rock monuments)\n"
     )
 
 
@@ -367,9 +376,13 @@ def _preview_fixheaders(ctx: OnboardContext) -> str:
 def _preview_constellation(ctx: OnboardContext) -> str:
     return (
         f"Cross-check the receiver's TOS constellation toggles against the "
-        f"archived RINEX header set:\n"
+        f"archived RINEX header set — run AFTER re-rinex so the R3 per-system "
+        f"'SYS / # / OBS TYPES' list is authoritative (R2 under-reports):\n"
         f"   $ tos audit constellations {ctx.station}\n"
-        f"   $ tos audit constellations {ctx.station} --triage   # if it disagrees"
+        f"   $ tos audit constellations {ctx.station} --triage   # if it disagrees\n"
+        f"\nTrust order: live receiver > raw decode > RINEX header. Data shows a "
+        f"system + TOS doesn't → set_true (safe even from R2); TOS says true + "
+        f"data doesn't → review (R3 only)."
     )
 
 
@@ -461,11 +474,11 @@ STAGES: List[Stage] = [
         "re-rinex", "Re-rinex (R2→R3 from raw)", True, _preview_rerinex,
         exec_argv=_rerinex_argv, long_running=True, log_suffix="rerinex",
     ),
+    Stage("constellation-audit", "Constellation audit (R3)", False, _preview_constellation),
     Stage(
-        "fix-headers", "Fix headers (archive RINEX)", True, _preview_fixheaders,
+        "fix-headers", "Fix headers (R2-stuck remainder)", True, _preview_fixheaders,
         exec_argv=lambda c: _fixheaders_argv(c, push=True),
     ),
-    Stage("constellation-audit", "Constellation audit", False, _preview_constellation),
     Stage("sitelog", "Site log", True, _preview_sitelog, exec_argv=_sitelog_argv),
     Stage("m3g", "M3G publish", True, _preview_m3g,
           exec_argv=lambda c: c.receivers_argv(

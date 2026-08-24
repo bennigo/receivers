@@ -36,8 +36,8 @@ def test_stage_order_matches_recipe():
         "tos-review",
         "rinex-review",
         "re-rinex",
-        "fix-headers",
         "constellation-audit",
+        "fix-headers",
         "sitelog",
         "m3g",
         "sync-yaml",
@@ -55,6 +55,11 @@ def test_stage_order_matches_recipe():
         "m3g",
         "epos-disseminate",
     }
+    # constellation-audit must sit AFTER re-rinex and BEFORE fix-headers:
+    # the R3 header set is the authoritative probe, fix-headers mops up the
+    # R2-stuck remainder (pipeline-refinement memory 2026-08-23).
+    keys = [s.key for s in STAGES]
+    assert keys.index("re-rinex") < keys.index("constellation-audit") < keys.index("fix-headers")
 
 
 def test_rerinex_argv_includes_required_bounds(tmp_path):
