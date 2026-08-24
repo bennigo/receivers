@@ -1,0 +1,47 @@
+[Unit]
+# Server-side health-monitoring LIVENESS alert. Runs the Nagios/Icinga check
+# (receivers.monitoring.health_freshness_check) and pushes a PASSIVE check
+# result to Icinga.
+#
+# This exists because of 2026-08-10: the health executor starved, fleet
+# monitoring went blind for 5.5 h, and NOTHING alerted — downloads, archiving
+# and RINEX conversion all continued normally, so every other signal stayed
+# green. A ThreadPoolExecutor queues rather than rejects, so pool exhaustion
+# is completely silent. It was found only because bgo happened to look at a
+# dashboard.
+#
+# Deliberately INDEPENDENT of the scheduler process: the thing it watches is
+# the scheduler failing to run its own jobs, so a check living inside it would
+# have starved too. The pushed --ttl makes Icinga flag the service stale if
+# this timer stops as well.
+#
+# This is a USER-LEVEL unit, installed at
+#   ~gpsops/.config/systemd/user/gps-health-freshness-alert.{service,timer}
+# managed by gpsops with NO sudo (same model as gps-archive-sync-alert):
+#   systemctl --user enable --now gps-health-freshness-alert.timer
+#   systemctl --user list-timers gps-health-freshness-alert.timer
+#   journalctl --user-unit gps-health-freshness-alert -n 20
+# Linger (already enabled for gpsops) lets the timer fire without an active
+# session — so no User=/Group= here (a --user unit runs as gpsops by definition).
+#
+# Requires the Icinga service object `rek-d01.gps.vedur.is!Health monitoring`
+# to exist on the Icinga server for alerts to fire. Until then the push logs
+# "Service not found" harmlessly and the journal still records the line.
+Description=GPS health-monitoring liveness alert — push passive check to Icinga
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# WARN(1)/CRIT(2)/UNKNOWN(3) are valid Nagios outcomes, not unit failures — the
+# alert is delivered via the Icinga push (which happens before exit), so a CRIT
+# must NOT leave the unit in "failed" state.
+SuccessExitStatus=1 2 3
+Environment="LANG=en_US.UTF-8"
+Environment="GPS_CONFIG_PATH=/home/gpsops/.config/gpsconfig"
+# --ttl 1800 = 3x the 10-min cadence: Icinga marks the service stale after ~3
+# consecutive missed pushes, tolerating a transient blip without false alarms.
+ExecStart=/home/bgo/git/receivers/venv/bin/python -m receivers.monitoring.health_freshness_check --icinga --icinga-host rek-d01 --ttl 1800
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gps-health-freshness-alert

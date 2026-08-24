@@ -1233,6 +1233,30 @@ gpsops_systemctl daemon-reload
 gpsops_systemctl enable --now gps-archive-sync-alert.timer >/dev/null
 ok "Archive-sync alert timer installed as gpsops user unit (every 15 min → Icinga)"
 
+# Health-monitoring LIVENESS alert timer — runs every 10 min, pushes a passive
+# check result to Icinga (rek-d01.gps.vedur.is!Health monitoring). Catches the
+# 2026-08-10 failure mode: the health executor starved, fleet monitoring went
+# blind for 5.5 h, and nothing alerted — downloads/archiving/RINEX all kept
+# running so every other signal stayed green, and a ThreadPoolExecutor queues
+# rather than rejects, so pool exhaustion is silent. Runs OUT OF PROCESS from
+# the scheduler because the thing it watches is the scheduler failing to run
+# its own jobs. Needs the Icinga service object defined server-side to notify.
+#
+# Installed as a gpsops USER unit (same model as gps-archive-sync-alert). Linger
+# (Phase 10) lets the timer fire without an active gpsops session. ExecStart venv
+# path is patched for this install dir.
+HFA_SVC="$USER_UNIT_DIR/gps-health-freshness-alert.service"
+HFA_TIMER="$USER_UNIT_DIR/gps-health-freshness-alert.timer"
+sudo -u "$SERVICE_USER" mkdir -p "$USER_UNIT_DIR"
+sed -e "s|ExecStart=.*/bin/python |ExecStart=$VENV_DIR/bin/python |" \
+    "$INSTALL_DIR/deployment/systemd/gps-health-freshness-alert.service" > "$HFA_SVC"
+install -m 644 "$INSTALL_DIR/deployment/systemd/gps-health-freshness-alert.timer" "$HFA_TIMER"
+chown "$SERVICE_USER:$SERVICE_GROUP" "$HFA_SVC" "$HFA_TIMER"
+chmod 644 "$HFA_SVC" "$HFA_TIMER"
+gpsops_systemctl daemon-reload
+gpsops_systemctl enable --now gps-health-freshness-alert.timer >/dev/null
+ok "Health-liveness alert timer installed as gpsops user unit (every 10 min → Icinga)"
+
 # Host disk + scheduler-liveness alert timer — runs every 5 min, pushes a passive
 # check result to Icinga (rek-d01.gps.vedur.is!Host disk and liveness). Catches
 # the 2026-07-21 failure mode: a full OS volume (/home) that freezes the scheduler

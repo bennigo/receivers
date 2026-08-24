@@ -1,0 +1,17 @@
+[Unit]
+Description=Run the GPS health-monitoring liveness alert every 10 minutes
+
+[Timer]
+# 10-min cadence against a 30-min WARN / 60-min CRIT threshold, so a genuine
+# stall is caught within ~40 min rather than the 5.5 h it went unnoticed on
+# 2026-08-10. The health job itself runs every 5 min; the thresholds carry a
+# wide margin over that so ordinary jitter never alerts.
+# OnBootSec gives a first reading shortly after boot; Persistent catches up a
+# missed run if the host was down at firing time.
+OnBootSec=5min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+# User-level timers.target (this is a `systemctl --user` timer owned by gpsops).
+WantedBy=timers.target
