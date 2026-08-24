@@ -1,0 +1,40 @@
+[Unit]
+# Runtime detector for transactions left open against gps_health.
+#
+# This exists because dev/audits/tx_audit.py is BLIND to the class that
+# actually hurt production, by construction: a function that DOES commit,
+# eventually, while interleaving DB statements with slow non-DB work. The
+# audit classifies those as writes and skips them — correctly by its own
+# model. Two were found by hand (sync_archive_to_db 373 s,
+# verify_archive_catalog 371 s, both fixed); nothing would have told us
+# about a third.
+#
+# An open transaction pins the vacuum xmin horizon (table bloat), blocks
+# CREATE/DROP INDEX CONCURRENTLY (which killed migration 065 six times),
+# and holds a connection slot on a host where exhaustion has been chronic
+# since 2026-08-05.
+#
+# This is a USER-LEVEL unit, installed at
+#   ~gpsops/.config/systemd/user/gps-tx-age-alert.{service,timer}
+# managed by gpsops with NO sudo (same model as gps-archive-sync-alert):
+#   systemctl --user enable --now gps-tx-age-alert.timer
+#   journalctl --user-unit gps-tx-age-alert -n 20
+#
+# Requires the Icinga service object `rek-d01.gps.vedur.is!Transaction age`
+# to exist server-side to notify. Until then the push logs "Service not
+# found" harmlessly and the journal still records the OK/WARN/CRIT line.
+Description=GPS open-transaction age alert — push passive check to Icinga
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# WARN(1)/CRIT(2)/UNKNOWN(3) are valid Nagios outcomes, not unit failures.
+SuccessExitStatus=1 2 3
+Environment="LANG=en_US.UTF-8"
+Environment="GPS_CONFIG_PATH=/home/gpsops/.config/gpsconfig"
+# --ttl 1800 = 6x the 5-min cadence.
+ExecStart=/home/bgo/git/receivers/venv/bin/python -m receivers.monitoring.tx_age_check --icinga --icinga-host rek-d01 --ttl 1800
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gps-tx-age-alert

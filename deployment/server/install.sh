@@ -1257,6 +1257,28 @@ gpsops_systemctl daemon-reload
 gpsops_systemctl enable --now gps-health-freshness-alert.timer >/dev/null
 ok "Health-liveness alert timer installed as gpsops user unit (every 10 min → Icinga)"
 
+# Open-transaction age alert timer — runs every 5 min, pushes a passive check
+# result to Icinga (rek-d01.gps.vedur.is!Transaction age). The RUNTIME half of
+# the transaction-leak work: dev/audits/tx_audit.py is blind by construction to
+# functions that DO commit while interleaving DB statements with slow non-DB
+# work (sync_archive_to_db 373 s, verify_archive_catalog 371 s — both fixed,
+# but nothing would report a third). An open transaction pins the vacuum xmin
+# horizon, blocks CREATE/DROP INDEX CONCURRENTLY (killed migration 065 six
+# times) and holds a connection slot.
+#
+# Installed as a gpsops USER unit (same model as gps-archive-sync-alert).
+TXA_SVC="$USER_UNIT_DIR/gps-tx-age-alert.service"
+TXA_TIMER="$USER_UNIT_DIR/gps-tx-age-alert.timer"
+sudo -u "$SERVICE_USER" mkdir -p "$USER_UNIT_DIR"
+sed -e "s|ExecStart=.*/bin/python |ExecStart=$VENV_DIR/bin/python |" \
+    "$INSTALL_DIR/deployment/systemd/gps-tx-age-alert.service" > "$TXA_SVC"
+install -m 644 "$INSTALL_DIR/deployment/systemd/gps-tx-age-alert.timer" "$TXA_TIMER"
+chown "$SERVICE_USER:$SERVICE_GROUP" "$TXA_SVC" "$TXA_TIMER"
+chmod 644 "$TXA_SVC" "$TXA_TIMER"
+gpsops_systemctl daemon-reload
+gpsops_systemctl enable --now gps-tx-age-alert.timer >/dev/null
+ok "Transaction-age alert timer installed as gpsops user unit (every 5 min → Icinga)"
+
 # Host disk + scheduler-liveness alert timer — runs every 5 min, pushes a passive
 # check result to Icinga (rek-d01.gps.vedur.is!Host disk and liveness). Catches
 # the 2026-07-21 failure mode: a full OS volume (/home) that freezes the scheduler

@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the GPS open-transaction age check every 5 minutes
+
+[Timer]
+# 5-min cadence against a 120 s WARN threshold: a leak that matters lasts
+# minutes (the two measured ones ran 373 s and 371 s), so this samples often
+# enough to catch them while they are still open. Cheap — two indexed reads
+# of pg_stat_activity.
+OnBootSec=4min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
