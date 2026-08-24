@@ -251,3 +251,89 @@ def test_lagged_baseline_catches_a_recently_broken_station():
     v = check_yield(RFEL_SIZE, "RFEL", "1Hz_1hr", _conn(440_436))
     assert v.allowed is False
     assert v.fraction < 0.02
+
+
+# --- the connection must not be left in a transaction ------------------------
+
+
+class _TxTrackingConn:
+    """Minimal psycopg2-shaped connection that records transaction state.
+
+    `MagicMock` cannot answer this: it happily absorbs `rollback()` whether or
+    not it is called, so a leak looks identical to a clean read.
+    """
+
+    def __init__(self, row=(461_902, 500)):
+        self._row = row
+        self.in_transaction = False
+        self.rollbacks = 0
+        self.commits = 0
+
+    def cursor(self):
+        conn = self
+
+        class _Cur:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def execute(self, *a, **k):
+                conn.in_transaction = True  # psycopg2 opens one implicitly
+
+            def fetchone(self):
+                return conn._row
+
+        return _Cur()
+
+    def rollback(self):
+        self.rollbacks += 1
+        self.in_transaction = False
+
+    def commit(self):
+        self.commits += 1
+        self.in_transaction = False
+
+
+def test_median_size_leaves_no_open_transaction():
+    """The guard runs per archived file on a long-lived connection.
+
+    Leaving the implicit transaction open parked that connection in
+    `idle in transaction` after every file — a contributor to the chronic
+    connection-slot exhaustion on rek-d01.
+    """
+    conn = _TxTrackingConn()
+    assert median_size(conn, "RFEL", "1Hz_1hr") == 461_902
+    assert conn.in_transaction is False
+    assert conn.rollbacks == 1
+
+
+def test_median_size_ends_the_transaction_even_when_the_query_raises():
+    class _Boom(_TxTrackingConn):
+        def cursor(self):
+            outer = self
+
+            class _Cur:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+                def execute(self, *a, **k):
+                    outer.in_transaction = True
+                    raise RuntimeError("query blew up")
+
+            return _Cur()
+
+    conn = _Boom()
+    assert median_size(conn, "RFEL", "1Hz_1hr") is None  # fails open
+    assert conn.in_transaction is False
+
+
+def test_median_size_never_commits():
+    """rollback, not commit — discarding a stray write is the safer failure."""
+    conn = _TxTrackingConn()
+    median_size(conn, "RFEL", "1Hz_1hr")
+    assert conn.commits == 0

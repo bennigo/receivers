@@ -209,7 +209,15 @@ def median_size(
     median toward zero and disarm the guard exactly where it is needed.
     """
     try:
-        with conn.cursor() as cur:
+        # read_only_cursor, not conn.cursor(): this is a standalone SELECT on a
+        # connection the guard owns but this function does not, and psycopg2
+        # opens an implicit transaction on execute. Leaving it open parked the
+        # guard's connection in `idle in transaction` after EVERY archived
+        # file — see the chronic slot exhaustion on rek-d01. Nothing writes on
+        # this connection, so the helper's rollback() discards nothing.
+        from ..db.tx import read_only_cursor
+
+        with read_only_cursor(conn) as cur:
             cur.execute(
                 """
                 SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY file_size),
