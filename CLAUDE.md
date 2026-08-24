@@ -224,6 +224,20 @@ receivers scheduler integrity --stations ENTC ELDC --tolerance 20
 # Full-archive identity audit (stray + stacked; report-only, emits fix commands)
 receivers archive-audit NYLA --identity --years 2022      # stray/stacked sweep
 receivers archive-audit NYLA --identity --deep --check-version  # + corruption + R2
+
+# Relocate misfiled raw (decoded date/station ≠ filename); --check-station adds the
+# RINEX-header APPROX POSITION fallback for raw teqc can't place (Septentrio SBF →
+# the (90,0) placeholder) — a stray the fallback proves moves together with its RINEX
+receivers archive-sort NYLA --check-station
+receivers archive-sort --file 2025/jan/THOC/15s_24hr/raw/THOC202501070000a.T02 --check-station
+
+# EPOS onboarding pipeline — the 8-step sequence as one verb with a dry-run/pause
+# gate per stage (todo #150). Stages: tos-review → rinex-review → re-rinex →
+# constellation-audit → fix-headers → sitelog → m3g → sync-yaml → epos-disseminate
+# → record-visit. Long jobs (re-rinex, epos-disseminate) launch detached.
+receivers station onboard THOC --dry-run       # report every stage
+receivers station onboard THOC --from re-rinex  # resume mid-pipeline
+receivers station onboard THOC --yes            # unattended (skip pauses)
 ```
 
 ## Architecture
@@ -978,7 +992,7 @@ All receivers use Phase 1 utilities by default:
 
 ---
 
-**Last updated**: 2026-08-09
+**Last updated**: 2026-08-24
 **Package version**: Development (gpslibrary_new)
 **Phase Status**: Phase 3C Complete - Distribution window optimization, midnight offset, multi-session backfill, gap detection, archive reconciler, integrity checker, archive format system, unified logging, adaptive download timeouts
 
