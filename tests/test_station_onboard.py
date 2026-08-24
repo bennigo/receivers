@@ -42,6 +42,7 @@ def test_stage_order_matches_recipe():
         "m3g",
         "sync-yaml",
         "epos-disseminate",
+        "record-visit",
     ]
     assert [s.key for s in STAGES if s.long_running] == [
         "re-rinex",
@@ -54,12 +55,15 @@ def test_stage_order_matches_recipe():
         "sitelog",
         "m3g",
         "epos-disseminate",
+        "record-visit",
     }
     # constellation-audit must sit AFTER re-rinex and BEFORE fix-headers:
     # the R3 header set is the authoritative probe, fix-headers mops up the
     # R2-stuck remainder (pipeline-refinement memory 2026-08-23).
     keys = [s.key for s in STAGES]
     assert keys.index("re-rinex") < keys.index("constellation-audit") < keys.index("fix-headers")
+    # record-visit is the final auditable record, after epos-disseminate.
+    assert keys[-1] == "record-visit"
 
 
 def test_rerinex_argv_includes_required_bounds(tmp_path):
@@ -90,6 +94,7 @@ def _ns(**kw) -> argparse.Namespace:
         station="VMEY", session="15s_24hr", root=None, start=None, end=None,
         work_dir=None, stages=None, from_stage=None, yes=False, dry_run=False,
         log_dir=so.DEFAULT_LOG_DIR, receivers_bin="receivers", tos_bin="tos",
+        participants="bgo@vedur.is", visit_date="now",
     )
     defaults.update(kw)
     return argparse.Namespace(**defaults)
@@ -198,3 +203,14 @@ def test_sync_yaml_stanza_contains_station():
     out = so._preview_sync_yaml(ctx)
     assert "    - VMEY" in out
     assert "git push" in out
+
+
+def test_record_visit_argv_carries_standard_fields():
+    ctx = _ctx(Path("/tmp"), participants="bgo@vedur.is", visit_date="2026-08-24")
+    argv = so._visit_argv(ctx)
+    assert "--type" in argv and "remote" in argv
+    assert "--participants" in argv and "bgo@vedur.is" in argv
+    assert "--start" in argv and "2026-08-24" in argv
+    assert "--no-dry-run" in argv
+    assert so.VISIT_WORK_TEXT in argv
+    assert "TOS reviewed, re-rinexed to R3" in so.VISIT_WORK_TEXT

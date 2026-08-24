@@ -18,6 +18,7 @@ Stage order: ::
     7  m3g                  validate → publish to M3G
     8  sync-yaml            print the allowlist stanza + commit/push steps
     9  epos-disseminate     full-history push (long, detached)
+   10  record-visit         standard remote vitjun (visit) record in TOS
 
 Ordering is load-bearing: the constellation cross-check reads RINEX-3
 headers (R2 under-reports), so it must run AFTER the re-rinex step, and
@@ -130,6 +131,8 @@ class OnboardContext:
     log_dir: str = DEFAULT_LOG_DIR
     receivers_bin: str = "receivers"
     tos_bin: str = "tos"
+    participants: str = "bgo@vedur.is"
+    visit_date: str = "now"
 
     @property
     def log_path(self) -> Path:
@@ -463,6 +466,37 @@ def _preview_epos(ctx: OnboardContext) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Stage 10 — record-visit (remote vitjun)
+# --------------------------------------------------------------------------- #
+
+# Standard one-line record that a station completed the EPOS onboarding
+# pipeline. Mirrors the ELEY remote vitjun (2026-07-14) that codified the
+# practice — a completed, type=remote visit attached to the station.
+VISIT_WORK_TEXT = (
+    "TOS reviewed, re-rinexed to R3, headers fixed, M3G site log published, "
+    "EPOS disseminated"
+)
+
+
+def _visit_argv(ctx: OnboardContext) -> List[str]:
+    return ctx.tos_argv(
+        "visit", "add", "--station", ctx.station, "--type", "remote",
+        "--start", ctx.visit_date, "--participants", ctx.participants,
+        "--work", VISIT_WORK_TEXT, "--no-dry-run",
+    )
+
+
+def _preview_visit(ctx: OnboardContext) -> str:
+    return (
+        f"Record the onboarding as a standard remote vitjun (visit) on "
+        f"{ctx.station} — completed, type=remote, so the work is auditable "
+        f"in TOS:\n"
+        f"   $ {' '.join(_visit_argv(ctx))}\n"
+        f"\nWork: {VISIT_WORK_TEXT}"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Stage table + orchestrator
 # --------------------------------------------------------------------------- #
 
@@ -489,6 +523,8 @@ STAGES: List[Stage] = [
         "epos-disseminate", "EPOS full-history push", True, _preview_epos,
         exec_argv=_epos_argv, long_running=True, log_suffix="epos_full",
     ),
+    Stage("record-visit", "Record remote vitjun", True, _preview_visit,
+          exec_argv=_visit_argv),
 ]
 
 
@@ -525,6 +561,8 @@ def cmd_station_onboard(args: argparse.Namespace) -> int:
         log_dir=args.log_dir,
         receivers_bin=args.receivers_bin,
         tos_bin=args.tos_bin,
+        participants=args.participants,
+        visit_date=args.visit_date,
     )
 
     selected = STAGES
@@ -620,6 +658,14 @@ def create_station_onboard_parser(subparsers) -> argparse.ArgumentParser:
     onboard.add_argument(
         "--tos-bin", default="tos",
         help="tos console script (default: tos on PATH)",
+    )
+    onboard.add_argument(
+        "--participants", default="bgo@vedur.is",
+        help="Participant email for the record-visit vitjun (default: bgo@vedur.is)",
+    )
+    onboard.add_argument(
+        "--visit-date", default="now",
+        help="Date for the record-visit vitjun (default: now; use YYYY-MM-DD to backfill)",
     )
     onboard.set_defaults(func=cmd_station_onboard)
     return parser
