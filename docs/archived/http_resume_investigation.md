@@ -15,7 +15,7 @@ During testing of Phase 1 integration with MANA station (NetR9), slow connection
 ### Test Setup
 
 Created test script to check if Trimble NetR9 HTTP API supports HTTP Range requests (resume capability):
-- **File**: `tests/test_http_range_support.py`
+- **File**: `tests/test_http_range_support.py` (moved 2026-08-24 to `scripts/probe_http_range_support.py` — it talks to a live receiver, so pytest should never have collected it)
 - **Test station**: MANA (10.4.1.98:8060)
 - **Test file**: MANA202509300900b.T02 (1,380,413 bytes)
 

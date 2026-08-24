@@ -312,6 +312,11 @@ def _make_scheduler(schedule_value):
     inst = BulkDownloadScheduler.__new__(BulkDownloadScheduler)
     inst.scheduler = MagicMock()
     inst.logger = MagicMock()
+    # __new__ bypasses __init__, so every attribute the method under test
+    # touches has to be stubbed here. _disabled_jobs IS initialised in
+    # __init__ (bulk_scheduler.py) — this stub simply drifted behind
+    # _schedule_morning_recovery growing a _mark_disabled() call.
+    inst._disabled_jobs = []
     inst.yaml_config = {
         "morning_recovery": {
             "enabled": True,
