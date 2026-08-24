@@ -28,6 +28,7 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from ..db.tx import read_only_cursor
 from ..utils.content_hash import CorruptArchiveFileError, content_sha256
 
 logger = logging.getLogger("receivers.archive.verify")
@@ -194,8 +195,21 @@ def verify_archive_catalog(
         stats.checked += 1
 
         # (1) local↔archive cross-check — DB only.
+        #
+        # read_only_cursor, not conn.cursor(): psycopg2 opens an implicit
+        # transaction on execute, and the row loop then runs step (2) — a
+        # decompress + sha256 over NFS — before anything commits. That left
+        # the connection `idle in transaction` across the hash of every file,
+        # measured at 371 s in production. An open transaction pins the vacuum
+        # xmin horizon and blocks CREATE/DROP INDEX CONCURRENTLY (what killed
+        # migration 065 six times).
+        #
+        # The rollback discards nothing: this row's UPDATE has not run yet,
+        # and the previous row's was already committed at the foot of the
+        # loop. The tx audit cannot see this class — the function DOES commit,
+        # so it is classified a write and skipped, correctly by its own model.
         local_session = _local_session(session_type, file_category)
-        with conn.cursor() as cur:
+        with read_only_cursor(conn) as cur:
             cur.execute(
                 """SELECT content_sha256 FROM file_tracking
                    WHERE sid = %s AND session_type = %s AND file_date = %s

@@ -2110,20 +2110,41 @@ class GapDetector:
             station_id, session_type, start_date, end_date
         )
 
-        try:
-            conn = self.file_tracker._conn
-            with conn.cursor() as cur:
-                for file_date, file_hour in expected_files:
-                    try:
-                        # Check archive
-                        exists, filepath, file_size = self._check_archive_for_file(
+        # ---- Phase 1: the SLOW work, with NO transaction open ---------------
+        # _check_archive_for_file is pure filesystem (os.path.isfile/getsize
+        # plus a directory scan) over an NFS mount. Running it inside the
+        # transaction held one open for the whole scan — measured at 373 s in
+        # production. An open transaction pins the vacuum xmin horizon and
+        # blocks CREATE/DROP INDEX CONCURRENTLY, which is what killed
+        # migration 065 six times. The tx audit cannot see this: the function
+        # DOES commit, so it is classified a write and skipped, correctly by
+        # its own model. So the fix is structural, not a cursor swap.
+        probed: list[tuple] = []
+        for file_date, file_hour in expected_files:
+            try:
+                probed.append(
+                    (
+                        file_date,
+                        file_hour,
+                        *self._check_archive_for_file(
                             station_id,
                             session_type,
                             file_date,
                             file_hour,
                             receiver_type,
-                        )
+                        ),
+                    )
+                )
+            except Exception as e:
+                logger.debug(f"Error probing archive for file: {e}")
+                errors += 1
 
+        # ---- Phase 2: the DB work, no filesystem access ---------------------
+        try:
+            conn = self.file_tracker._conn
+            with conn.cursor() as cur:
+                for file_date, file_hour, exists, filepath, file_size in probed:
+                    try:
                         if exists:
                             files_found += 1
                             filename = os.path.basename(filepath) if filepath else None
