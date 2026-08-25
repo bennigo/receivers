@@ -466,6 +466,18 @@ class DatabaseConnectionFactory:
     _mirror_failed_until: float = 0.0
 
     @classmethod
+    def _default_connect_timeout(cls, cfg: Optional[Dict[str, str]] = None) -> str:
+        """Seconds to wait for a Postgres connect, as a libpq string.
+
+        POSTGRES_CONNECT_TIMEOUT > [database] connect_timeout > 10. Shared by
+        the params and DSN branches so they cannot drift apart — they had,
+        and the DSN branch inherited libpq's indefinite default.
+        """
+        if cfg is None:
+            cfg = _load_config_file()
+        return os.getenv("POSTGRES_CONNECT_TIMEOUT", cfg.get("connect_timeout", "10"))
+
+    @classmethod
     def get_connection_params(cls, database: Optional[str] = None) -> Dict[str, str]:
         """Get connection parameters from config file and environment.
 
@@ -496,9 +508,7 @@ class DatabaseConnectionFactory:
             # daily downloads waiting on libpq's default (indefinite) connect.
             # Best-effort fan-out only catches connect *errors*; a hang needs a
             # ceiling. Localhost connects are instant, so this is a no-op there.
-            "connect_timeout": os.getenv(
-                "POSTGRES_CONNECT_TIMEOUT", cfg.get("connect_timeout", "10")
-            ),
+            "connect_timeout": cls._default_connect_timeout(cfg),
         }
 
         # Server-side ceilings on EVERY app connection. Without them a single
@@ -778,7 +788,19 @@ class DatabaseConnectionFactory:
         import psycopg2
 
         if connection_string:
-            return psycopg2.connect(dsn=connection_string)
+            # The params branch below sets connect_timeout; this one did not,
+            # so a DSN-configured caller kept libpq's default (indefinite)
+            # connect. A worker blocked there holds its pool thread forever —
+            # in the health pool that is silent, because a ThreadPoolExecutor
+            # queues rather than rejects (the 2026-08-10 blackout shape).
+            # An explicit kwarg would override a DSN that already says so, so
+            # only supply it when the DSN does not.
+            extra = (
+                {}
+                if "connect_timeout" in connection_string
+                else {"connect_timeout": cls._default_connect_timeout()}
+            )
+            return psycopg2.connect(dsn=connection_string, **extra)
 
         params = cls.get_connection_params(database)
         primary = psycopg2.connect(**params)
