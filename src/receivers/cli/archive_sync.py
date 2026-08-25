@@ -1323,14 +1323,28 @@ def _record_plan_applied(plan_path: Path, res) -> None:
         print(f"   ⚠️  applied-marker git tracking failed: {exc}")
 
 
-def _persist_remediation_records(plans, skips, *, gate_m: float) -> None:
+def _persist_remediation_records(
+    plans, skips, *, gate_m: float, commit: bool = False
+) -> None:
     """Write the fix files into the gps-tos-corrections repo (tracked!).
 
     Structure: ``<repo>/<station>/raw-remediation/<UTC-stamp>/plan.tsv`` +
     ``report.tsv`` — station dirs at the top level (existing repo convention,
-    lowercase), one dated batch dir per run, committed so every remediation
-    is reviewable history. Best-effort: no repo configured -> a hint, never
-    a failure.
+    lowercase), one dated batch dir per run. Best-effort: no repo configured ->
+    a hint, never a failure.
+
+    Files are ALWAYS written — the review workflow depends on it, since the
+    ``--apply-plan`` command this run prints points at the plan.tsv below.
+
+    ``commit`` gates only the git commit+push, and is passed ``--yes``: the
+    corrections repo records remediation ACTIONS, not rehearsals. It used to
+    commit and push unconditionally, so a pure dry-run published to a shared
+    repo with no flag involved — observed 2026-08-25, when a dry-run against a
+    *synthetic* staged archive committed and pushed test data (reverted). That
+    also made the verb impossible to practise. Nothing is lost by waiting:
+    :func:`_record_plan_applied` stages the whole batch dir, so applying a plan
+    commits plan, report and applied-marker together — one commit carrying both
+    the intent and the outcome, rather than the two split across runs.
     """
     import subprocess
     from datetime import datetime, timezone
@@ -1393,6 +1407,17 @@ def _persist_remediation_records(plans, skips, *, gate_m: float) -> None:
         written.append(out_dir)
         print(f"   📁 fix files -> {out_dir}")
     _persist_remediation_records.last_written = written
+
+    if not commit:
+        # Say it plainly rather than leaving the tree quietly dirty: someone
+        # who wants a rehearsal recorded should be able to see how.
+        rels = " ".join(str(d.relative_to(repo_path)) for d in written)
+        print(
+            "   📝 written but NOT committed (dry-run) — record them with:\n"
+            f"      git -C {repo_path} add {rels} && "
+            f"git -C {repo_path} commit && git -C {repo_path} push"
+        )
+        return
 
     try:
         rels = [str(d.relative_to(repo_path)) for d in written]
@@ -1681,7 +1706,7 @@ def cmd_archive_sort(args: argparse.Namespace) -> int:
 
     if not plans:
         _write_report()
-        _persist_remediation_records(plans, skips, gate_m=gate_m)
+        _persist_remediation_records(plans, skips, gate_m=gate_m, commit=bool(args.yes))
         print("✅ no misfiled files — nothing to move")
         _print_fix_commands(
             plans, skips, getattr(_persist_remediation_records, "last_written", [])
@@ -1724,7 +1749,7 @@ def cmd_archive_sort(args: argparse.Namespace) -> int:
             f"     receivers archive-sort --apply-plan {args.plan_out} --yes"
         )
     _write_report()
-    _persist_remediation_records(plans, skips, gate_m=gate_m)
+    _persist_remediation_records(plans, skips, gate_m=gate_m, commit=bool(args.yes))
     _print_fix_commands(
         plans, skips, getattr(_persist_remediation_records, "last_written", [])
     )
