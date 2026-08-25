@@ -736,11 +736,19 @@ def scan_station_rinex(
     which is the stray shape that actually occurs: the file is named for the
     tree it sits in and only its *header* betrays it (VMOS/GRVV). The inverse —
     a file named ``GRVV…`` sitting in ``VMOS/…/rinex/`` — is excluded, and that
-    exclusion was measured rather than assumed: of **123,443** canonical RINEX
-    files in rek-d01's collection window (2026-08-25), **zero** were
-    foreign-named and zero sat outside the canonical 6-segment layout. The same
-    filter is what ``file_identity._iter_rinex_files`` applies, so the audit and
-    the sorter agree on what a station's files are.
+    exclusion was measured rather than assumed (2026-08-25): **zero**
+    foreign-named files among 426,425 canonical RINEX in the historical archive
+    (2019 + 2024), 121,144 more across 2012/2019/2024, and 123,443 in rek-d01's
+    collection window. The same filter is what
+    ``file_identity._iter_rinex_files`` applies, so the audit and the sorter
+    agree on what a station's files are.
+
+    Known blind spot, shared with :func:`scan_station_raw`: a handful of
+    stations carry a SESSION-LESS layout, ``YYYY/mon/STA/rinex/FILE`` instead
+    of ``YYYY/mon/STA/session/rinex/FILE`` (49 files under TKJS in 2019, 123
+    such paths across the years walked). Neither walk descends to them, and
+    :func:`plan_rinex_relocations` reports one as ``unexpected-layout`` if fed
+    directly. Pre-existing, not introduced here.
 
     Note the coupling: :func:`plan_rinex_relocations` builds its destination
     as ``TRUE + name[4:]``, which assumes those first four characters are the
