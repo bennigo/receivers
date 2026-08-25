@@ -144,3 +144,88 @@ class TestNothingToRecord:
             )
         assert _git_calls(mock_run) == []
         assert archive_sync._persist_remediation_records.last_written == []
+
+
+class TestTheCallSitesActuallyPassIt:
+    """The 8 tests above prove the FUNCTION honours `commit`. They say nothing
+    about whether the CLI passes the right value — the same shape as the
+    vacuously-passing tests found on 2026-08-25.
+
+    Without this, flipping the call sites to a hardcoded `commit=False` leaves
+    every test above green while the corrections repo silently stops recording
+    anything: a worse failure than the pollution being fixed, because it is
+    silent loss of the audit trail.
+
+    Driven through the REAL parser so defaults and flag names are exercised,
+    not a hand-built Namespace that could drift from them.
+    """
+
+    def _args(self, argv):
+        import argparse
+
+        from receivers.cli.archive_sync import create_archive_sort_parser
+
+        root = argparse.ArgumentParser()
+        sub = root.add_subparsers()
+        create_archive_sort_parser(sub)
+        return root.parse_args(["archive-sort", *argv])
+
+    def _run(self, argv, tmp_path):
+        """Invoke cmd_archive_sort, capturing the commit kwarg it passes."""
+        from receivers.cli.archive_sync import cmd_archive_sort
+
+        seen = {}
+
+        def spy(plans, skips, *, gate_m, commit=False):
+            seen["commit"] = commit
+            spy.last_written = []
+
+        # cmd_archive_sort imports these locally, so they are patched at their
+        # source module, not as attributes of archive_sync. The planner is
+        # stubbed because this test is about the flag, not the decode.
+        with (
+            patch.object(archive_sync, "_persist_remediation_records", spy),
+            patch("receivers.archive.plan_relocations", return_value=([_plan()], [])),
+            patch("receivers.archive.plan_rinex_relocations", return_value=([], [])),
+            # MUST be patched: with --yes this verb executes REAL moves through
+            # the rawdata gateway, so an unpatched run would ssh to production —
+            # the failure mode already on record for this suite.
+            patch("receivers.archive.relocate_archive_files") as mock_relocate,
+        ):
+            args = self._args([*argv, "--root", str(tmp_path)])
+            try:
+                cmd_archive_sort(args)
+            except (SystemExit, Exception):
+                # Anything after the persist call is irrelevant here — the
+                # kwarg has already been recorded.
+                pass
+        seen["relocated"] = mock_relocate.called
+        return seen
+
+    def test_dry_run_passes_commit_false(self, tmp_path, repo):
+        seen = self._run(["--file", "2024/jan/VMOS/15s_24hr/raw/a.sbf"], tmp_path)
+        assert seen.get("commit") is False
+
+    def test_yes_passes_commit_true(self, tmp_path, repo):
+        seen = self._run(
+            ["--file", "2024/jan/VMOS/15s_24hr/raw/a.sbf", "--yes"], tmp_path
+        )
+        assert seen.get("commit") is True, (
+            "--yes must still publish — otherwise the corrections repo "
+            "silently stops recording remediations"
+        )
+
+    def test_the_relocator_is_reached_and_therefore_must_stay_patched(
+        self, tmp_path, repo
+    ):
+        """Guard on the guard. With --yes this verb really does reach the
+        relocation step, which moves files through gpsops@rawdata. This asserts
+        the mock was hit — i.e. an unpatched version of these tests WOULD ssh to
+        production, the failure mode already on record for this suite. If this
+        ever stops being true, the patch above can be dropped deliberately
+        rather than by accident.
+        """
+        seen = self._run(
+            ["--file", "2024/jan/VMOS/15s_24hr/raw/a.sbf", "--yes"], tmp_path
+        )
+        assert seen["relocated"] is True
