@@ -23,10 +23,8 @@ from typing import Any, Dict, Optional
 # Import our verified rxtools utility
 from ..utils.rxtools_extractor import (
     BIN2ASC_PATH,
-    extract_disk_status,
-    extract_power_status,
-    extract_quality_ind,
-    extract_receiver_status,
+    RXTOOLS_HEALTH_TIMEOUT_S,
+    extract_sbf_blocks,
 )
 
 
@@ -148,6 +146,12 @@ class RxToolsExtractor:
     def _extract_all_health_blocks(self, sbf_file: Path) -> Dict[str, Any]:
         """Extract all health blocks using verified utility functions.
 
+        One ``bin2asc`` pass covers all four blocks.  Extracting them one at a
+        time cost four subprocesses AND four stacked timeout ceilings on the
+        same health-executor thread — the pile-up that starved fleet monitoring
+        on 2026-08-11.  Blocks are still parsed independently, so a malformed
+        one loses only itself.
+
         Args:
             sbf_file: Path to decompressed SBF file
 
@@ -161,9 +165,22 @@ class RxToolsExtractor:
             "receiver_specific": {},
         }
 
+        try:
+            blocks = extract_sbf_blocks(
+                sbf_file,
+                ("PowerStatus", "ReceiverStatus2", "DiskStatus", "QualityInd"),
+                timeout=RXTOOLS_HEALTH_TIMEOUT_S,
+            )
+        except Exception as e:
+            # Whole-file failure (bin2asc wedged, killed, or unreadable input).
+            # Return the empty structure so the caller degrades to port-only
+            # health rather than losing the health row altogether.
+            self.logger.warning(f"Failed to extract health blocks: {e}")
+            return health_data
+
         # Extract PowerStatus (4101)
         try:
-            power_data = extract_power_status(sbf_file)
+            power_data = blocks["PowerStatus"]
             if power_data:
                 latest = power_data[-1]  # Get most recent sample
                 voltage = latest.get("Vin Voltage [V]")
@@ -184,7 +201,7 @@ class RxToolsExtractor:
 
         # Extract ReceiverStatus (4014) - ReceiverStatus2
         try:
-            receiver_data = extract_receiver_status(sbf_file)
+            receiver_data = blocks["ReceiverStatus2"]
             if receiver_data:
                 latest = receiver_data[-1]  # Get most recent sample
 
@@ -220,7 +237,7 @@ class RxToolsExtractor:
 
         # Extract DiskStatus (4059)
         try:
-            disk_data = extract_disk_status(sbf_file)
+            disk_data = blocks["DiskStatus"]
             if disk_data:
                 latest = disk_data[-1]  # Get most recent sample
 
@@ -249,7 +266,7 @@ class RxToolsExtractor:
 
         # Extract QualityInd (4082)
         try:
-            quality_data = extract_quality_ind(sbf_file)
+            quality_data = blocks["QualityInd"]
             if quality_data:
                 latest = quality_data[-1]  # Get most recent sample
 
