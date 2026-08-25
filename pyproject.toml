@@ -75,8 +75,27 @@ dependencies = [
     # NOTE the tostools version is still 0.6.1, so this is a SAME-VERSION SHA
     # bump: pip will not re-fetch a direct-URL dep whose installed version
     # already satisfies it. It takes effect only via install.sh's uninstall
-    # step — a plain `pip install -e .` on rek-d01 will silently keep 668964b.
-    "tostools @ git+https://github.com/bgo-gnss/tostools@a5f1b7d",
+    # step — a plain `pip install -e .` on rek-d01 will silently keep the old
+    # SHA. The targeted alternative, which avoids install.sh's destructive
+    # whole-tree uninstall entirely:
+    #   venv/bin/pip install --force-reinstall --no-deps \
+    #     'tostools @ git+https://github.com/bgo-gnss/tostools@<sha>'
+    #
+    # @c9bd76b (2026-08-25) — 23 commits on from a5f1b7d. rek-d01 was that far
+    # behind, so this is the first bump carrying any of it:
+    #   * the ATTRIBUTE CATALOG now describes TOS — `tos audit
+    #     attribute-catalog` goes from 53 phantoms / 15 unlisted to CLEAN.
+    #     Includes dcb58f6's GPS-slice fix, without which `tosGPS search
+    #     'date_end != null'` disagrees with `--discontinued` (#156) because
+    #     the catalog called that attribute `close_date`, a name TOS does not
+    #     define. That divergence is live on rek-d01 until this lands.
+    #   * `tos search` is the entity layer (81e4e86) — no silent GPS subtype
+    #     pin, so 217 -> 443 entities.
+    #   * search selectors: visit.* (42d01f2), contact.* + --owner (2fa27d9),
+    #     agency-abbreviation resolution (dfd1c3a), fleet-wide `visit search`.
+    #   * `tos search` validates attribute codes (a typo used to ANSWER rather
+    #     than error: 'typo = null' matched the whole fleet).
+    "tostools @ git+https://github.com/bgo-gnss/tostools@c9bd76b",
     # gps_parser main @257a2ee: passive-station schema (2c5b428) + canonical
     # module-level parse_station_role (257a2ee) — the API config_utils imports.
     "gps-parser @ git+https://github.com/bgo-gnss/gps_parser@257a2ee",
