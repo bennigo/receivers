@@ -167,16 +167,31 @@ class TestGetConnection:
             assert conn is not None
 
     def test_get_connection_with_connection_string(self):
-        """Test connection creation with explicit connection string."""
+        """A DSN connection carries connect_timeout like the params branch.
+
+        It did not, until 2026-08-24: the DSN branch inherited libpq's
+        default, which is to wait indefinitely. A worker blocked on connect
+        holds its pool thread forever, and in the health pool that is silent
+        — a ThreadPoolExecutor queues rather than rejects.
+        """
         with patch("psycopg2.connect") as mock_connect:
             mock_connect.return_value = MagicMock()
             conn = DatabaseConnectionFactory.get_connection(
                 connection_string="postgresql://user:pass@host:5432/db"
             )
             mock_connect.assert_called_once_with(
-                dsn="postgresql://user:pass@host:5432/db"
+                dsn="postgresql://user:pass@host:5432/db",
+                connect_timeout=DatabaseConnectionFactory._default_connect_timeout(),
             )
             assert conn is not None
+
+    def test_a_dsn_that_sets_connect_timeout_is_not_overridden(self):
+        """An explicit kwarg would win over the DSN, so only add when absent."""
+        dsn = "postgresql://user:pass@host:5432/db?connect_timeout=3"
+        with patch("psycopg2.connect") as mock_connect:
+            mock_connect.return_value = MagicMock()
+            DatabaseConnectionFactory.get_connection(connection_string=dsn)
+            mock_connect.assert_called_once_with(dsn=dsn)
 
     def test_get_connection_import_error(self):
         """Test ImportError when psycopg2 not available."""
