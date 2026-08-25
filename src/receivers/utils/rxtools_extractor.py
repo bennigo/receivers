@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from .compression_detector import CompressionConverter, CompressionDetector
 
@@ -45,10 +45,140 @@ RXTOOLS_BYTES_TIMEOUT_S = float(
     os.environ.get("RECEIVERS_RXTOOLS_BYTES_TIMEOUT_S", "30")
 )
 
+# Ceiling for the live-health SBF fallback specifically.
+#
+# RXTOOLS_TIMEOUT_S is sized for a full daily SBF; the health fallback reads an
+# hourly status_1hr file (~70 kB decompressed) and was measured at 0.18 s for a
+# whole-file pass on rek-d01 2026-08-25.  Inheriting the 300 s ceiling there let
+# ONE wedged health job hold a health-executor thread for minutes; the ceiling
+# has to match the work, not the worst file in the archive.
+RXTOOLS_HEALTH_TIMEOUT_S = float(
+    os.environ.get("RECEIVERS_RXTOOLS_HEALTH_TIMEOUT_S", "30")
+)
+
 
 def gps_time_to_datetime(tow_seconds: float, wnc: int) -> datetime:
     """Convert GPS Week Number and Time of Week to Python datetime."""
     return GPS_EPOCH + timedelta(weeks=wnc, seconds=tow_seconds)
+
+
+def _decompress_for_bin2asc(
+    sbf_file: Path, output_dir: Path
+) -> tuple[Path, Optional[Path]]:
+    """Decompress *sbf_file* into *output_dir* if it is compressed.
+
+    Args:
+        sbf_file: Path to SBF file (compressed or uncompressed)
+        output_dir: Directory to hold the decompressed copy
+
+    Returns:
+        ``(file_to_process, temp_decompressed)`` — *temp_decompressed* is None
+        when the input was already uncompressed, and is the caller's to unlink
+        otherwise.
+
+    Raises:
+        RuntimeError: If decompression fails
+    """
+    compression_info = CompressionDetector().detect_compression(sbf_file)
+    if not compression_info:
+        return sbf_file, None
+
+    format_name, _ = compression_info
+
+    # Get base name without compression extension
+    # If stem already ends with .sbf, use it; otherwise add .sbf
+    base_name = sbf_file.stem
+    if not base_name.endswith(".sbf"):
+        base_name = f"{base_name}.sbf"
+
+    temp_decompressed = output_dir / base_name
+    if not CompressionConverter().decompress_file(sbf_file, temp_decompressed):
+        raise RuntimeError(f"Failed to decompress {format_name} file: {sbf_file}")
+
+    return temp_decompressed, temp_decompressed
+
+
+def extract_sbf_blocks(
+    sbf_file: Path,
+    message_names: Sequence[str],
+    timeout: Optional[float] = None,
+) -> Dict[str, List[Dict]]:
+    """Extract several SBF blocks in ONE bin2asc pass.
+
+    ``bin2asc`` without ``-m`` writes one CSV per block present in the file, so
+    N blocks cost one subprocess instead of N.  That matters twice over: it is
+    ~3.5x faster on a status_1hr file (0.18 s vs 0.63 s for four blocks,
+    measured on rek-d01 2026-08-25), and it bounds a wedged run at ONE timeout
+    ceiling rather than N of them stacked on the same worker thread.
+
+    Args:
+        sbf_file: Path to SBF file (compressed or uncompressed)
+        message_names: SBF block names to return (e.g. ``["PowerStatus"]``)
+        timeout: Seconds to allow bin2asc (default: RXTOOLS_TIMEOUT_S)
+
+    Returns:
+        Mapping of block name to parsed rows, datetime-enriched.  A requested
+        block the file does not carry maps to an empty list.
+
+    Raises:
+        RuntimeError: If bin2asc fails, or exceeds *timeout*
+        FileNotFoundError: If bin2asc is not installed or file not found
+    """
+    if not Path(BIN2ASC_PATH).exists():
+        raise FileNotFoundError(
+            f"RxTools bin2asc not found at {BIN2ASC_PATH}. "
+            "Please install RxTools from https://www.septentrio.com/"
+        )
+
+    if not sbf_file.exists():
+        raise FileNotFoundError(f"SBF file not found: {sbf_file}")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        file_to_process, _ = _decompress_for_bin2asc(sbf_file, temp_path)
+
+        # No -m: emit every block in the file in a single pass.
+        cmd = [BIN2ASC_PATH, "-f", str(file_to_process), "-t", "-p", str(temp_path)]
+
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=RXTOOLS_TIMEOUT_S if timeout is None else timeout,
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"bin2asc failed for {sbf_file.name}:\n"
+                f"  Command: {' '.join(cmd)}\n"
+                f"  Error: {e.stderr}"
+            )
+        except subprocess.TimeoutExpired as e:
+            # subprocess.run has already killed the child by the time this is
+            # raised. Surface it as RuntimeError so callers degrade the same
+            # way they do for a bin2asc failure.
+            logger.warning(
+                "bin2asc timed out after %ss for %s — killed",
+                e.timeout,
+                file_to_process.name,
+            )
+            raise RuntimeError(
+                f"bin2asc timed out after {e.timeout}s for {sbf_file.name}:\n"
+                f"  Command: {' '.join(cmd)}"
+            )
+
+        blocks: Dict[str, List[Dict]] = {}
+        for message_name in message_names:
+            csv_file = temp_path / f"{file_to_process.name}_SBF_{message_name}.txt"
+            if not csv_file.exists():
+                blocks[message_name] = []
+                continue
+            rows = parse_csv_to_dict(csv_file)
+            _enrich_rows_with_datetime(rows)
+            blocks[message_name] = rows
+
+        return blocks
 
 
 def extract_sbf_message(
@@ -91,30 +221,7 @@ def extract_sbf_message(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if file is compressed and decompress if needed
-    detector = CompressionDetector()
-    converter = CompressionConverter()
-
-    compression_info = detector.detect_compression(sbf_file)
-    temp_decompressed = None
-    file_to_process = sbf_file
-
-    if compression_info:
-        # File is compressed - decompress to temp file
-        format_name, _ = compression_info
-
-        # Get base name without compression extension
-        # If stem already ends with .sbf, use it; otherwise add .sbf
-        base_name = sbf_file.stem
-        if not base_name.endswith(".sbf"):
-            base_name = f"{base_name}.sbf"
-
-        temp_decompressed = output_dir / base_name
-
-        if not converter.decompress_file(sbf_file, temp_decompressed):
-            raise RuntimeError(f"Failed to decompress {format_name} file: {sbf_file}")
-
-        file_to_process = temp_decompressed
+    file_to_process, temp_decompressed = _decompress_for_bin2asc(sbf_file, output_dir)
 
     try:
         # Run bin2asc on uncompressed file

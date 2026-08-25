@@ -3006,10 +3006,17 @@ class PolaRX5(BaseReceiver):
     def _get_health_from_sbf_files(self) -> Optional[Dict[str, Any]]:
         """Extract health data from local SBF files.
 
+        Runs under the shared decode gate: this is subprocess conversion work
+        happening on a health-executor thread, so its aggregate concurrency is
+        capped. When no slot is free the decode is skipped rather than queued,
+        and the caller falls back to port-only health — see
+        ``receivers.health.decode_gate``.
+
         Returns:
             Dictionary with health data or None if not available
         """
         from ..health import RxToolsExtractor, RxToolsNotFoundError
+        from ..health.decode_gate import decode_slot
 
         try:
             status_file = self._find_latest_status_file()
@@ -3018,7 +3025,10 @@ class PolaRX5(BaseReceiver):
                 extractor = RxToolsExtractor(station_id=self.station_id)
 
                 if extractor.check_rxtools_available():
-                    health_data = extractor.extract_health_from_sbf(status_file)
+                    with decode_slot(self.station_id) as claimed:
+                        if not claimed:
+                            return None
+                        health_data = extractor.extract_health_from_sbf(status_file)
                     self.logger.info(f"Extracted health data from {status_file}")
                     return health_data
                 else:

@@ -584,6 +584,10 @@ status_monitoring:
   schedule: "5m"
   distribution_window: 3
   targets: [database, icinga]
+  # Threads on the dedicated 'health' executor. Unset = min(max_workers // 3, 30).
+  # Set it outright to decouple fleet-monitoring capacity from max_workers,
+  # which sizes downloads and has nothing to do with health.
+  # workers: 30
 
 backfill:
   enabled: true

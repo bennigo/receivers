@@ -283,6 +283,16 @@ receivers download STATION --sync --archive  # Phase 1 is always active
   - `:55-:00` — cooldown
   - Health monitoring: every 5m on separate executor (always)
 - **Three executors**: `default` (live downloads), `health` (monitoring), `backfill` (gap fill + reconciler)
+- **Health isolation**: the `health` executor separates monitoring from downloads, but the
+  health job itself decodes SBF (`PolaRX5._get_health_from_sbf_files` → `bin2asc`) when the
+  TCP probe yields no metrics — ~3 % of Septentrio runs. That conversion work is bounded three
+  ways: one `bin2asc` pass for all four blocks (not one per block), a health-sized
+  `RXTOOLS_HEALTH_TIMEOUT_S` (30 s) instead of the 300 s daily-SBF ceiling, and a
+  **non-blocking** aggregate cap of `RECEIVERS_HEALTH_DECODE_SLOTS` (4) concurrent decodes
+  (`receivers/health/decode_gate.py`). No free slot ⇒ the decode is **skipped** and the station
+  reports port-only health for that cycle — never queued, since queueing would block the very
+  thread the cap protects. Sizing: `status_monitoring.workers` in `scheduler.yaml` sets the
+  executor's threads outright; unset it falls back to `min(max_workers // 3, 30)`.
 - **Distribution windows**: Stations spread evenly across time to prevent burst load
 - **Midnight offset**: 1Hz_1hr uses `midnight_offset: 10` (hour 0 starts at 00:11) to clear 15s_24hr's :01-:06 window
 - **Multi-session backfill**: All three sessions backfilled via self-gating interval jobs

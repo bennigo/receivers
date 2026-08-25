@@ -1766,7 +1766,21 @@ class BulkDownloadScheduler:
         #   default  — live downloads
         #   health   — real-time health monitoring
         #   backfill — backfill, gap detection, archive reconciler
+        # health defaults to a share of max_workers, but can be set outright via
+        # status_monitoring.workers — the derived form couples fleet monitoring
+        # capacity to a download-concurrency knob that has nothing to do with it.
         health_workers = max(1, min(self.max_workers // 3, 30))
+        configured_health_workers = self.yaml_config.get("status_monitoring", {}).get(
+            "workers"
+        )
+        if configured_health_workers is not None:
+            try:
+                health_workers = max(1, int(configured_health_workers))
+            except (TypeError, ValueError):
+                self.logger.warning(
+                    f"Invalid status_monitoring.workers "
+                    f"({configured_health_workers!r}) — using derived {health_workers}"
+                )
         backfill_workers = max(self.max_workers // 5, 5)
         executors = {
             "default": ThreadPoolExecutor(self.max_workers),
