@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -46,6 +47,12 @@ logger = logging.getLogger("receivers.archive.sort")
 # Files smaller than this are stubs (0-byte / truncated header fragments seen
 # in the .atc sweeps) — flagged, never relocated.
 MIN_RAW_BYTES = 4096
+
+# The RINEX equivalent. A raw-sized floor is wrong here: a compressed hourly
+# Hatanaka observation file is legitimately a few kB, so MIN_RAW_BYTES would
+# skip real files as stubs. This only has to exclude 0-byte and
+# truncated-header fragments — anything with a readable header clears it.
+MIN_RINEX_BYTES = 256
 
 # Position-identity gate: SAME metric as the converter's RINEX-header check
 # (one knob: receivers.cfg [rinex] position_gate_m; default 30 m).
@@ -205,6 +212,58 @@ def _rinex_name_matches_date(name: str, station: str, claimed) -> bool:
         return True
     # RINEX 3 long: STA + 4-char country/marker + '_R_' + YYYYDDD0000…
     return f"_{claimed:%Y}{doy:03d}" in name
+
+
+@dataclass(frozen=True)
+class ParsedRinexName:
+    """Station + date a RINEX FILENAME claims (the raw analogue is
+    ``ParsedRawName``)."""
+
+    station: str
+    claimed: datetime
+
+
+def parse_rinex_name(name: str) -> Optional[ParsedRinexName]:
+    """Station + claimed date from a RINEX filename, or None.
+
+    ``parse_raw_name`` returns None for a ``.d.Z`` — the raw name grammar is
+    ``STA + YYYYMMDDHHMM + letter``, and a RINEX carries neither a full date
+    nor a session letter in that position. Hence a separate parser rather than
+    a widened one.
+
+    Handles both archive shapes:
+
+    - RINEX 2 short Hatanaka — ``VMOS0300.24D.Z`` (station, day-of-year,
+      session digit, 2-digit year, D/O);
+    - RINEX 3 long IGS — ``VMOS00ISL_R_20240300000_01D_30S_MO.crx.gz``.
+    """
+    if len(name) < 11 or not name[:4].isalnum():
+        return None
+    station = name[:4].upper()
+
+    # RINEX 3 long: …_R_YYYYDDDHHMM_…
+    m = re.search(r"_(\d{4})(\d{3})\d{4}_", name)
+    if m:
+        year, doy = int(m.group(1)), int(m.group(2))
+        try:
+            return ParsedRinexName(station, datetime(year, 1, 1) + timedelta(doy - 1))
+        except (ValueError, OverflowError):
+            return None
+
+    # RINEX 2 short: STA + DDD + session digit + '.' + YY + [DOdo]
+    m = re.match(r"^[A-Z0-9]{4}(\d{3})(\d)\.(\d{2})[A-Za-z]", name, re.IGNORECASE)
+    if not m:
+        return None
+    doy, yy = int(m.group(1)), int(m.group(3))
+    if doy < 1 or doy > 366:
+        return None
+    # The archive starts in the late 1990s and RINEX 2 short names are gone
+    # well before 2080, so the standard pivot is unambiguous here.
+    year = 1900 + yy if yy >= 80 else 2000 + yy
+    try:
+        return ParsedRinexName(station, datetime(year, 1, 1) + timedelta(doy - 1))
+    except (ValueError, OverflowError):
+        return None
 
 
 def _read_rinex_approx_position(path: Path):
@@ -503,6 +562,215 @@ def plan_relocations(
 
         logger.info("remediation: %s [%s] -> %s", rel, ",".join(reasons), dst_rel)
     return plans, skips
+
+
+def split_raw_and_rinex(rel_files: list[str]) -> tuple[list[str], list[str]]:
+    """Route explicit paths to the raw pass or the RINEX pass.
+
+    The two passes need different parsers, size floors and decoders, so a
+    mixed ``--file``/``--list`` has to be split before planning. Routing is by
+    the ``rinex`` path segment ANYWHERE in the path rather than only at the
+    canonical 6-segment position, so a non-canonical RINEX path is reported as
+    ``unexpected-layout`` by the pass that understands it rather than
+    ``unparseable-name`` by the one that does not.
+
+    Returns ``(raw_rels, rinex_rels)``.
+    """
+    raw: list[str] = []
+    rinex: list[str] = []
+    for rel in rel_files:
+        parts = rel.split("/")
+        (rinex if "rinex" in parts[:-1] else raw).append(rel)
+    return raw, rinex
+
+
+def plan_rinex_relocations(
+    root: Path,
+    rel_files: list[str],
+    *,
+    min_bytes: int = MIN_RINEX_BYTES,
+    verify_station: bool = False,
+    station_gate_m: float = STATION_GATE_M,
+    progress=None,
+) -> tuple[list[MovePlan], list[SkipInfo]]:
+    """Propose corrective moves for misfiled RINEX, from the header alone.
+
+    The gap this closes: ``plan_relocations`` reaches a RINEX only as the
+    *sibling* of a stray raw, so a stray RINEX whose raw is correctly filed is
+    never enumerated at all — the VMOS/GRVV shape, where GRVV's raw already sat
+    in GRVV's tree. ``archive-audit --identity`` and the integrity checker
+    already FIND these and print "relocate with: receivers archive-sort …";
+    until now that instruction could not be carried out.
+
+    Cheaper than the raw pass by construction: position comes from the file's
+    own ``APPROX POSITION XYZ`` — a header read, no ``teqc``, no
+    decompress-to-decode.
+
+    Deliberately narrower than the raw planner in what it will MOVE. Only a
+    station stray is planned, because a station fix is a pure prefix swap
+    (``TRUE + name[4:]``) that is correct for both the RINEX 2 short and
+    RINEX 3 long shapes. A date disagreement would additionally require
+    rewriting a day-of-year field, so it is REPORTED and left for eyes — the
+    same rule the raw planner's co-move path already applies.
+
+    ``verify_station`` gates the position work exactly as it does for raw:
+    without it this pass reports name-vs-path consistency only and reads no
+    headers. Identity-by-coordinates is opt-in on both passes, not a policy
+    the RINEX branch quietly adopts on its own.
+    """
+    root = Path(root)
+    fleet = fleet_coordinates() if verify_station else {}
+    plans: list[MovePlan] = []
+    skips: list[SkipInfo] = []
+    total = len(rel_files)
+    for idx, rel in enumerate(rel_files, 1):
+        if progress is not None:
+            progress(idx, total, len(plans))
+        path = root / rel
+        parsed = parse_rinex_name(path.name)
+        if parsed is None:
+            skips.append(SkipInfo(rel, "unparseable-name"))
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            skips.append(SkipInfo(rel, "unreadable", str(exc)))
+            continue
+        if size < min_bytes:
+            skips.append(SkipInfo(rel, "stub", f"{size} bytes < {min_bytes}"))
+            continue
+
+        parts = rel.split("/")
+        if len(parts) != 6:
+            skips.append(SkipInfo(rel, "unexpected-layout"))
+            continue
+        path_station = parts[2].upper()
+
+        # Name-vs-path consistency needs no header read: a file whose name
+        # claims a different year/month than its directory is wrong somewhere,
+        # and which side lies needs eyes.
+        dir_ym = (parts[0], parts[1])
+        claimed_ym = (f"{parsed.claimed:%Y}", MONTH_DIRS[parsed.claimed.month])
+        if dir_ym != claimed_ym:
+            skips.append(
+                SkipInfo(
+                    rel,
+                    "path-name-mismatch",
+                    f"filename claims {parsed.claimed:%Y-%m-%d} but sits in "
+                    f"{dir_ym[0]}/{dir_ym[1]} — needs eyes",
+                )
+            )
+            continue
+
+        if not verify_station:
+            skips.append(SkipInfo(rel, "path-name-consistent", "rinex"))
+            continue
+
+        latlon = _read_rinex_approx_position(path)
+        if latlon is None:
+            skips.append(SkipInfo(rel, "no-header-position", "no APPROX POSITION XYZ"))
+            continue
+
+        verdict, near, dist = _position_verdict(
+            latlon[0], latlon[1], path_station, fleet, station_gate_m
+        )
+        if verdict == "confirmed":
+            skips.append(SkipInfo(rel, "verified-correct", "rinex"))
+            continue
+        if verdict == "noisy-self":
+            skips.append(
+                SkipInfo(
+                    rel,
+                    "position-noisy",
+                    f"nearest is {near} (as filed) at {dist:.0f} m — outside the "
+                    f"{station_gate_m:.0f} m gate; solution quality, not identity",
+                )
+            )
+            continue
+        if verdict in ("unknown", "no-position"):
+            skips.append(
+                SkipInfo(
+                    rel,
+                    "unknown-station",
+                    f"position ({latlon[0]:.5f},{latlon[1]:.5f}) matches no station "
+                    f"within {station_gate_m:.0f} m"
+                    + (f" (nearest {near} at {dist / 1000:.1f} km)" if near else ""),
+                )
+            )
+            continue
+
+        # verdict == "wrong": the header says this file belongs elsewhere.
+        true_station = near.upper()
+        dst_rel = "/".join(
+            parts[:2] + [true_station, parts[3], parts[4], true_station + path.name[4:]]
+        )
+        plans.append(
+            MovePlan(
+                src_rel=rel,
+                dst_rel=dst_rel,
+                fmt="rinex",
+                decoded_start=parsed.claimed,
+                claimed=parsed.claimed,
+                reasons=("wrong-station",),
+                true_station=true_station,
+                station_dist_m=dist,
+                evidence=f"RINEX header {rel}",
+            )
+        )
+        logger.info("remediation: %s [wrong-station] -> %s", rel, dst_rel)
+    return plans, skips
+
+
+def scan_station_rinex(
+    root: Path,
+    station: str,
+    session: str = "15s_24hr",
+    *,
+    years: Optional[list] = None,
+) -> list[str]:
+    """Enumerate a station/session's RINEX files as archive-relative paths.
+
+    The ``rinex/`` sibling of :func:`scan_station_raw`.
+
+    Only files whose NAME starts with the directory's station id are returned,
+    which is the stray shape that actually occurs: the file is named for the
+    tree it sits in and only its *header* betrays it (VMOS/GRVV). The inverse —
+    a file named ``GRVV…`` sitting in ``VMOS/…/rinex/`` — is excluded, and that
+    exclusion was measured rather than assumed (2026-08-25): **zero**
+    foreign-named files among 426,425 canonical RINEX in the historical archive
+    (2019 + 2024), 121,144 more across 2012/2019/2024, and 123,443 in rek-d01's
+    collection window. The same filter is what
+    ``file_identity._iter_rinex_files`` applies, so the audit and the sorter
+    agree on what a station's files are.
+
+    Known blind spot, shared with :func:`scan_station_raw`: a handful of
+    stations carry a SESSION-LESS layout, ``YYYY/mon/STA/rinex/FILE`` instead
+    of ``YYYY/mon/STA/session/rinex/FILE`` (49 files under TKJS in 2019, 123
+    such paths across the years walked). Neither walk descends to them, and
+    :func:`plan_rinex_relocations` reports one as ``unexpected-layout`` if fed
+    directly. Pre-existing, not introduced here.
+
+    Note the coupling: :func:`plan_rinex_relocations` builds its destination
+    as ``TRUE + name[4:]``, which assumes those first four characters are the
+    FILED station. Widening this walk to foreign-named files would need that
+    renaming rule revisited at the same time.
+    """
+    root = Path(root)
+    station = station.upper()
+    rels: list[str] = []
+    for ydir in sorted(root.iterdir()):
+        if not (ydir.is_dir() and ydir.name.isdigit() and len(ydir.name) == 4):
+            continue
+        if years and int(ydir.name) not in years:
+            continue
+        for mon in MONTH_DIRS[1:]:
+            rinex_dir = ydir / mon / station / session / "rinex"
+            if not rinex_dir.is_dir():
+                continue
+            for f in sorted(rinex_dir.iterdir()):
+                if f.is_file() and f.name.upper().startswith(station):
+                    rels.append(str(f.relative_to(root)))
+    return rels
 
 
 def scan_station_raw(

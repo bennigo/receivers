@@ -1515,7 +1515,12 @@ def cmd_archive_sort(args: argparse.Namespace) -> int:
     classification + `teqc +meta` decoded epoch span. Dry-run by default;
     --yes executes the moves (argv-safe, never overwrites an existing file).
     """
-    from ..archive import load_sync_config, plan_relocations, relocate_archive_files
+    from ..archive import (
+        load_sync_config,
+        plan_relocations,
+        plan_rinex_relocations,
+        relocate_archive_files,
+    )
     from ..archive.sort import resolve_position_gate_m
 
     # Apply the LATEST unapplied plan per station from gps-tos-corrections —
@@ -1571,8 +1576,12 @@ def cmd_archive_sort(args: argparse.Namespace) -> int:
             for ln in Path(args.list).read_text().splitlines()
             if ln.strip() and not ln.strip().startswith("#")
         )
+    # RINEX candidates travel separately: they need their own parse/classify
+    # (parse_raw_name returns None and classify_raw says 'unknown' for a .d.Z)
+    # and their own size floor, so they cannot ride the raw list.
+    rinex_files: list[str] = []
     if args.stations:
-        from ..archive.sort import scan_station_raw
+        from ..archive.sort import scan_station_raw, scan_station_rinex
 
         years = None
         if args.years:
@@ -1587,7 +1596,19 @@ def cmd_archive_sort(args: argparse.Namespace) -> int:
             found = scan_station_raw(root, sta, args.session, years=years)
             print(f"   {sta.upper()}/{args.session}: {len(found)} raw file(s)")
             rel_files.extend(found)
-    if not rel_files:
+            if args.scan_rinex:
+                rx = scan_station_rinex(root, sta, args.session, years=years)
+                print(f"   {sta.upper()}/{args.session}: {len(rx)} rinex file(s)")
+                rinex_files.extend(rx)
+    else:
+        # An explicit --file/--list may name RINEX paths directly; route them
+        # by their archive category segment rather than making the caller say.
+        from ..archive.sort import split_raw_and_rinex
+
+        explicit_raw, explicit_rinex = split_raw_and_rinex(rel_files)
+        rinex_files.extend(explicit_rinex)
+        rel_files = explicit_raw
+    if not rel_files and not rinex_files:
         print("❌ nothing to check (give STATION(s), --file or --list)")
         return 2
 
@@ -1607,6 +1628,33 @@ def cmd_archive_sort(args: argparse.Namespace) -> int:
         station_gate_m=gate_m,
         progress=_sort_progress_renderer(len(rel_files)),
     )
+
+    if rinex_files:
+        if not args.check_station:
+            # Say so rather than silently reporting only half of what the
+            # RINEX pass can see — position is its only identity evidence.
+            print(
+                f"   rinex pass: {len(rinex_files)} file(s), name/path "
+                "consistency only — add --check-station to test identity by "
+                "position (header-only, no teqc)"
+            )
+        else:
+            print(
+                f"   rinex pass: {len(rinex_files)} file(s), identity from each "
+                "file's own APPROX POSITION XYZ"
+            )
+        rx_plans, rx_skips = plan_rinex_relocations(
+            root,
+            rinex_files,
+            verify_station=args.check_station,
+            station_gate_m=gate_m,
+            progress=_sort_progress_renderer(len(rinex_files)),
+        )
+        # A RINEX already co-planned by the raw pass (as a stray raw's
+        # identity evidence) must not be planned twice.
+        planned = {p.src_rel for p in plans}
+        plans.extend(p for p in rx_plans if p.src_rel not in planned)
+        skips.extend(rx_skips)
 
     by_reason: dict[str, int] = {}
     for s in skips:
@@ -1769,7 +1817,9 @@ def create_archive_sort_parser(subparsers) -> argparse.ArgumentParser:
         action="extend",
         nargs="+",
         metavar="REL",
-        help="Archive-relative raw path(s) (YYYY/mon/STA/session/raw/FILE)",
+        help="Archive-relative path(s), raw or RINEX "
+        "(YYYY/mon/STA/session/{raw,rinex}/FILE) — routed to the right pass by "
+        "the category segment, so the two may be mixed freely",
     )
     parser.add_argument(
         "--list",
@@ -1806,6 +1856,18 @@ def create_archive_sort_parser(subparsers) -> argparse.ArgumentParser:
         help="Position-match gate in metres for --check-station (default: "
         "receivers.cfg [rinex] position_gate_m, else 10 m — same metric as "
         "the RINEX-header identity check)",
+    )
+    parser.add_argument(
+        "--no-scan-rinex",
+        dest="scan_rinex",
+        action="store_false",
+        default=True,
+        help="Do not walk the station's rinex/ tree (raw only). By default a "
+        "station scan covers BOTH raw/ and rinex/: a stray RINEX whose raw is "
+        "correctly filed is reachable no other way (the raw pass sees a RINEX "
+        "only as a stray raw's sibling). The RINEX pass is header-only — no "
+        "teqc, no decompress-to-decode — and like the raw pass it needs "
+        "--check-station before a position can relocate anything.",
     )
     parser.add_argument(
         "--plan-out",

@@ -229,6 +229,14 @@ receivers archive-audit NYLA --identity --deep --check-version  # + corruption +
 # RINEX-header APPROX POSITION fallback for raw teqc can't place (Septentrio SBF →
 # the (90,0) placeholder) — a stray the fallback proves moves together with its RINEX
 receivers archive-sort NYLA --check-station
+# A station scan walks BOTH raw/ and rinex/. The rinex pass is header-only (position
+# from the file's own APPROX POSITION XYZ — no teqc, no decompress-to-decode) and is
+# the ONLY way to reach a stray RINEX whose raw is correctly filed: the raw pass sees
+# a RINEX only as a stray raw's sibling. It plans a station fix (a pure prefix swap,
+# correct for both RINEX 2 short and RINEX 3 long); a date disagreement is reported,
+# never auto-renamed. Identity-by-position is opt-in on both passes (--check-station);
+# --no-scan-rinex restores raw-only.
+receivers archive-sort VMOS --check-station --no-scan-rinex
 receivers archive-sort --file 2025/jan/THOC/15s_24hr/raw/THOC202501070000a.T02 --check-station
 
 # EPOS onboarding pipeline — the 8-step sequence as one verb with a dry-run/pause
