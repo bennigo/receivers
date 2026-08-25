@@ -963,3 +963,34 @@ class TestPlanRinexRelocations:
         rel = _mk_rinex(tmp_path, "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D", b"")
         plans, skips = sort.plan_rinex_relocations(tmp_path, [rel], verify_station=True)
         assert not plans and skips[0].reason == "stub"
+
+
+class TestSplitRawAndRinex:
+    """A mixed --file/--list must reach the pass that understands each path."""
+
+    def test_routes_by_category_segment(self):
+        raw, rinex = sort.split_raw_and_rinex(
+            [
+                "2024/jan/VMOS/15s_24hr/raw/VMOS202401300000a.sbf",
+                "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D.Z",
+            ]
+        )
+        assert raw == ["2024/jan/VMOS/15s_24hr/raw/VMOS202401300000a.sbf"]
+        assert rinex == ["2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D.Z"]
+
+    def test_non_canonical_rinex_path_still_routes_to_the_rinex_pass(self):
+        """So it reports 'unexpected-layout', not the raw pass's
+        'unparseable-name'."""
+        _raw, rinex = sort.split_raw_and_rinex(["odd/rinex/VMOS0300.24D.Z"])
+        assert rinex == ["odd/rinex/VMOS0300.24D.Z"]
+
+    def test_a_file_merely_named_rinex_is_not_routed_by_its_basename(self):
+        raw, rinex = sort.split_raw_and_rinex(["2024/jan/VMOS/15s_24hr/raw/rinex"])
+        assert raw == ["2024/jan/VMOS/15s_24hr/raw/rinex"] and not rinex
+
+    def test_unexpected_layout_is_what_the_rinex_pass_reports(self, tmp_path):
+        rel = _mk_rinex(tmp_path, "odd/rinex/VMOS0300.24D", b"x" * 512)
+        _plans, skips = sort.plan_rinex_relocations(
+            tmp_path, [rel], verify_station=True
+        )
+        assert skips[0].reason == "unexpected-layout"

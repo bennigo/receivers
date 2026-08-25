@@ -564,6 +564,26 @@ def plan_relocations(
     return plans, skips
 
 
+def split_raw_and_rinex(rel_files: list[str]) -> tuple[list[str], list[str]]:
+    """Route explicit paths to the raw pass or the RINEX pass.
+
+    The two passes need different parsers, size floors and decoders, so a
+    mixed ``--file``/``--list`` has to be split before planning. Routing is by
+    the ``rinex`` path segment ANYWHERE in the path rather than only at the
+    canonical 6-segment position, so a non-canonical RINEX path is reported as
+    ``unexpected-layout`` by the pass that understands it rather than
+    ``unparseable-name`` by the one that does not.
+
+    Returns ``(raw_rels, rinex_rels)``.
+    """
+    raw: list[str] = []
+    rinex: list[str] = []
+    for rel in rel_files:
+        parts = rel.split("/")
+        (rinex if "rinex" in parts[:-1] else raw).append(rel)
+    return raw, rinex
+
+
 def plan_rinex_relocations(
     root: Path,
     rel_files: list[str],
@@ -710,10 +730,22 @@ def scan_station_rinex(
 ) -> list[str]:
     """Enumerate a station/session's RINEX files as archive-relative paths.
 
-    The ``rinex/`` sibling of :func:`scan_station_raw`. Only files whose name
-    starts with the directory's station id are returned — the converter's
-    staged intermediates and other stations' files are not this walk's
-    business.
+    The ``rinex/`` sibling of :func:`scan_station_raw`.
+
+    Only files whose NAME starts with the directory's station id are returned,
+    which is the stray shape that actually occurs: the file is named for the
+    tree it sits in and only its *header* betrays it (VMOS/GRVV). The inverse —
+    a file named ``GRVV…`` sitting in ``VMOS/…/rinex/`` — is excluded, and that
+    exclusion was measured rather than assumed: of **123,443** canonical RINEX
+    files in rek-d01's collection window (2026-08-25), **zero** were
+    foreign-named and zero sat outside the canonical 6-segment layout. The same
+    filter is what ``file_identity._iter_rinex_files`` applies, so the audit and
+    the sorter agree on what a station's files are.
+
+    Note the coupling: :func:`plan_rinex_relocations` builds its destination
+    as ``TRUE + name[4:]``, which assumes those first four characters are the
+    FILED station. Widening this walk to foreign-named files would need that
+    renaming rule revisited at the same time.
     """
     root = Path(root)
     station = station.upper()

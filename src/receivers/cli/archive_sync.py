@@ -1603,12 +1603,10 @@ def cmd_archive_sort(args: argparse.Namespace) -> int:
     else:
         # An explicit --file/--list may name RINEX paths directly; route them
         # by their archive category segment rather than making the caller say.
-        explicit_raw = []
-        for rel in rel_files:
-            parts = rel.split("/")
-            (
-                rinex_files if len(parts) == 6 and parts[4] == "rinex" else explicit_raw
-            ).append(rel)
+        from ..archive.sort import split_raw_and_rinex
+
+        explicit_raw, explicit_rinex = split_raw_and_rinex(rel_files)
+        rinex_files.extend(explicit_rinex)
         rel_files = explicit_raw
     if not rel_files and not rinex_files:
         print("❌ nothing to check (give STATION(s), --file or --list)")
@@ -1819,7 +1817,9 @@ def create_archive_sort_parser(subparsers) -> argparse.ArgumentParser:
         action="extend",
         nargs="+",
         metavar="REL",
-        help="Archive-relative raw path(s) (YYYY/mon/STA/session/raw/FILE)",
+        help="Archive-relative path(s), raw or RINEX "
+        "(YYYY/mon/STA/session/{raw,rinex}/FILE) — routed to the right pass by "
+        "the category segment, so the two may be mixed freely",
     )
     parser.add_argument(
         "--list",
