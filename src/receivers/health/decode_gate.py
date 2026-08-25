@@ -20,6 +20,20 @@ silent.  When no permit is free the health check skips the SBF enrichment and
 reports port-only status instead.  That degradation is the one the freshness
 monitor (``health_freshness_check``) is built to tolerate: rows keep landing,
 only the extra metrics are missing for that cycle.
+
+What a skip costs, precisely.  ``is_online`` comes from the ICMP probe alone
+(``connectivity_writer._write_ping_status``), so ``block_ping_status`` — what
+the freshness monitor reads — is unaffected.  ``build_health_status`` takes the
+worst of the connection and metric statuses, and the skipped SBF metrics are
+overwhelmingly ``ok``, so dropping them cannot reclassify a station as worse.
+The one real cost is that a genuinely CRITICAL SBF metric (say a low voltage)
+goes unreported for that cycle — which is still strictly better than the
+alternative it replaces, where the health thread hangs and the station reports
+nothing at all for hours.
+
+Tuning note: the slot count is env-var-only, so changing it on rek-d01 means
+editing ``Environment=`` in the systemd unit and restarting — NOT a
+gps-config-data push like ``status_monitoring.workers`` and the other knobs.
 """
 
 import logging
@@ -37,7 +51,30 @@ logger = logging.getLogger(__name__)
 # measured on rek-d01 2026-08-25) and takes ~0.2 s, so 4 permits are far more
 # than the steady state needs while still leaving the executor's remaining
 # threads free during a correlated wedge.
-HEALTH_DECODE_SLOTS = int(os.environ.get("RECEIVERS_HEALTH_DECODE_SLOTS", "4"))
+DEFAULT_HEALTH_DECODE_SLOTS = 4
+
+
+def _configured_slots() -> int:
+    """Read the slot count, defaulting rather than raising on a bad value.
+
+    This runs at import, inside the scheduler process — a typo in the unit file
+    must not take fleet monitoring down on startup.
+    """
+    raw = os.environ.get("RECEIVERS_HEALTH_DECODE_SLOTS")
+    if raw is None:
+        return DEFAULT_HEALTH_DECODE_SLOTS
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid RECEIVERS_HEALTH_DECODE_SLOTS (%r) — using %d",
+            raw,
+            DEFAULT_HEALTH_DECODE_SLOTS,
+        )
+        return DEFAULT_HEALTH_DECODE_SLOTS
+
+
+HEALTH_DECODE_SLOTS = _configured_slots()
 
 _semaphore = threading.BoundedSemaphore(HEALTH_DECODE_SLOTS)
 

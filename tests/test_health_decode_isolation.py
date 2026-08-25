@@ -17,6 +17,7 @@ Three properties keep that bounded, and each is pinned here:
    very thread the cap protects.
 """
 
+import copy
 import subprocess
 import threading
 from pathlib import Path
@@ -192,6 +193,22 @@ class TestDecodeGate:
         for ctx in held:
             ctx.__exit__(None, None, None)
 
+    def test_bad_slot_env_defaults_instead_of_crashing_at_import(self, monkeypatch):
+        """A typo in the systemd unit must not take the scheduler down."""
+        monkeypatch.setenv("RECEIVERS_HEALTH_DECODE_SLOTS", "four")
+        assert decode_gate._configured_slots() == (
+            decode_gate.DEFAULT_HEALTH_DECODE_SLOTS
+        )
+
+    def test_slot_env_is_honoured_when_valid(self, monkeypatch):
+        monkeypatch.setenv("RECEIVERS_HEALTH_DECODE_SLOTS", "9")
+        assert decode_gate._configured_slots() == 9
+
+    def test_slot_count_is_never_zero(self, monkeypatch):
+        """Zero slots would silently disable the SBF fallback fleet-wide."""
+        monkeypatch.setenv("RECEIVERS_HEALTH_DECODE_SLOTS", "0")
+        assert decode_gate._configured_slots() == 1
+
     def test_capacity_recovers_once_holders_release(self):
         ctxs = [
             decode_gate.decode_slot("BUSY")
@@ -272,21 +289,34 @@ class TestPolarx5UsesTheGate:
 class TestHealthWorkersKnob:
     """max_workers sizes downloads; fleet monitoring should not ride on it."""
 
-    def _scheduler(self, tmp_path: Path, monkeypatch, status_monitoring: dict):
+    def _scheduler(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        status_monitoring: dict,
+        max_workers: int = 30,
+    ):
         from receivers.scheduling import bulk_scheduler as bs
-        from receivers.scheduling.config_loader import load_scheduler_config
+        from receivers.scheduling.config_loader import get_default_config
 
-        base = load_scheduler_config()
-        base["status_monitoring"] = {**base["status_monitoring"], **status_monitoring}
+        # Built from the packaged defaults, not load_scheduler_config(): the latter
+        # reads the developer's own ~/.config/gpsconfig/scheduler.yaml, which
+        # is deliberately divergent from production and could quietly supply a
+        # status_monitoring.workers of its own.
+        config = copy.deepcopy(get_default_config())
+        config["status_monitoring"] = {
+            **config["status_monitoring"],
+            **status_monitoring,
+        }
         monkeypatch.setattr(
             "receivers.scheduling.config_loader.load_scheduler_config",
-            lambda *_a, **_k: base,
+            lambda *_a, **_k: config,
         )
 
         with patch("receivers.cli.main.get_all_station_configs", return_value={}):
             return bs.BulkDownloadScheduler(
                 production_mode=False,
-                max_workers=30,
+                max_workers=max_workers,
                 database_url=f"sqlite:///{tmp_path / 'sched.db'}",
                 log_dir=tmp_path,
             )
@@ -295,12 +325,24 @@ class TestHealthWorkersKnob:
         return scheduler.scheduler._lookup_executor("health")._pool._max_workers
 
     def test_defaults_to_the_derived_share(self, tmp_path: Path, monkeypatch):
-        sched = self._scheduler(tmp_path, monkeypatch, {})
+        sched = self._scheduler(tmp_path, monkeypatch, {}, max_workers=30)
         assert self._health_workers(sched) == 10  # min(30 // 3, 30)
+
+    def test_derived_share_is_capped(self, tmp_path: Path, monkeypatch):
+        """Production runs max_workers=200, so the cap is the branch it takes."""
+        sched = self._scheduler(tmp_path, monkeypatch, {}, max_workers=200)
+        assert self._health_workers(sched) == 30  # min(200 // 3, 30)
 
     def test_explicit_workers_wins(self, tmp_path: Path, monkeypatch):
         sched = self._scheduler(tmp_path, monkeypatch, {"workers": 24})
         assert self._health_workers(sched) == 24
+
+    def test_explicit_workers_may_exceed_the_derived_cap(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Setting it outright means outright — the 30 cap is only a default."""
+        sched = self._scheduler(tmp_path, monkeypatch, {"workers": 48}, max_workers=200)
+        assert self._health_workers(sched) == 48
 
     def test_garbage_value_falls_back_to_derived(self, tmp_path: Path, monkeypatch):
         """A typo must not silently leave health with one thread."""
