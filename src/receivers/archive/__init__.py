@@ -33,7 +33,7 @@ from .remove import (
     remove_catalog_rows,
     validate_archive_relpath,
 )
-from .sort import MovePlan, SkipInfo, plan_relocations
+from .sort import MovePlan, SkipInfo, plan_relocations, plan_rinex_relocations
 from .verify import VerifyStats, verify_archive_catalog
 
 __all__ = [
@@ -61,4 +61,5 @@ __all__ = [
     "MovePlan",
     "SkipInfo",
     "plan_relocations",
+    "plan_rinex_relocations",
 ]

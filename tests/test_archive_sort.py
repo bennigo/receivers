@@ -775,3 +775,191 @@ class TestSeptentrioNoDateDecoder:
         _plans, skips = plan_relocations(tmp_path, [rel], verify_station=True)
 
         assert skips[0].reason == "path-name-mismatch"
+
+
+# ── RINEX-tree scanning (todo #151, second half) ────────────────────────────
+
+
+class TestParseRinexName:
+    """parse_raw_name returns None for a .d.Z — hence a separate parser."""
+
+    def test_raw_parser_still_rejects_rinex(self):
+        assert parse_raw_name("VMOS0300.24D.Z") is None
+
+    def test_rinex2_short_hatanaka(self):
+        p = sort.parse_rinex_name("VMOS0300.24D.Z")
+        assert p is not None
+        assert p.station == "VMOS"
+        assert p.claimed == datetime(2024, 1, 30)  # doy 30
+
+    def test_rinex2_uncompressed_observation(self):
+        p = sort.parse_rinex_name("RHOF0920.10o")
+        assert p is not None and p.claimed == datetime(2010, 4, 2)
+
+    def test_rinex3_long_igs(self):
+        p = sort.parse_rinex_name("VMOS00ISL_R_20240300000_01D_30S_MO.crx.gz")
+        assert p is not None
+        assert p.station == "VMOS"
+        assert p.claimed == datetime(2024, 1, 30)
+
+    def test_two_digit_year_pivot(self):
+        assert sort.parse_rinex_name("RHOF0010.99o").claimed.year == 1999
+        assert sort.parse_rinex_name("RHOF0010.05o").claimed.year == 2005
+
+    def test_day_of_year_is_not_a_substring_match(self):
+        """doy must come from its own field, not anywhere in the name."""
+        assert sort.parse_rinex_name("VMOS_junk_name") is None
+
+    def test_rejects_impossible_doy(self):
+        assert sort.parse_rinex_name("RHOF9990.10o") is None
+
+    def test_rejects_short_name(self):
+        assert sort.parse_rinex_name("RHOF.Z") is None
+
+
+class TestScanStationRinex:
+    def test_walks_the_rinex_sibling(self, tmp_path):
+        from receivers.archive.sort import scan_station_rinex
+
+        _mk_rinex(tmp_path, "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D.Z", b"x")
+        _mk_rinex(tmp_path, "2024/jan/VMOS/15s_24hr/raw/VMOS202401300000a.sbf.gz", b"x")
+        _mk_rinex(tmp_path, "2024/jan/GRVV/15s_24hr/rinex/GRVV0300.24D.Z", b"x")
+        _mk_rinex(tmp_path, "2024/jan/VMOS/1Hz_1hr/rinex/VMOS030a.24D.Z", b"x")
+
+        found = scan_station_rinex(tmp_path, "vmos")
+        assert found == ["2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D.Z"]
+        assert len(scan_station_rinex(tmp_path, "VMOS", "1Hz_1hr")) == 1
+
+    def test_year_filter(self, tmp_path):
+        from receivers.archive.sort import scan_station_rinex
+
+        _mk_rinex(tmp_path, "2023/jan/VMOS/15s_24hr/rinex/VMOS0300.23D.Z", b"x")
+        _mk_rinex(tmp_path, "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D.Z", b"x")
+        assert len(scan_station_rinex(tmp_path, "VMOS", years=[2024])) == 1
+
+
+class TestPlanRinexRelocations:
+    """The gap: a stray RINEX whose RAW is correctly filed.
+
+    The raw pass reaches a RINEX only as a stray raw's sibling, so this shape
+    — GRVV data sitting in VMOS's rinex tree while GRVV's own raw is where it
+    belongs — was invisible to archive-sort even though archive-audit reports
+    it and tells you to run archive-sort.
+    """
+
+    FLEET = {"VMOS": (63.9, -22.1), "GRVV": (64.05, -21.4)}
+
+    def _fleet(self, monkeypatch):
+        monkeypatch.setattr(sort, "fleet_coordinates", lambda: self.FLEET)
+
+    def test_stray_rinex_is_planned_back(self, tmp_path, monkeypatch):
+        self._fleet(monkeypatch)
+        rel = _mk_rinex(
+            tmp_path,
+            "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D",
+            _rinex_bytes("VMOS", *self.FLEET["GRVV"]),  # header says GRVV
+        )
+        plans, _ = sort.plan_rinex_relocations(tmp_path, [rel], verify_station=True)
+        assert len(plans) == 1
+        assert plans[0].dst_rel == ("2024/jan/GRVV/15s_24hr/rinex/GRVV0300.24D")
+        assert plans[0].reasons == ("wrong-station",)
+        assert plans[0].true_station == "GRVV"
+        assert plans[0].fmt == "rinex"
+
+    def test_rinex3_long_name_keeps_its_suffix(self, tmp_path, monkeypatch):
+        """The station fix is a prefix swap — correct for both name shapes."""
+        self._fleet(monkeypatch)
+        name = "VMOS00ISL_R_20240300000_01D_30S_MO.rnx"
+        rel = _mk_rinex(
+            tmp_path,
+            f"2024/jan/VMOS/15s_24hr/rinex/{name}",
+            _rinex_bytes("VMOS", *self.FLEET["GRVV"]),
+        )
+        plans, _ = sort.plan_rinex_relocations(tmp_path, [rel], verify_station=True)
+        assert plans[0].dst_rel.endswith("GRVV00ISL_R_20240300000_01D_30S_MO.rnx")
+
+    def test_correctly_filed_rinex_is_left_alone(self, tmp_path, monkeypatch):
+        self._fleet(monkeypatch)
+        rel = _mk_rinex(
+            tmp_path,
+            "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D",
+            _rinex_bytes("VMOS", *self.FLEET["VMOS"]),
+        )
+        plans, skips = sort.plan_rinex_relocations(tmp_path, [rel], verify_station=True)
+        assert not plans
+        assert skips[0].reason == "verified-correct"
+
+    def test_position_matching_no_station_is_reported_never_moved(
+        self, tmp_path, monkeypatch
+    ):
+        self._fleet(monkeypatch)
+        rel = _mk_rinex(
+            tmp_path,
+            "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D",
+            _rinex_bytes("VMOS", 50.0, 10.0),  # middle of Germany
+        )
+        plans, skips = sort.plan_rinex_relocations(tmp_path, [rel], verify_station=True)
+        assert not plans
+        assert skips[0].reason == "unknown-station"
+
+    def test_no_header_position_is_reported(self, tmp_path, monkeypatch):
+        self._fleet(monkeypatch)
+        rel = _mk_rinex(
+            tmp_path,
+            "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D",
+            b"     2.11           OBSERVATION DATA                        "
+            b"RINEX VERSION / TYPE\n"
+            # Padding so the file clears MIN_RINEX_BYTES — this test is about
+            # a MISSING position, not about the stub floor.
+            + b"teqc  2019Feb25   comment line padding".ljust(60) + b"COMMENT\n"
+            b"                                                            "
+            b"END OF HEADER\n" + b" " * 256,
+        )
+        plans, skips = sort.plan_rinex_relocations(tmp_path, [rel], verify_station=True)
+        assert not plans
+        assert skips[0].reason == "no-header-position"
+
+    def test_name_path_mismatch_needs_eyes(self, tmp_path, monkeypatch):
+        """A date disagreement is reported, never auto-renamed."""
+        self._fleet(monkeypatch)
+        rel = _mk_rinex(
+            tmp_path,
+            "2017/dec/VMOS/15s_24hr/rinex/VMOS0300.24D",  # name says 2024-01-30
+            _rinex_bytes("VMOS", *self.FLEET["GRVV"]),
+        )
+        plans, skips = sort.plan_rinex_relocations(tmp_path, [rel], verify_station=True)
+        assert not plans
+        assert skips[0].reason == "path-name-mismatch"
+
+    def test_without_verify_station_no_header_is_read(self, tmp_path, monkeypatch):
+        """Identity-by-coordinates stays opt-in on this pass too."""
+        self._fleet(monkeypatch)
+        rel = _mk_rinex(
+            tmp_path,
+            "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D",
+            _rinex_bytes("VMOS", *self.FLEET["GRVV"]),
+        )
+        with patch.object(sort, "_read_rinex_approx_position") as mock_read:
+            plans, skips = sort.plan_rinex_relocations(tmp_path, [rel])
+
+        mock_read.assert_not_called()
+        assert not plans
+        assert skips[0].reason == "path-name-consistent"
+
+    def test_raw_sized_floor_would_have_skipped_a_real_file(
+        self, tmp_path, monkeypatch
+    ):
+        """MIN_RAW_BYTES (4096) is wrong here — hourly Hatanaka is smaller."""
+        self._fleet(monkeypatch)
+        body = _rinex_bytes("VMOS", *self.FLEET["GRVV"])
+        assert len(body) < sort.MIN_RAW_BYTES
+        assert len(body) >= sort.MIN_RINEX_BYTES
+        rel = _mk_rinex(tmp_path, "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D", body)
+        plans, _ = sort.plan_rinex_relocations(tmp_path, [rel], verify_station=True)
+        assert len(plans) == 1, "a real hourly RINEX must not read as a stub"
+
+    def test_stub_is_skipped(self, tmp_path, monkeypatch):
+        self._fleet(monkeypatch)
+        rel = _mk_rinex(tmp_path, "2024/jan/VMOS/15s_24hr/rinex/VMOS0300.24D", b"")
+        plans, skips = sort.plan_rinex_relocations(tmp_path, [rel], verify_station=True)
+        assert not plans and skips[0].reason == "stub"
