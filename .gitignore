@@ -189,3 +189,9 @@ resources/
 
 # Generated audit/report outputs
 tos_audit.json
+
+# Security review working document — deliberately NOT tracked.
+# It names the commits that still hold the unrotated NATT credential, so
+# publishing it to this PUBLIC repo signposts an live secret. Remove this
+# entry only after the credential has been rotated.
+docs/architecture-review-*.md
