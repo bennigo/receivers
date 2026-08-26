@@ -19,6 +19,35 @@ collect_ignore_glob = ["manual/*"]
 
 
 @pytest.fixture(autouse=True)
+def isolate_receivers_config():
+    """Stop one test's config stub from poisoning every later test.
+
+    ``get_receivers_config()`` memoises into a module-global ``_global_config``
+    (``config/receivers_config.py:917``). Several test modules monkeypatch
+    ``ReceiversConfig`` with a small ``_Cfg`` stub exposing only the one method
+    they need. If anything calls the accessor while that patch is active, the
+    STUB is cached — and ``monkeypatch`` cannot evict a cache, only restore the
+    class attribute. Every later test that builds a real receiver then dies on
+    ``'_Cfg' object has no attribute 'get_data_prepath'``, far from the cause.
+
+    This was the single largest source of order-dependent failure in this
+    suite: adding this reset took the full run from **75 failed / 3106 passed**
+    to **38 failed / 3161 passed** — ~37 tests that were failing purely because
+    of who ran before them. Tests that pass alone and fail in the suite should
+    be suspected of this pattern first.
+
+    The real fix is for callers to stop bypassing the accessor (see
+    ``docs/architecture-review-2026-08-26.md`` §4.7 on config resolution), but
+    until then the suite must not depend on execution order.
+    """
+    from receivers.config import receivers_config as _rc
+
+    _rc._global_config = None
+    yield
+    _rc._global_config = None
+
+
+@pytest.fixture(autouse=True)
 def isolate_receivers_logging():
     """Stop one test's logging setup from silencing ``caplog`` in the next.
 

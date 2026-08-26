@@ -111,14 +111,16 @@ def _run_archive_reconciler_job(
         start_time = time.time()
 
         # Get active stations with RINEX converters (all receiver types)
+        from ..config_utils import select_active_stations
+
         all_stations = get_all_station_configs()
         convertible_stations: Dict[str, str] = {
             sid: cfg.get("receiver_type", "").lower()
-            for sid, cfg in all_stations.items()
-            if cfg.get("enabled", True)
-            and has_rinex_converter(cfg.get("receiver_type", ""))
-            and cfg.get("station_status") not in ("discontinued", "inactive")
-            and cfg.get("health_check") != "passive"
+            for sid, cfg in select_active_stations(
+                all_stations,
+                exclude_passive=True,
+                require_rinex_converter=True,
+            ).items()
         }
 
         if not convertible_stations:

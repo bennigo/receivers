@@ -107,3 +107,65 @@ def parse_dates_arg(value: str) -> set:
     else:
         tokens = [t.strip() for t in value.split(",") if t.strip()]
     return {_dt.strptime(t, "%Y%m%d").date() for t in tokens}
+
+
+def resolve_time_range(
+    session: str,
+    start: "datetime | None",
+    end: "datetime | None",
+    days: "int | None",
+    *,
+    case_insensitive_session: bool = False,
+    infer_start_from_end: bool = False,
+    inclusive_same_day: bool = False,
+) -> "Tuple[datetime | None, datetime | None, bool]":
+    """Resolve a ``(start, end, reverse_chronological)`` download window.
+
+    This ritual — "explicit start/end, else ``--days`` lookback; fill in a
+    missing bound from the session period" — was written out longhand in both
+    ``cmd_download`` and ``cmd_rinex``, and the two copies had already diverged
+    in three separate ways. The keyword flags exist to reproduce each caller's
+    CURRENT behaviour exactly rather than to quietly unify them; converging the
+    semantics is a separate, reviewable decision.
+
+    Args:
+        session: Session type, e.g. ``15s_24hr`` / ``1Hz_1hr``.
+        start: Parsed explicit start, or ``None``.
+        end: Parsed explicit end, or ``None``.
+        days: ``--days`` lookback in complete periods, or ``None``.
+        case_insensitive_session: Match ``"1hr"`` against ``session.lower()``.
+            ``cmd_rinex`` does; ``cmd_download`` does not, so a session spelled
+            ``1Hz_1HR`` is treated as daily by one verb and hourly by the other.
+        infer_start_from_end: When only ``end`` is given, derive ``start`` one
+            period earlier. ``cmd_download`` does this; ``cmd_rinex`` has no
+            such branch and leaves ``start`` as ``None``.
+        inclusive_same_day: When ``start == end``, widen ``end`` by one period
+            so the range covers that day/hour instead of being empty. Only
+            ``cmd_rinex`` does this.
+
+    Returns:
+        ``(start, end, reverse_chronological)``. ``reverse_chronological`` is
+        True only when the window came from ``days`` (latest data first).
+    """
+    reverse_chronological = False
+
+    if start is None and days:
+        # -D/--days: prioritise the most recent complete periods.
+        reverse_chronological = True
+        start, end = calculate_download_time_range(
+            session_type=session, lookback_periods=days
+        )
+
+    haystack = (session or "").lower() if case_insensitive_session else (session or "")
+    period = timedelta(hours=1) if "1hr" in haystack else timedelta(days=1)
+
+    if start is not None and end is None:
+        end = start + period
+
+    if infer_start_from_end and end is not None and start is None:
+        start = end - period
+
+    if inclusive_same_day and start is not None and end is not None and start == end:
+        end = start + period
+
+    return start, end, reverse_chronological

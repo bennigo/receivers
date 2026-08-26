@@ -25,7 +25,11 @@ from gtimes.timefunc import currDatetime
 from ..base.exceptions import ConfigurationError, ConnectionError
 from ..base.receiver_factory import create_receiver, get_receiver_factory
 from ..base.type_validator import ReceiverTypeValidator
-from ..utils.time_utils import calculate_download_time_range, generate_period_ranges
+from ..utils.time_utils import (
+    calculate_download_time_range,
+    generate_period_ranges,
+    resolve_time_range,
+)
 
 # Import gps_parser for centralized config
 try:
@@ -304,42 +308,23 @@ def cmd_download(args) -> int:
 
     logger.info(f"Starting download for stations: {args.stations}")
 
-    # Process time arguments (from getSeptentrio3 logic)
-    start_time = None
-    end_time = None
-    reverse_chronological = False  # Default for explicit --start/--end
-
-    if args.start:
-        start_time = parse_datetime(args.start)
-
-    if args.end:
-        end_time = parse_datetime(args.end)
-
-    # Default to time periods back if no start/end specified (use shared time_utils)
-    if not start_time and args.days:
-        # -D flag used: prioritize latest data (reverse chronological)
-        reverse_chronological = True
-
-        # Use shared time utility - single source of truth for time calculation
-        # This implements correct "previous complete period" logic
-        start_time, end_time = calculate_download_time_range(
-            session_type=args.session, lookback_periods=args.days
-        )
-
-    # If explicit --start or --end provided, honor them
-    if args.start and not end_time:
-        # User provided start but no end - calculate reasonable end
-        if args.session and "1hr" in args.session:
-            end_time = start_time + timedelta(hours=1)
-        else:
-            end_time = start_time + timedelta(days=1)
-
-    if args.end and not start_time:
-        # User provided end but no start - calculate reasonable start
-        if args.session and "1hr" in args.session:
-            start_time = end_time - timedelta(hours=1)
-        else:
-            start_time = end_time - timedelta(days=1)
+    # Process time arguments (from getSeptentrio3 logic).
+    # Shared with cmd_rinex via resolve_time_range(); the keyword flags below
+    # reproduce THIS verb's long-standing behaviour exactly. cmd_rinex passes a
+    # different set — the two had drifted apart and are deliberately still
+    # different here; converging them is a separate reviewed decision.
+    start_time, end_time, reverse_chronological = resolve_time_range(
+        session=args.session,
+        start=parse_datetime(args.start) if args.start else None,
+        end=parse_datetime(args.end) if args.end else None,
+        days=args.days,
+        # download matches "1hr" case-SENSITIVELY (unlike cmd_rinex)
+        case_insensitive_session=False,
+        # download derives a start when only --end is given (cmd_rinex does not)
+        infer_start_from_end=True,
+        # download does NOT widen an equal start/end (cmd_rinex does)
+        inclusive_same_day=False,
+    )
 
     # Process session frequency arguments (from getSeptentrio3)
     afrequency = args.afrequency or args.session.split("_")[0]
@@ -6117,39 +6102,23 @@ def cmd_rinex(args) -> int:
     if getattr(args, "observation_types", None):
         observation_types = [t.strip() for t in args.observation_types.split(",")]
 
-    # Parse date range
-    from datetime import timedelta
-
-    from ..utils.time_utils import calculate_download_time_range
-
-    start_time = None
-    end_time = None
-    reverse_chronological = False
-
-    if getattr(args, "start", None):
-        start_time = parse_datetime(args.start)
-
-    if getattr(args, "end", None):
-        end_time = parse_datetime(args.end)
-
-    if not start_time and getattr(args, "days", None):
-        reverse_chronological = True
-        start_time, end_time = calculate_download_time_range(
-            session_type=args.session, lookback_periods=args.days
-        )
-
-    if start_time and not end_time:
-        if "1hr" in args.session.lower():
-            end_time = start_time + timedelta(hours=1)
-        else:
-            end_time = start_time + timedelta(days=1)
-
-    # Handle same start/end date (inclusive range)
-    if start_time and end_time and start_time == end_time:
-        if "1hr" in args.session.lower():
-            end_time = start_time + timedelta(hours=1)
-        else:
-            end_time = start_time + timedelta(days=1)
+    # Parse date range. Shared with cmd_download via resolve_time_range(); the
+    # keyword flags reproduce THIS verb's behaviour exactly, which differs from
+    # download's in all three respects below. The divergence is pre-existing and
+    # preserved on purpose — unifying it changes which files a given -s/-e pair
+    # selects, and that needs its own review.
+    start_time, end_time, reverse_chronological = resolve_time_range(
+        session=args.session,
+        start=parse_datetime(args.start) if getattr(args, "start", None) else None,
+        end=parse_datetime(args.end) if getattr(args, "end", None) else None,
+        days=getattr(args, "days", None),
+        # rinex lowercases before matching "1hr" (download does not)
+        case_insensitive_session=True,
+        # rinex has no "end but no start" branch, so start stays None
+        infer_start_from_end=False,
+        # rinex widens an equal start/end into an inclusive range
+        inclusive_same_day=True,
+    )
 
     # --dates: targeted regen — exactly these dates, range derived from them
     # (overrides -s/-e). Pair with --force to redo dates whose staged/pushed

@@ -80,13 +80,15 @@ def _run_integrity_check_job(
     )
 
     # Get active stations
+    from ..config_utils import select_active_stations
+
     all_stations = get_all_station_configs()
-    active_stations = {
-        sid: cfg
-        for sid, cfg in all_stations.items()
-        if cfg.get("enabled", True)
-        and cfg.get("station_status") not in ("discontinued", "inactive")
-    }
+    # exclude_passive=False is DELIBERATE and differs from the archive
+    # reconciler / gap detector: a passive station still accumulates files
+    # (its data arrives externally rather than by us polling the receiver), so
+    # its archive is worth verifying even though we never health-check it.
+    # This asymmetry is pre-existing; preserved rather than "fixed" here.
+    active_stations = select_active_stations(all_stations, exclude_passive=False)
 
     # Apply station filter if provided (CLI mode)
     if station_filter:

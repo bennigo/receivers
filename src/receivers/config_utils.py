@@ -705,3 +705,58 @@ def build_archive_paths(
     except Exception as e:
         logger.error(f"Failed to build archive paths for {station_id}: {e}")
         raise
+
+
+def select_active_stations(
+    all_configs: Dict[str, Dict[str, Any]],
+    *,
+    exclude_passive: bool = True,
+    require_rinex_converter: bool = False,
+) -> Dict[str, Dict[str, Any]]:
+    """Filter a station-config map down to the ones a job should operate on.
+
+    This predicate is POLICY, not a convenience: it decides which stations
+    generate scheduled work. It was copy-pasted across the scheduling jobs, and
+    the copies had drifted — when ``health_check = passive`` was introduced,
+    every site had to be found by hand, and one was missed.
+
+    The flags exist to reproduce each caller's CURRENT behaviour, not to
+    quietly unify them:
+
+    * ``exclude_passive`` — drop stations whose data arrives externally rather
+      than by us polling the receiver. The archive reconciler and gap detector
+      do this; **the integrity checker deliberately does not**, because a
+      passive station still accumulates files worth verifying. That asymmetry
+      is preserved here rather than "fixed"; changing it changes those jobs'
+      workload and needs its own review.
+    * ``require_rinex_converter`` — keep only receiver types we can actually
+      convert to RINEX (the archive reconciler).
+
+    Args:
+        all_configs: ``{station_id: config}``, typically from
+            :func:`get_all_station_configs`.
+        exclude_passive: Drop ``health_check == "passive"`` stations.
+        require_rinex_converter: Drop types with no RINEX converter.
+
+    Returns:
+        A new dict containing only the selected stations.
+    """
+    if require_rinex_converter:
+        from .config.receiver_registry import has_rinex_converter
+    else:
+        has_rinex_converter = None  # type: ignore[assignment]
+
+    selected: Dict[str, Dict[str, Any]] = {}
+    for sid, cfg in all_configs.items():
+        if not cfg.get("enabled", True):
+            continue
+        if cfg.get("station_status") in ("discontinued", "inactive"):
+            continue
+        if exclude_passive and cfg.get("health_check") == "passive":
+            continue
+        if has_rinex_converter is not None and not has_rinex_converter(
+            cfg.get("receiver_type", "")
+        ):
+            continue
+        selected[sid] = cfg
+    return selected
