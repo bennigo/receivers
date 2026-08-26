@@ -41,14 +41,10 @@ def _run_gap_detection_job(
 
     try:
         # Get active station IDs
+        from ..config_utils import select_active_stations
+
         all_stations = get_all_station_configs()
-        station_ids = [
-            sid
-            for sid, cfg in all_stations.items()
-            if cfg.get("enabled", True)
-            and cfg.get("station_status") not in ("discontinued", "inactive")
-            and cfg.get("health_check") != "passive"
-        ]
+        station_ids = list(select_active_stations(all_stations, exclude_passive=True))
 
         if not station_ids:
             logger.info("Gap detection: no active stations")
