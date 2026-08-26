@@ -29,6 +29,23 @@ from ..task_interface import (
 )
 
 
+# ---------------------------------------------------------------------------
+# ⚠️  NOT ON THE LIVE EXECUTION PATH (verified 2026-08-26)
+#
+# This class is written and registered with TaskFactory, but nothing in
+# production instantiates it — TaskFactory.create() has no production call
+# site. The live scheduler wires APScheduler directly to the module-level
+# `_*_job` functions in bulk_scheduler.py. Of the five task classes only
+# RINEXTask actually runs (bulk_scheduler.py:1147,1180).
+#
+# Treat edits here as edits to code that does not execute. A behaviour fixed
+# only here will not reach production: StatusTask's offline-sample-on-failure
+# path had to be ported by hand into _status_check_job (see the comment at
+# bulk_scheduler.py:1450). If you need this behaviour live, change the job —
+# or adopt the interface for the jobs in the same change.
+#
+# Background: docs/architecture-review-2026-08-26.md §4.6
+# ---------------------------------------------------------------------------
 class HealthTask(ScheduledTask):
     """Background health extraction from downloaded status files.
 

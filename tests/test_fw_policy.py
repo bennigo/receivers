@@ -79,7 +79,11 @@ class TestShouldAttemptLogin:
 
 
 def test_extractor_alias_still_resolves():
-    """download_manager and polarx5 import the old private name; keep it working."""
+    """polarx5 imports the old private name; keep it working.
+
+    (The dead download_manager modules that also imported it were removed —
+    they had zero importers of their own.)
+    """
     from receivers.health.polarx5_tcp_extractor import _firmware_requires_auth
 
     assert _firmware_requires_auth("5.7.0") is True

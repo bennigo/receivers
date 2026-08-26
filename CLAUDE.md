@@ -314,24 +314,30 @@ receivers download STATION --sync --archive  # Phase 1 is always active
 
 #### Scheduler Extensibility (Phase 3C)
 
+> ⚠️ **The `ScheduledTask` interface is largely aspirational — do not treat it as
+> the extension path without reading this.** `TaskFactory.create()` has **no
+> production call site**. The live scheduler wires APScheduler directly to
+> module-level `_*_job` functions in `bulk_scheduler.py`. Of the five task
+> classes, only **`RINEXTask`** is instantiated in production
+> (`bulk_scheduler.py:1147,1180`, backfill path). `DownloadTask`, `StatusTask`,
+> `HealthTask` and `SyncTask` are written and registered but never run — the
+> earlier "StatusTask/HealthTask are future" note here had it backwards.
+>
+> The cost is drift: `StatusTask`'s failure path carried an
+> offline-sample-on-failure behaviour the live `_status_check_job` lacked, and it
+> had to be ported by hand (`bulk_scheduler.py:1450`). **The de facto extension
+> seam is "module-level `_*_job` + `_schedule_*` registrar."** Adopt the
+> interface for the existing jobs, or follow the live pattern — but do not add a
+> sixth unexecuted class. See `docs/architecture-review-2026-08-26.md` §4.6.
+
 **Task Interface Architecture**:
 ```python
 from receivers.scheduling.task_interface import ScheduledTask, TaskType
-from receivers.scheduling.tasks import DownloadTask
-
-# Current: DownloadTask implements ScheduledTask
-# Future: StatusTask, HealthTask, ValidateTask
+from receivers.scheduling.tasks import RINEXTask   # the one that actually runs
 ```
 
-**Adding New Task Types** (Future):
-```python
-class StatusTask(ScheduledTask):
-    def execute(self) -> TaskResult:
-        # Check receiver status
-        ...
-```
-
-See `docs/scheduler/scheduler-guide.md` for complete details.
+See `docs/scheduler/scheduler-guide.md` for complete details, including the
+live-vs-dead table.
 
 ### Path Building System
 - **Unified approach**: Single `build_path()` method handles all path generation using gtimes templates
@@ -997,11 +1003,22 @@ All receivers use Phase 1 utilities by default:
 4. **Validation**: ArchiveValidator checks file integrity before and after archiving
 
 ### Benefits
-- **Code Consolidation**: ~540 lines of duplicate code eliminated (Phase 3B)
+- **Code Consolidation**: the Phase 1 *leaf utilities* are genuinely shared — all four drivers
+  construct `TimeParameterProcessor` / `ArchiveValidator` / `FileArchiver` and use them at every
+  archive site. ~540 lines of duplication were removed at that level (Phase 3B).
 - **Fault Tolerance**: Immediate archiving prevents data loss on crashes
 - **Maintainability**: Single source of truth for common operations
 - **Testing**: 72 comprehensive unit tests for Phase 1 utilities
 - **Simplicity**: No feature flags, single code path
+
+> ⚠️ **Scope of that consolidation — read before trusting it.** It holds at the leaf level and
+> **not** at the orchestration level. The `download_data` algorithm itself is still hand-copied
+> across all four drivers (NetR9 and NetRS are ~77 % identical text), so remaining duplication is
+> roughly 3–4× what Phase 3B removed. An abstraction built to unify that orchestration —
+> `base/septentrio/trimble/leica/download_manager.py`, 1,603 lines with a complete template
+> method — was **never adopted by any driver** and has now been deleted rather than left to look
+> authoritative. Do not re-add an orchestration layer without wiring the drivers to it in the same
+> change. See `docs/architecture-review-2026-08-26.md` §2 and §4.4-4.5.
 
 ### Documentation
 - **Scheduler guide**: `docs/scheduler/scheduler-guide.md` - Complete operational guide

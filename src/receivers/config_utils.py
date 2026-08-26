@@ -352,6 +352,56 @@ def get_station_config(
         return None
 
 
+def get_all_station_configs() -> Dict[str, Dict[str, Any]]:
+    """Get configurations for all stations.
+
+    Lives here rather than in ``cli/main.py`` because it is fleet *policy*, not
+    presentation: which stations exist for the scheduler to operate on. The
+    scheduling package imported it from the CLI module in ~8 places, which meant
+    every APScheduler worker and RINEX pool child pulled in a 7,000-line command
+    module (and its import-time side effects) to obtain one function. Same
+    reasoning that already moved ``get_station_config`` here.
+
+    ``cli.main`` re-exports this name, so existing imports — and the many tests
+    that patch ``receivers.cli.main.get_all_station_configs`` by dotted path —
+    keep working unchanged.
+
+    Returns:
+        Dictionary mapping station_id to configuration
+    """
+    try:
+        import configparser
+
+        parser = gps_parser.ConfigParser()
+        config = configparser.ConfigParser()
+        config.read(parser.get_stations_config_path())
+
+        stations = {}
+        passive_skipped = 0
+        for section in config.sections():
+            # Passive (data-source-only) stations are never operated: skip
+            # before load so they generate neither jobs nor per-station
+            # error logging. See GLOBAL_SITES_investigation.md §4.4.
+            if is_passive_role(config.get(section, "station_role", fallback=None)):
+                passive_skipped += 1
+                continue
+            try:
+                station_config = get_station_config(section)
+                if station_config:
+                    stations[section] = station_config
+            except Exception as e:
+                logger.debug(f"Could not load config for {section}: {e}")
+
+        if passive_skipped:
+            logger.debug(
+                f"Skipped {passive_skipped} passive (data-source-only) stations"
+            )
+        return stations
+    except Exception as e:
+        logger.error(f"Could not load all station configurations: {e}")
+        return {}
+
+
 def resolve_receiver_endpoint(args: Any, station_id: str) -> Optional[Dict[str, Any]]:
     """Return station config, using a direct-connection stub when --host is given.
 
