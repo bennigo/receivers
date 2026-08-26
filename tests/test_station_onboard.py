@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from receivers.cli import station_onboard as so
-from receivers.cli.station_onboard import OnboardContext, STAGES
+from receivers.cli.station_onboard import STAGES, OnboardContext
 
 
 def _ctx(tmp_path: Path, **kw) -> OnboardContext:
@@ -123,7 +123,6 @@ def test_yes_executes_mutating_stages(monkeypatch, tmp_path):
     monkeypatch.setattr(so, "_confirm", lambda p: True)
     rc = so.cmd_station_onboard(_ns(yes=True, root=str(tmp_path)))
     assert rc == 0
-    executed = [c[0][1] if len(c[0]) > 1 else c[0] for c in calls]
     # re-rinex and epos-disseminate are long-running → detached with a log
     assert any(c[1] for c in calls), "expected detached launches"
     assert all(c[2] is not None for c in calls if c[1])

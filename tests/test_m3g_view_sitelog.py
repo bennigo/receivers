@@ -134,7 +134,7 @@ class TestSitelogEncoding:
         # never raises so the mistake would be invisible.
         from receivers.dissemination.m3g_client import decode_sitelog
 
-        assert decode_sitelog("Eldvörp".encode("utf-8")) == "Eldvörp"
+        assert decode_sitelog("Eldvörp".encode()) == "Eldvörp"
 
     def test_both_encodings_yield_identical_text(self):
         from receivers.dissemination.m3g_client import decode_sitelog

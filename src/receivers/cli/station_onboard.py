@@ -290,10 +290,10 @@ def _preview_rinex_review(ctx: OnboardContext) -> str:
         f"Archive RINEX picture for {ctx.station} ({ctx.session}) under {ctx.root}:\n"
         + "\n".join(lines)
         + "\n\nDecide the remediation path from the version/header spread:\n"
-        f"   · raw coverage exists + R2 → stage 3 re-rinex (R2→R3)\n"
-        f"   · no raw / header-only issues → stage 4 fix-headers\n"
-        f"   · MARKER NUMBER must be the IERS DOMES only, else stripped\n"
-        f"     (a 4-char value = 'no DOMES' — never the station id)."
+        "   · raw coverage exists + R2 → stage 3 re-rinex (R2→R3)\n"
+        "   · no raw / header-only issues → stage 4 fix-headers\n"
+        "   · MARKER NUMBER must be the IERS DOMES only, else stripped\n"
+        "     (a 4-char value = 'no DOMES' — never the station id)."
     )
     return head
 

@@ -14,8 +14,8 @@ Requirements:
     - Test station must be configured in stations.cfg
 """
 
-import os
 import logging
+import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path

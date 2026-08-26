@@ -22,9 +22,8 @@ file untouched until rsync replaces it, so the window cannot exist.
 
 from __future__ import annotations
 
-import inspect
-
 import importlib
+import inspect
 
 cli_main = importlib.import_module("receivers.cli.main")
 

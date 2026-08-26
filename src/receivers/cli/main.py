@@ -5803,7 +5803,6 @@ def _push_reconverted(work_dir, args, logger, only_rel=None) -> Dict[str, Any]:
         logger.error("push: no archive-tier target in sync.yaml — cannot push")
         stats["note"] = "no archive target configured"
         return stats
-    ssh_target = full.split(":", 1)[0] if ":" in full else None
 
     # HARD RULE: never overwrite an archived product that cannot be regenerated.
     #
