@@ -42,7 +42,12 @@ _DATA_CENTER = {
 
 
 def _md5_bytes(data: bytes) -> str:
-    return hashlib.md5(data).hexdigest()
+    # usedforsecurity=False: MD5 is not a security control here — it is the
+    # interchange format EPOS requires for md5checksum / md5uncompressed (see
+    # this module's docstring). Saying so explicitly satisfies bandit B324 and,
+    # more usefully, keeps this working on a FIPS-mode Python, where an
+    # unqualified hashlib.md5() raises instead of hashing.
+    return hashlib.md5(data, usedforsecurity=False).hexdigest()
 
 
 def rinex_md5s(path: Path) -> tuple[str, str]:
