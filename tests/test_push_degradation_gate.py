@@ -76,13 +76,16 @@ class TestSizeProbe:
         assert len(out.stdout) == 5000
 
     def test_a_truncated_file_is_materially_smaller(self, tmp_path):
-        full = _gz(tmp_path / "full.gz", b"EPOCH\n" * 5760)   # a complete day
-        part = _gz(tmp_path / "part.gz", b"EPOCH\n" * 1200)   # truncated raw
+        full = _gz(tmp_path / "full.gz", b"EPOCH\n" * 5760)  # a complete day
+        part = _gz(tmp_path / "part.gz", b"EPOCH\n" * 1200)  # truncated raw
         import subprocess
 
         def size(p):
-            return len(subprocess.run(["gzip", "-dc", str(p)],
-                                      capture_output=True, timeout=60).stdout)
+            return len(
+                subprocess.run(
+                    ["gzip", "-dc", str(p)], capture_output=True, timeout=60
+                ).stdout
+            )
 
         old, new = size(full), size(part)
         assert new < old * (1 - 0.02), "truncation must trip the 2 % tolerance"
@@ -94,8 +97,11 @@ class TestSizeProbe:
         import subprocess
 
         def size(p):
-            return len(subprocess.run(["gzip", "-dc", str(p)],
-                                      capture_output=True, timeout=60).stdout)
+            return len(
+                subprocess.run(
+                    ["gzip", "-dc", str(p)], capture_output=True, timeout=60
+                ).stdout
+            )
 
         old, new = size(old_f), size(new_f)
         assert new >= old * (1 - 0.02), "a header fix must not be refused"

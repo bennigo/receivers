@@ -85,14 +85,13 @@ def test_parse_first_approx_xyz():
 
 def test_parse_first_approx_xyz_absent_or_malformed():
     assert fi.parse_first_approx_xyz("nothing here") is None
-    assert fi.parse_first_approx_xyz("  1.0 2.0  APPROX POSITION XYZ") is None  # <3 vals
+    assert (
+        fi.parse_first_approx_xyz("  1.0 2.0  APPROX POSITION XYZ") is None
+    )  # <3 vals
 
 
 def test_parse_first_approx_xyz_takes_first():
-    text = (
-        "  1.0 2.0 3.0   APPROX POSITION XYZ\n"
-        "  9.0 9.0 9.0   APPROX POSITION XYZ\n"
-    )
+    text = "  1.0 2.0 3.0   APPROX POSITION XYZ\n  9.0 9.0 9.0   APPROX POSITION XYZ\n"
     assert fi.parse_first_approx_xyz(text) == (1.0, 2.0, 3.0)
 
 
@@ -152,9 +151,7 @@ def test_probe_flags_stacked_and_stray(tmp_path):
     # A file whose position is AAAA's, filed under BBBB, and stacked ×3.
     f = tmp_path / "BBBB0010.24o.rnx"
     _write_rinex(f, docs=3, lat=FLEET["AAAA"][0], lon=FLEET["AAAA"][1])
-    kinds = {
-        x.kind for x in fi.probe_rinex_file(f, "BBBB", fleet=FLEET, gate_m=10.0)
-    }
+    kinds = {x.kind for x in fi.probe_rinex_file(f, "BBBB", fleet=FLEET, gate_m=10.0)}
     assert kinds == {"stacked", "stray"}
 
 

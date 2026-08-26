@@ -587,7 +587,11 @@ class R00Converter(TrimbleConverter):
 
     def _teqc_extra_args(self, observation_date: datetime) -> List[str]:
         """``-week N`` for ``observation_date`` — never let teqc guess."""
-        d = observation_date.date() if isinstance(observation_date, datetime) else observation_date
+        d = (
+            observation_date.date()
+            if isinstance(observation_date, datetime)
+            else observation_date
+        )
         week = (d - _GPS_EPOCH).days // 7
         self.logger.debug(
             "R00 %s: pinning teqc -week %d (rollover is silent if guessed wrong)",

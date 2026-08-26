@@ -105,8 +105,8 @@ class TestGapFiller:
     def test_custom_policy_threshold(self):
         present = _present(set(range(22)) - {5})  # 1 missing
         dl = RecordingDownloader()
-        res = GapFiller(present, policy=GapPolicy(min_missing_to_fill=1)).check_and_fill(
-            "GONH", DAY, downloader=dl, now=self.NOW
-        )
+        res = GapFiller(
+            present, policy=GapPolicy(min_missing_to_fill=1)
+        ).check_and_fill("GONH", DAY, downloader=dl, now=self.NOW)
         assert res.status == "filled"
         assert len(dl.calls) == 1

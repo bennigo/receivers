@@ -16,15 +16,15 @@ from receivers.rinex import header_fix as hf
 def fake_files(monkeypatch, tmp_path):
     def _make(n, fixed=True):
         files = [f"{tmp_path}/F{i}.26D.Z" for i in range(n)]
-        monkeypatch.setattr(
-            hf, "discover_all_rinex_files", lambda *a, **k: list(files)
-        )
+        monkeypatch.setattr(hf, "discover_all_rinex_files", lambda *a, **k: list(files))
 
         def fake_fix(f, station, **k):
             return {
-                "file": str(f), "fixed": fixed,
+                "file": str(f),
+                "fixed": fixed,
                 "changed_labels": ["ANTENNA: DELTA H/E/N"] if fixed else [],
-                "preserved_org": None, "error": None,
+                "preserved_org": None,
+                "error": None,
             }
 
         monkeypatch.setattr(hf, "fix_headers_in_file", fake_fix)
@@ -35,10 +35,17 @@ def fake_files(monkeypatch, tmp_path):
 
 def _run(tmp_path, *, flush_fn=None, flush_every=0, dry_run=False):
     return hf.fix_headers_station(
-        "RHOF", "15s_24hr", datetime(2000, 1, 1), datetime(2030, 1, 1),
-        all_files=True, work_dir=tmp_path, source_dir=tmp_path,
-        tos_cache=object(), dry_run=dry_run,
-        flush_fn=flush_fn, flush_every=flush_every,
+        "RHOF",
+        "15s_24hr",
+        datetime(2000, 1, 1),
+        datetime(2030, 1, 1),
+        all_files=True,
+        work_dir=tmp_path,
+        source_dir=tmp_path,
+        tos_cache=object(),
+        dry_run=dry_run,
+        flush_fn=flush_fn,
+        flush_every=flush_every,
     )
 
 
@@ -91,7 +98,8 @@ def test_summary_shows_value_change_and_preservation(monkeypatch, tmp_path, caps
         idx = int(str(f).split("/F")[1].split(".")[0])
         preserved = idx >= 2
         return {
-            "file": str(f), "fixed": True,
+            "file": str(f),
+            "fixed": True,
             "changed_labels": ["ANTENNA: DELTA H/E/N"],
             "changes": {"ANTENNA: DELTA H/E/N": ("1.0070", "1.0140")},
             "preserved_org": f"{f}.org" if preserved else None,
@@ -101,8 +109,8 @@ def test_summary_shows_value_change_and_preservation(monkeypatch, tmp_path, caps
     monkeypatch.setattr(hf, "fix_headers_in_file", fake_fix)
     _run(tmp_path, flush_fn=lambda b: None, flush_every=100)
     out = capsys.readouterr().out
-    assert "1.0070 → 1.0140" in out                      # value change shown
+    assert "1.0070 → 1.0140" in out  # value change shown
     assert "2 un-regenerable original(s) preserved" in out  # summarized count
-    assert "raw absent" in out                            # reason collapsed
+    assert "raw absent" in out  # reason collapsed
     # No per-file spam in captured stdout (those are logger.debug now).
     assert "before header fix" not in out

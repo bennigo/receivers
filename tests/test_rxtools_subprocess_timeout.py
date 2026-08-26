@@ -29,9 +29,10 @@ class TestTimeoutIsAlwaysPassed:
             (tmp_path / f"{sbf.name}_SBF_DiskStatus.txt").write_text("h1,h2\n1,2\n")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        with patch.object(Path, "exists", return_value=True), patch(
-            "subprocess.run", side_effect=fake_run
-        ) as mock_run:
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch("subprocess.run", side_effect=fake_run) as mock_run,
+        ):
             rx.extract_sbf_message(sbf, "DiskStatus", output_dir=tmp_path)
 
         assert mock_run.call_args.kwargs.get("timeout") == rx.RXTOOLS_TIMEOUT_S
@@ -44,18 +45,22 @@ class TestTimeoutIsAlwaysPassed:
             (tmp_path / f"{sbf.name}_SBF_DiskStatus.txt").write_text("h1\n1\n")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        with patch.object(Path, "exists", return_value=True), patch(
-            "subprocess.run", side_effect=fake_run
-        ) as mock_run:
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch("subprocess.run", side_effect=fake_run) as mock_run,
+        ):
             rx.extract_sbf_message(sbf, "DiskStatus", output_dir=tmp_path, timeout=7)
 
         assert mock_run.call_args.kwargs.get("timeout") == 7
 
     def test_list_available_messages_passes_timeout(self):
-        with patch.object(Path, "exists", return_value=True), patch(
-            "subprocess.run",
-            return_value=subprocess.CompletedProcess([], 0, "- DiskStatus\n", ""),
-        ) as mock_run:
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch(
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, "- DiskStatus\n", ""),
+            ) as mock_run,
+        ):
             assert rx.list_available_messages() == ["DiskStatus"]
 
         assert mock_run.call_args.kwargs.get("timeout") == rx.RXTOOLS_BYTES_TIMEOUT_S
@@ -69,9 +74,12 @@ class TestTimeoutDegradesGracefully:
         sbf = tmp_path / "data.sbf"
         sbf.write_bytes(b"\x24\x40")
 
-        with patch.object(Path, "exists", return_value=True), patch(
-            "subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd=["bin2asc"], timeout=30),
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["bin2asc"], timeout=30),
+            ),
         ):
             with pytest.raises(RuntimeError, match="timed out"):
                 rx.extract_sbf_message(sbf, "DiskStatus", output_dir=tmp_path)
@@ -81,9 +89,12 @@ class TestTimeoutDegradesGracefully:
         wedging_block = b"\x24\x40\x3c\xab\xdb\x2f\x34\x00" + b"\x00" * 44
         assert len(wedging_block) == 52
 
-        with patch.object(Path, "exists", return_value=True), patch(
-            "subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd=["bin2asc"], timeout=30),
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["bin2asc"], timeout=30),
+            ),
         ):
             assert rx.parse_sbf_bytes(wedging_block, "DiskStatus") == []
 
@@ -95,8 +106,9 @@ class TestTimeoutDegradesGracefully:
             captured["timeout"] = kwargs.get("timeout")
             raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout"))
 
-        with patch.object(Path, "exists", return_value=True), patch(
-            "subprocess.run", side_effect=fake_run
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch("subprocess.run", side_effect=fake_run),
         ):
             rx.parse_sbf_bytes(b"\x24\x40" + b"\x00" * 50, "DiskStatus")
 
@@ -113,11 +125,13 @@ class TestTimeoutDegradesGracefully:
             created.append(Path(path))
             return path
 
-        with patch.object(Path, "exists", return_value=True), patch.object(
-            rx.tempfile, "mkdtemp", side_effect=tracking_mkdtemp
-        ), patch(
-            "subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd=["bin2asc"], timeout=30),
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch.object(rx.tempfile, "mkdtemp", side_effect=tracking_mkdtemp),
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["bin2asc"], timeout=30),
+            ),
         ):
             rx.parse_sbf_bytes(b"\x24\x40" + b"\x00" * 50, "DiskStatus")
 

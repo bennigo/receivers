@@ -39,9 +39,7 @@ class TestBackfillRinexLoadGate:
         monitor.get_load.return_value.cpu_load_1m = 17.4
         mock_get_monitor.return_value = monitor
 
-        _run_rinex_conversion(
-            "ELDC", "15s_24hr", [], {}, logging.getLogger("test")
-        )
+        _run_rinex_conversion("ELDC", "15s_24hr", [], {}, logging.getLogger("test"))
 
         mock_rinex_task.assert_not_called()  # deferred, never built
 
@@ -60,9 +58,7 @@ class TestBackfillRinexLoadGate:
         instance.execute.return_value = _ok_result()
         mock_rinex_task.return_value = instance
 
-        _run_rinex_conversion(
-            "ELDC", "15s_24hr", [], {}, logging.getLogger("test")
-        )
+        _run_rinex_conversion("ELDC", "15s_24hr", [], {}, logging.getLogger("test"))
 
         mock_rinex_task.assert_called_once()  # conversion proceeded
         instance.execute.assert_called_once()
@@ -80,8 +76,6 @@ class TestBackfillRinexLoadGate:
         instance.execute.return_value = _ok_result()
         mock_rinex_task.return_value = instance
 
-        _run_rinex_conversion(
-            "ELDC", "15s_24hr", [], {}, logging.getLogger("test")
-        )
+        _run_rinex_conversion("ELDC", "15s_24hr", [], {}, logging.getLogger("test"))
 
         mock_rinex_task.assert_called_once()

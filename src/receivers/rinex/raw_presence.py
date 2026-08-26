@@ -71,8 +71,8 @@ class RegenerabilityResult:
     """Outcome of the regenerability check for one archived RINEX file."""
 
     regenerable: bool
-    reason: str                       # human-readable explanation
-    raw_file: Optional[Path] = None   # the convertible raw, when regenerable
+    reason: str  # human-readable explanation
+    raw_file: Optional[Path] = None  # the convertible raw, when regenerable
 
 
 def _raw_sibling_dir(rinex_file: Path) -> Path:
@@ -108,14 +108,9 @@ def check_regenerable(
     hourly = bool(session_type and "1hr" in session_type.lower())
     date_tag = observation_date.strftime("%Y%m%d%H" if hourly else "%Y%m%d")
     # Raw files for the day: name contains the date tag (station prefix + stamp).
-    candidates = [
-        p for p in raw_dir.iterdir()
-        if p.is_file() and date_tag in p.name
-    ]
+    candidates = [p for p in raw_dir.iterdir() if p.is_file() and date_tag in p.name]
     if not candidates:
-        return RegenerabilityResult(
-            False, f"raw absent for {station_id} {date_tag}"
-        )
+        return RegenerabilityResult(False, f"raw absent for {station_id} {date_tag}")
 
     recognised = [p for p in candidates if raw_format_recognised(p.name)]
     if not recognised:

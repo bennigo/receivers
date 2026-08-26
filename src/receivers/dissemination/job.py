@@ -890,9 +890,7 @@ def _build_reactive_actions(
                 gate.path,
                 f"{station.upper()}: site log update (reactive)",
             )
-        except (
-            Exception
-        ) as exc:  # noqa: BLE001 - commit is best-effort (no repo ⇒ skip)
+        except Exception as exc:  # noqa: BLE001 - commit is best-effort (no repo ⇒ skip)
             logger.warning(
                 "epos-reactive: site-log commit skipped for %s: %s", station, exc
             )

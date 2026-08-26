@@ -43,9 +43,9 @@ def test_sets_match_the_catalog_applies_to():
     devices = yaml.safe_load(cat.read_text())["devices"]
     for subtype, codes in INSTALL_SCOPED_BY_SUBTYPE.items():
         for code in codes:
-            assert (
-                subtype in devices[code]["applies_to"]
-            ), f"{code} is not applies_to {subtype} in the catalog"
+            assert subtype in devices[code]["applies_to"], (
+                f"{code} is not applies_to {subtype} in the catalog"
+            )
 
 
 def test_monument_gets_monument_codes(w):

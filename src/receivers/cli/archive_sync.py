@@ -1307,8 +1307,7 @@ def _record_plan_applied(plan_path: Path, res) -> None:
                 "commit",
                 "-q",
                 "-m",
-                f"raw-remediation applied: {rel_plan.parent} "
-                f"({len(res.moved)} moved)",
+                f"raw-remediation applied: {rel_plan.parent} ({len(res.moved)} moved)",
             ],
             capture_output=True,
             timeout=30,
@@ -1719,8 +1718,7 @@ def cmd_archive_sort(args: argparse.Namespace) -> int:
         extra = ""
         if "wrong-station" in p.reasons and p.station_dist_m is not None:
             extra = (
-                f" — position is {p.station_dist_m:.0f} m from "
-                f"{p.true_station}'s mark"
+                f" — position is {p.station_dist_m:.0f} m from {p.true_station}'s mark"
             )
             if p.evidence:
                 extra += f" (via {p.evidence})"

@@ -296,18 +296,14 @@ def fetch_external_station(
                         filename=final.name,
                         file_size=final.stat().st_size,
                     )
-                except (
-                    Exception
-                ) as exc:  # noqa: BLE001 — tracking must not fail the fetch
+                except Exception as exc:  # noqa: BLE001 — tracking must not fail the fetch
                     logger.warning(
                         "external %s: file_tracking failed for %s: %s",
                         station_id,
                         final.name,
                         exc,
                     )
-        except (
-            Exception
-        ) as exc:  # noqa: BLE001 — one bad file must not abort the station
+        except Exception as exc:  # noqa: BLE001 — one bad file must not abort the station
             logger.warning("external %s: failed %s: %s", station_id, url, exc)
     return downloaded
 

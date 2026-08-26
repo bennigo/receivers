@@ -92,7 +92,9 @@ def _resolve_program(name: str) -> str:
     return sys.executable
 
 
-def _resolve_raw_bounds(station: str, root: str, session: str) -> Optional[tuple[str, str]]:
+def _resolve_raw_bounds(
+    station: str, root: str, session: str
+) -> Optional[tuple[str, str]]:
     """(min, max) YYYYMMDD from the station/session's raw tree, or None.
 
     ``receivers rinex --from-archive`` REQUIRES -s/-e, so the re-rinex stage
@@ -257,9 +259,7 @@ def _rinex_review_lines(station: str, root: str, session: str) -> List[str]:
                 rinex_dirs.append(d)
         if not rinex_dirs:
             continue
-        files = sorted(
-            f for d in rinex_dirs for f in d.iterdir() if f.is_file()
-        )
+        files = sorted(f for d in rinex_dirs for f in d.iterdir() if f.is_file())
         if not files:
             continue
         found_any = True
@@ -305,7 +305,11 @@ def _preview_rinex_review(ctx: OnboardContext) -> str:
 
 def _rerinex_argv(ctx: OnboardContext) -> List[str]:
     argv = ctx.receivers_argv(
-        "rinex", ctx.station, "--session", ctx.session, "--from-archive",
+        "rinex",
+        ctx.station,
+        "--session",
+        ctx.session,
+        "--from-archive",
         "--parallel",
     )
     start, end = ctx.start, ctx.end
@@ -351,7 +355,12 @@ def _stage_log_path(ctx: OnboardContext, suffix: str) -> Path:
 
 def _fixheaders_argv(ctx: OnboardContext, *, push: bool) -> List[str]:
     argv = ctx.receivers_argv(
-        "rinex", ctx.station, "--fix-headers", "--all", "--session", ctx.session,
+        "rinex",
+        ctx.station,
+        "--fix-headers",
+        "--all",
+        "--session",
+        ctx.session,
     )
     if ctx.work_dir:
         argv += ["--work-dir", ctx.work_dir]
@@ -450,8 +459,14 @@ def _preview_sync_yaml(ctx: OnboardContext) -> str:
 
 def _epos_argv(ctx: OnboardContext) -> List[str]:
     return ctx.receivers_argv(
-        "epos-disseminate", "--station", ctx.station,
-        "--start", "first", "--end", "last", "--parallel",
+        "epos-disseminate",
+        "--station",
+        ctx.station,
+        "--start",
+        "first",
+        "--end",
+        "last",
+        "--parallel",
     )
 
 
@@ -480,9 +495,19 @@ VISIT_WORK_TEXT = (
 
 def _visit_argv(ctx: OnboardContext) -> List[str]:
     return ctx.tos_argv(
-        "visit", "add", "--station", ctx.station, "--type", "remote",
-        "--start", ctx.visit_date, "--participants", ctx.participants,
-        "--work", VISIT_WORK_TEXT, "--no-dry-run",
+        "visit",
+        "add",
+        "--station",
+        ctx.station,
+        "--type",
+        "remote",
+        "--start",
+        ctx.visit_date,
+        "--participants",
+        ctx.participants,
+        "--work",
+        VISIT_WORK_TEXT,
+        "--no-dry-run",
     )
 
 
@@ -505,26 +530,55 @@ STAGES: List[Stage] = [
     Stage("tos-review", "TOS review", False, _preview_tos_review),
     Stage("rinex-review", "RINEX review", False, _preview_rinex_review),
     Stage(
-        "re-rinex", "Re-rinex (R2→R3 from raw)", True, _preview_rerinex,
-        exec_argv=_rerinex_argv, long_running=True, log_suffix="rerinex",
+        "re-rinex",
+        "Re-rinex (R2→R3 from raw)",
+        True,
+        _preview_rerinex,
+        exec_argv=_rerinex_argv,
+        long_running=True,
+        log_suffix="rerinex",
     ),
-    Stage("constellation-audit", "Constellation audit (R3)", False, _preview_constellation),
     Stage(
-        "fix-headers", "Fix headers (R2-stuck remainder)", True, _preview_fixheaders,
+        "constellation-audit", "Constellation audit (R3)", False, _preview_constellation
+    ),
+    Stage(
+        "fix-headers",
+        "Fix headers (R2-stuck remainder)",
+        True,
+        _preview_fixheaders,
         exec_argv=lambda c: _fixheaders_argv(c, push=True),
     ),
     Stage("sitelog", "Site log", True, _preview_sitelog, exec_argv=_sitelog_argv),
-    Stage("m3g", "M3G publish", True, _preview_m3g,
-          exec_argv=lambda c: c.receivers_argv(
-              "m3g", "submit", "--station", c.station, "--publish",
-          )),
+    Stage(
+        "m3g",
+        "M3G publish",
+        True,
+        _preview_m3g,
+        exec_argv=lambda c: c.receivers_argv(
+            "m3g",
+            "submit",
+            "--station",
+            c.station,
+            "--publish",
+        ),
+    ),
     Stage("sync-yaml", "sync.yaml allowlist", False, _preview_sync_yaml),
     Stage(
-        "epos-disseminate", "EPOS full-history push", True, _preview_epos,
-        exec_argv=_epos_argv, long_running=True, log_suffix="epos_full",
+        "epos-disseminate",
+        "EPOS full-history push",
+        True,
+        _preview_epos,
+        exec_argv=_epos_argv,
+        long_running=True,
+        log_suffix="epos_full",
     ),
-    Stage("record-visit", "Record remote vitjun", True, _preview_visit,
-          exec_argv=_visit_argv),
+    Stage(
+        "record-visit",
+        "Record remote vitjun",
+        True,
+        _preview_visit,
+        exec_argv=_visit_argv,
+    ),
 ]
 
 
@@ -570,8 +624,10 @@ def cmd_station_onboard(args: argparse.Namespace) -> int:
         keys = [s.strip().lower() for s in args.stages.split(",") if s.strip()]
         selected = [s for s in STAGES if s.key in keys]
         if not selected:
-            print(f"❌ no known stage in {args.stages}; known: "
-                  f"{', '.join(s.key for s in STAGES)}")
+            print(
+                f"❌ no known stage in {args.stages}; known: "
+                f"{', '.join(s.key for s in STAGES)}"
+            )
             return 2
     if args.from_stage:
         idx = next((i for i, s in enumerate(STAGES) if s.key == args.from_stage), None)
@@ -580,8 +636,7 @@ def cmd_station_onboard(args: argparse.Namespace) -> int:
             return 2
         selected = [s for s in selected if s.key in {s2.key for s2 in STAGES[idx:]}]
 
-    print(f"🚀 station onboard {station}  "
-          f"({'DRY-RUN' if args.dry_run else 'live'})")
+    print(f"🚀 station onboard {station}  ({'DRY-RUN' if args.dry_run else 'live'})")
     if args.dry_run:
         print("   report-only — no mutating stage will run")
     if not ctx.root:
@@ -592,8 +647,10 @@ def cmd_station_onboard(args: argparse.Namespace) -> int:
     for stage in selected:
         _run_stage(stage, ctx, args.dry_run, args.yes)
 
-    print(f"\n🏁 onboard walk for {station} finished "
-          f"({'dry-run' if args.dry_run else 'live'}).")
+    print(
+        f"\n🏁 onboard walk for {station} finished "
+        f"({'dry-run' if args.dry_run else 'live'})."
+    )
     return 0
 
 
@@ -634,55 +691,76 @@ def create_station_onboard_parser(subparsers) -> argparse.ArgumentParser:
     )
     onboard.add_argument("station", help="4-char station id (e.g. VMEY)")
     onboard.add_argument(
-        "--session", default="15s_24hr",
+        "--session",
+        default="15s_24hr",
         help="Session type (default: 15s_24hr)",
     )
     onboard.add_argument(
-        "--root", default=None,
+        "--root",
+        default=None,
         help="Local archive root (default: auto-resolve the read-only mount)",
     )
-    onboard.add_argument("-s", "--start", default=None,
-                         help="Re-rinex start date YYYYMMDD (default: resolve)")
-    onboard.add_argument("-e", "--end", default=None,
-                         help="Re-rinex end date YYYYMMDD (default: resolve)")
     onboard.add_argument(
-        "--work-dir", default=None,
+        "-s",
+        "--start",
+        default=None,
+        help="Re-rinex start date YYYYMMDD (default: resolve)",
+    )
+    onboard.add_argument(
+        "-e",
+        "--end",
+        default=None,
+        help="Re-rinex end date YYYYMMDD (default: resolve)",
+    )
+    onboard.add_argument(
+        "--work-dir",
+        default=None,
         help="Staging dir for re-rinex / fix-headers (default: the rinex CLI's)",
     )
     onboard.add_argument(
-        "--stages", default=None,
+        "--stages",
+        default=None,
         help="Comma-separated stage keys to run (default: all, in order)",
     )
     onboard.add_argument(
-        "--from", dest="from_stage", default=None,
+        "--from",
+        dest="from_stage",
+        default=None,
         help="Start at this stage key (resume)",
     )
     onboard.add_argument(
-        "--yes", action="store_true",
+        "--yes",
+        action="store_true",
         help="Skip the per-stage confirmation gates (unattended)",
     )
     onboard.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Report every stage, never execute a mutating one",
     )
     onboard.add_argument(
-        "--log-dir", default=DEFAULT_LOG_DIR,
+        "--log-dir",
+        default=DEFAULT_LOG_DIR,
         help="Directory for detached long-job logs (default: retrofits/)",
     )
     onboard.add_argument(
-        "--receivers-bin", default="receivers",
+        "--receivers-bin",
+        default="receivers",
         help="receivers console script (default: receivers on PATH)",
     )
     onboard.add_argument(
-        "--tos-bin", default="tos",
+        "--tos-bin",
+        default="tos",
         help="tos console script (default: tos on PATH)",
     )
     onboard.add_argument(
-        "--participants", default="bgo@vedur.is",
+        "--participants",
+        default="bgo@vedur.is",
         help="Participant email for the record-visit vitjun (default: bgo@vedur.is)",
     )
     onboard.add_argument(
-        "--visit-date", default="now",
+        "--visit-date",
+        default="now",
         help="Date for the record-visit vitjun (default: now; use YYYY-MM-DD to backfill)",
     )
     onboard.set_defaults(func=cmd_station_onboard)
@@ -698,22 +776,28 @@ def create_station_onboard_parser(subparsers) -> argparse.ArgumentParser:
     )
     describe.add_argument("station", help="4-char station id (e.g. AUST)")
     describe.add_argument(
-        "--text", default=None, help="Description text (inline).",
+        "--text",
+        default=None,
+        help="Description text (inline).",
     )
     describe.add_argument(
-        "--file", default=None,
+        "--file",
+        default=None,
         help="Read the description from a UTF-8 text file.",
     )
     describe.add_argument(
-        "--date", default=None,
+        "--date",
+        default=None,
         help="Date the value from (default: the station's date_start).",
     )
     describe.add_argument(
-        "--no-dry-run", action="store_true",
+        "--no-dry-run",
+        action="store_true",
         help="Commit the write (default is dry-run).",
     )
     describe.add_argument(
-        "--tos-bin", default="tos",
+        "--tos-bin",
+        default="tos",
         help="tos console script (default: tos on PATH)",
     )
     describe.set_defaults(func=cmd_station_describe)

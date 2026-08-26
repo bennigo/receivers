@@ -61,7 +61,11 @@ def test_stage_order_matches_recipe():
     # the R3 header set is the authoritative probe, fix-headers mops up the
     # R2-stuck remainder (pipeline-refinement memory 2026-08-23).
     keys = [s.key for s in STAGES]
-    assert keys.index("re-rinex") < keys.index("constellation-audit") < keys.index("fix-headers")
+    assert (
+        keys.index("re-rinex")
+        < keys.index("constellation-audit")
+        < keys.index("fix-headers")
+    )
     # record-visit is the final auditable record, after epos-disseminate.
     assert keys[-1] == "record-visit"
 
@@ -91,10 +95,21 @@ def test_rerinex_bounds_resolved_from_raw_coverage(tmp_path):
 
 def _ns(**kw) -> argparse.Namespace:
     defaults = dict(
-        station="VMEY", session="15s_24hr", root=None, start=None, end=None,
-        work_dir=None, stages=None, from_stage=None, yes=False, dry_run=False,
-        log_dir=so.DEFAULT_LOG_DIR, receivers_bin="receivers", tos_bin="tos",
-        participants="bgo@vedur.is", visit_date="now",
+        station="VMEY",
+        session="15s_24hr",
+        root=None,
+        start=None,
+        end=None,
+        work_dir=None,
+        stages=None,
+        from_stage=None,
+        yes=False,
+        dry_run=False,
+        log_dir=so.DEFAULT_LOG_DIR,
+        receivers_bin="receivers",
+        tos_bin="tos",
+        participants="bgo@vedur.is",
+        visit_date="now",
     )
     defaults.update(kw)
     return argparse.Namespace(**defaults)
@@ -177,11 +192,15 @@ def _write_rinex(path: Path, version="3.04", marker="10217M001", agency="X"):
 def test_rinex_review_reports_per_year(tmp_path):
     _write_rinex(
         tmp_path / "2018" / "jan" / "VMEY" / "15s_24hr" / "rinex" / "VMEY0010.18D",
-        version="3.04", marker="10217M001", agency="Icelandic Meteorolog",
+        version="3.04",
+        marker="10217M001",
+        agency="Icelandic Meteorolog",
     )
     _write_rinex(
         tmp_path / "2000" / "jan" / "VMEY" / "15s_24hr" / "rinex" / "VMEY0020.00D",
-        version="2.10", marker="10217M001", agency="Vedurstofa Islands",
+        version="2.10",
+        marker="10217M001",
+        agency="Vedurstofa Islands",
     )
     lines = so._rinex_review_lines("VMEY", str(tmp_path), "15s_24hr")
     assert any("2018:" in ln and "3.04" in ln for ln in lines)

@@ -1402,8 +1402,9 @@ class TestReactiveOrchestrator:
         calls = {"refresh": [], "disseminate": [], "sitelog": [], "stop": []}
         actions = ReactiveActions(
             refresh_metadata=lambda s: calls["refresh"].append(s),
-            disseminate=lambda ch: calls["disseminate"].append((ch.station, ch.kind))
-            or True,
+            disseminate=lambda ch: (
+                calls["disseminate"].append((ch.station, ch.kind)) or True
+            ),
             regenerate_sitelog=lambda s: calls["sitelog"].append(s),
             stop=lambda s: calls["stop"].append(s),
         )
@@ -1512,8 +1513,9 @@ class TestReactiveJob:
         calls = {"refresh": [], "disseminate": [], "sitelog": [], "stop": []}
         actions = ReactiveActions(
             refresh_metadata=lambda s: calls["refresh"].append(s),
-            disseminate=lambda ch: calls["disseminate"].append((ch.station, ch.kind))
-            or True,
+            disseminate=lambda ch: (
+                calls["disseminate"].append((ch.station, ch.kind)) or True
+            ),
             regenerate_sitelog=lambda s: calls["sitelog"].append(s),
             stop=lambda s: calls["stop"].append(s),
         )
@@ -2078,7 +2080,8 @@ class TestAgencyResolver:
         from receivers.dissemination.agencies import AgencyResolver
 
         p = tmp_path / "agencies.yaml"
-        p.write_text(textwrap.dedent("""
+        p.write_text(
+            textwrap.dedent("""
                 defaults: {url: "https://x"}
                 agencies:
                   "Org A":
@@ -2087,7 +2090,8 @@ class TestAgencyResolver:
                     observer: "GNSSatA"
                     agency_label: "A"
                     address: "Single Line"
-                """))
+                """)
+        )
         a = AgencyResolver.load(p).resolve("Org A")
         assert a.english_name == "A EN"
         assert a.address == ("Single Line",)  # scalar promoted to 1-tuple

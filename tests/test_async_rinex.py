@@ -109,8 +109,10 @@ class TestBrokenPoolRecovery:
 
         with patch("receivers.rinex.async_converter._reset_executor") as mock_reset:
             future = submit_rinex_conversion(
-                "ELDC", "15s_24hr",
-                datetime(2026, 3, 1), datetime(2026, 3, 2),
+                "ELDC",
+                "15s_24hr",
+                datetime(2026, 3, 1),
+                datetime(2026, 3, 2),
             )
 
         assert future is fresh_future
@@ -129,8 +131,10 @@ class TestBrokenPoolRecovery:
 
         with patch("receivers.rinex.async_converter._reset_executor"):
             result = submit_rinex_conversion(
-                "ELDC", "15s_24hr",
-                datetime(2026, 3, 1), datetime(2026, 3, 2),
+                "ELDC",
+                "15s_24hr",
+                datetime(2026, 3, 1),
+                datetime(2026, 3, 2),
             )
 
         assert result is None

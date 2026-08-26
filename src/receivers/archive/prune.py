@@ -445,8 +445,7 @@ def record_and_forecast(
         )
     elif days_to_full <= 2 * warn_days_to_full:
         logger.warning(
-            "disk fill forecast: %s full in ~%.0f days at %.1f GB/day "
-            "(%.0f GB free)",
+            "disk fill forecast: %s full in ~%.0f days at %.1f GB/day (%.0f GB free)",
             volume,
             days_to_full,
             rate_gb_per_day,
