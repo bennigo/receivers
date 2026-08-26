@@ -80,8 +80,7 @@ def sync_to_database(stations, dry_run=False):
     conn = psycopg2.connect(
         host="localhost",
         database="gps_health",
-        user="bgo",
-        password="gps_health"
+        user="bgo"
     )
     cursor = conn.cursor()
 
@@ -143,7 +142,7 @@ def main():
     warnings.warn(
         "sync_stations_to_db.py is deprecated. Use 'receivers db seed --only stations' instead.",
         DeprecationWarning,
-        stacklevel=2,
+        stacklevel=2
     )
     print("WARNING: This script is deprecated. Use 'receivers db seed --only stations' instead.\n")
     parser = argparse.ArgumentParser(description="Sync stations from stations.cfg to database")

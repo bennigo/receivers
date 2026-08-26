@@ -124,8 +124,7 @@ def update_database(llh_coords, dry_run=False):
     conn = psycopg2.connect(
         host="localhost",
         database="gps_health",
-        user="bgo",
-        password="gps_health"
+        user="bgo"
     )
     cursor = conn.cursor()
 
@@ -167,7 +166,7 @@ def main():
     warnings.warn(
         "update_station_coordinates.py is deprecated. Use 'receivers db seed --only coordinates' instead.",
         DeprecationWarning,
-        stacklevel=2,
+        stacklevel=2
     )
     print("WARNING: This script is deprecated. Use 'receivers db seed --only coordinates' instead.\n")
     parser = argparse.ArgumentParser(description="Update station coordinates from XYZ file")

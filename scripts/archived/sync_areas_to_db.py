@@ -7,7 +7,7 @@ import warnings
 warnings.warn(
     "sync_areas_to_db.py is deprecated. Use 'receivers db seed --only areas' instead.",
     DeprecationWarning,
-    stacklevel=2,
+    stacklevel=2
 )
 print("WARNING: This script is deprecated. Use 'receivers db seed --only areas' instead.\n")
 import yaml
@@ -19,7 +19,7 @@ with open('/home/bgo/work/projects/gpslibrary/receivers/config/station_areas.yam
 
 conn = psycopg2.connect(
     host="localhost", database="gps_health",
-    user="bgo", password="gps_health"
+    user="bgo"
 )
 cursor = conn.cursor()
 
