@@ -63,7 +63,9 @@ MONTHS = (
 @dataclass
 class AuditFinding:
     rel_path: str  # archive-relative (feeds archive-rm directly)
-    issue: str  # bad-name | bad-magic | unreadable | old-version | missing
+    # bad-name | bad-magic | unreadable | old-version | missing |
+    # session-less-layout
+    issue: str
     detail: str
     size: int = 0
     file_date: Optional[date] = None
@@ -203,6 +205,7 @@ def audit_station_session(
             check_identity = False
 
     rinex_dirs: List[Path] = []
+    stray_layout_dirs: List[Path] = []
     for ydir in sorted(source_root.iterdir()) if source_root.is_dir() else []:
         if not (ydir.is_dir() and ydir.name.isdigit()):
             continue
@@ -212,6 +215,43 @@ def audit_station_session(
             d = ydir / mon / station / session / "rinex"
             if d.is_dir():
                 rinex_dirs.append(d)
+            # A SESSION-LESS sibling — YYYY/mon/STA/{raw,rinex}/ with no
+            # session segment. Every walk in this codebase descends through a
+            # session, so such a directory is invisible everywhere: absent from
+            # archive_catalog (0 rows fleet-wide) and skipped by both
+            # archive-sort scans as well as this audit. Report it rather than
+            # walk it — 73 exist (2019-2023, TKJS/TKJ2/TORK/GONH/SEY9/JONC),
+            # 56 of them byte-identical duplicates but 16 holding 82 files
+            # that exist nowhere else plus 19 that differ from their canonical
+            # twin. Walking them would enumerate the duplicates as findings;
+            # what is wanted is that they stop being invisible.
+            for kind in ("rinex", "raw"):
+                sd = ydir / mon / station / kind
+                if sd.is_dir():
+                    stray_layout_dirs.append(sd)
+
+    for sd in stray_layout_dirs:
+        try:
+            n = sum(1 for f in sd.iterdir() if f.is_file())
+        except OSError:
+            n = 0
+        report.findings.append(
+            AuditFinding(
+                rel_path=str(sd.relative_to(source_root)),
+                issue="session-less-layout",
+                detail=(
+                    f"{n} file(s) in YYYY/mon/{station}/{sd.name}/ — no session "
+                    "segment, so this directory is invisible to every archive "
+                    "walk and absent from archive_catalog. NOT auto-handled: "
+                    "some such dirs hold files that exist nowhere else. Verify "
+                    "against the canonical session dir before doing anything."
+                ),
+                size=0,
+                # Never junk= or regen=: junk feeds archive-rm directly, and
+                # these are exactly the files that must not be deleted blind.
+            )
+        )
+
     if progress is not None:
         progress.set_total(len(rinex_dirs))
 
