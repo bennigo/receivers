@@ -40,7 +40,11 @@ except ImportError:
     gps_parser = None
 
 # Import station config from utility to avoid circular imports
-from ..config_utils import get_station_config, resolve_receiver_endpoint
+from ..config_utils import (
+    get_all_station_configs,
+    get_station_config,
+    resolve_receiver_endpoint,
+)
 
 # Module-level logger for functions that don't receive a logger argument
 _logger = logging.getLogger(__name__)
@@ -3901,51 +3905,6 @@ def cmd_rec_provision(args) -> int:
     print(f"\n{'=' * 55}")
     print(f"Provisioned {success_count}/{len(targets)} receivers")
     return 0 if success_count == len(targets) else 1
-
-
-def get_all_station_configs() -> Dict[str, Dict[str, Any]]:
-    """Get configurations for all stations.
-
-    Returns:
-        Dictionary mapping station_id to configuration
-    """
-    if not HAS_GPS_PARSER:
-        _logger.error("gps_parser not available - cannot load all stations")
-        return {}
-
-    try:
-        import configparser
-
-        from ..config_utils import is_passive_role
-
-        parser = gps_parser.ConfigParser()
-        config = configparser.ConfigParser()
-        config.read(parser.get_stations_config_path())
-
-        stations = {}
-        passive_skipped = 0
-        for section in config.sections():
-            # Passive (data-source-only) stations are never operated: skip
-            # before load so they generate neither jobs nor per-station
-            # error logging. See GLOBAL_SITES_investigation.md §4.4.
-            if is_passive_role(config.get(section, "station_role", fallback=None)):
-                passive_skipped += 1
-                continue
-            try:
-                station_config = get_station_config(section)
-                if station_config:
-                    stations[section] = station_config
-            except Exception as e:
-                _logger.debug(f"Could not load config for {section}: {e}")
-
-        if passive_skipped:
-            _logger.debug(
-                f"Skipped {passive_skipped} passive (data-source-only) stations"
-            )
-        return stations
-    except Exception as e:
-        _logger.error(f"Could not load all station configurations: {e}")
-        return {}
 
 
 def apply_receiver_type_corrections(
