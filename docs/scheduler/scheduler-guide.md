@@ -209,21 +209,67 @@ Audit trail can be consumed by:
 
 ## Extensibility: Task Interface
 
+> ### ⚠️ Read this before following the pattern below
+>
+> **The live scheduler does not execute most of these classes.** As of
+> 2026-08-26, `TaskFactory.create()` has **no production call site**. The
+> scheduler wires APScheduler directly to module-level `_*_job` functions in
+> `bulk_scheduler.py` (`_download_station_data_job`, `_status_check_job`,
+> `_run_gap_detection_job`, `_run_archive_reconciler_job`,
+> `_run_integrity_check_job`, ...).
+>
+> | Task class | Status |
+> |---|---|
+> | `RINEXTask` | **LIVE** — instantiated at `bulk_scheduler.py:1147,1180` (backfill path) |
+> | `DownloadTask` | written, registered, **never instantiated** |
+> | `StatusTask` | written, registered, **never instantiated** — `_status_check_job` re-implements it inline |
+> | `HealthTask` | written, registered, **never instantiated** |
+> | `SyncTask` | written, registered, **never instantiated** |
+>
+> **The registry is not even populated.** `_init_task_factory()`
+> (`task_interface.py:331`) is *defined but never called* — the comment above it
+> says "Deferred initialization ... Registration happens when tasks module is
+> fully loaded", but nothing performs that registration. Verified:
+>
+> ```python
+> >>> from receivers.scheduling.task_interface import TaskFactory
+> >>> TaskFactory.get_registered_types()
+> []                                    # empty at import
+> >>> TaskFactory.register_builtin_tasks()   # only if you call it by hand
+> >>> TaskFactory.get_registered_types()
+> [TaskType.DOWNLOAD, TaskType.STATUS, TaskType.HEALTH, TaskType.RINEX, TaskType.SYNC]
+> ```
+>
+> So `TaskFactory.create(TaskType.DOWNLOAD, ...)` would raise for an unregistered
+> type in a fresh process. Anyone building on this interface has to discover that
+> first.
+>
+> This matters because a parallel implementation drifts. `StatusTask`'s failure
+> path carried an offline-sample-on-failure behaviour the live `_status_check_job`
+> lacked; it was eventually ported by hand (see the comment at
+> `bulk_scheduler.py:1450`, "status_task.py has done this on its own failure
+> path all along"). A fix applied to a class nothing runs helps nobody.
+>
+> **The de facto extension seam is "module-level `_*_job` function + a
+> `_schedule_*` registrar", not `ScheduledTask`.** If you add a task type, wire
+> it the way the live jobs are wired, or adopt the interface for the existing
+> jobs in the same change — do not add a sixth unexecuted class.
+>
+> Background: `docs/architecture-review-2026-08-26.md` §2 and §4.6.
+
 ### Architecture
 
-The scheduler uses an extensible task interface allowing future task types beyond downloads.
+The scheduler defines an extensible task interface intended for task types
+beyond downloads. See the caveat above for how much of it is actually load-bearing.
 
 ### Current Implementation
 
 ```python
-from receivers.scheduling.tasks import DownloadTask
+from receivers.scheduling.tasks import RINEXTask       # the one that actually runs
 from receivers.scheduling.task_interface import TaskType, TaskConfig
-
-# DownloadTask implements ScheduledTask interface
-# Handles all download operations
 ```
 
-### Adding New Task Types (Future)
+### Adding New Task Types (aspirational — see the caveat above)
 
 ```python
 from receivers.scheduling.task_interface import (

@@ -314,24 +314,30 @@ receivers download STATION --sync --archive  # Phase 1 is always active
 
 #### Scheduler Extensibility (Phase 3C)
 
+> ⚠️ **The `ScheduledTask` interface is largely aspirational — do not treat it as
+> the extension path without reading this.** `TaskFactory.create()` has **no
+> production call site**. The live scheduler wires APScheduler directly to
+> module-level `_*_job` functions in `bulk_scheduler.py`. Of the five task
+> classes, only **`RINEXTask`** is instantiated in production
+> (`bulk_scheduler.py:1147,1180`, backfill path). `DownloadTask`, `StatusTask`,
+> `HealthTask` and `SyncTask` are written and registered but never run — the
+> earlier "StatusTask/HealthTask are future" note here had it backwards.
+>
+> The cost is drift: `StatusTask`'s failure path carried an
+> offline-sample-on-failure behaviour the live `_status_check_job` lacked, and it
+> had to be ported by hand (`bulk_scheduler.py:1450`). **The de facto extension
+> seam is "module-level `_*_job` + `_schedule_*` registrar."** Adopt the
+> interface for the existing jobs, or follow the live pattern — but do not add a
+> sixth unexecuted class. See `docs/architecture-review-2026-08-26.md` §4.6.
+
 **Task Interface Architecture**:
 ```python
 from receivers.scheduling.task_interface import ScheduledTask, TaskType
-from receivers.scheduling.tasks import DownloadTask
-
-# Current: DownloadTask implements ScheduledTask
-# Future: StatusTask, HealthTask, ValidateTask
+from receivers.scheduling.tasks import RINEXTask   # the one that actually runs
 ```
 
-**Adding New Task Types** (Future):
-```python
-class StatusTask(ScheduledTask):
-    def execute(self) -> TaskResult:
-        # Check receiver status
-        ...
-```
-
-See `docs/scheduler/scheduler-guide.md` for complete details.
+See `docs/scheduler/scheduler-guide.md` for complete details, including the
+live-vs-dead table.
 
 ### Path Building System
 - **Unified approach**: Single `build_path()` method handles all path generation using gtimes templates
