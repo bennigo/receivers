@@ -1976,7 +1976,9 @@ def _parse_since(spec: str) -> datetime:
         delta = (
             timedelta(days=n)
             if unit == "d"
-            else timedelta(hours=n) if unit == "h" else timedelta(minutes=n)
+            else timedelta(hours=n)
+            if unit == "h"
+            else timedelta(minutes=n)
         )
         return datetime.now(UTC) - delta
     try:
@@ -6290,8 +6292,7 @@ Examples:
         "--azimuth",
         metavar="DEG",
         help=(
-            "Install-scoped azimuth (ANTENNA only; TOS 'Áttarhorn'). "
-            "Defaults to 0.0."
+            "Install-scoped azimuth (ANTENNA only; TOS 'Áttarhorn'). Defaults to 0.0."
         ),
     )
     move.add_argument(
@@ -7756,8 +7757,7 @@ Examples:
         "--vitjun",
         metavar="TEXT",
         help=(
-            "Override the 'Framkvæmt' text. Default: 'Skipt um raðhlíf: "
-            "<old> → <new>'."
+            "Override the 'Framkvæmt' text. Default: 'Skipt um raðhlíf: <old> → <new>'."
         ),
     )
     rrad.add_argument(

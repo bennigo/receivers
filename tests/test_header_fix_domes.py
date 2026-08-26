@@ -63,7 +63,9 @@ def _drive(
     # dry-run reports the value that will actually be written.
     import tostools.rinex.corrector as tc
 
-    _resolved = dict(comparison.get("corrections", {}) if resolved is None else resolved)
+    _resolved = dict(
+        comparison.get("corrections", {}) if resolved is None else resolved
+    )
 
     def fake_resolve(rinex_file, station, observation_date=None, **kw):
         only = kw.get("only_fields")
@@ -179,11 +181,15 @@ def test_correct_receiver_optin_writes_rec_type(monkeypatch, tmp_path):
     # normally flag-only receiver is promoted to correctable and routed to the
     # corrector's only_fields as REC # / TYPE / VERS.
     comparison = {
-        "discrepancies": {"receiver": {"rinex": "TRIMBLE NETRS", "tos": "SEPT POLARX5"}},
+        "discrepancies": {
+            "receiver": {"rinex": "TRIMBLE NETRS", "tos": "SEPT POLARX5"}
+        },
         "corrections": {"REC # / TYPE / VERS": ["3001", "SEPT POLARX5", "5.5.0"]},
     }
     result, captured = _drive(
-        monkeypatch, tmp_path, comparison=comparison,
+        monkeypatch,
+        tmp_path,
+        comparison=comparison,
         correct_hardware=frozenset({"receiver"}),
     )
     assert result["fixed"] is True
@@ -211,7 +217,9 @@ def test_correct_receiver_optin_leaves_antenna_flag_only(monkeypatch, tmp_path):
         },
     }
     result, captured = _drive(
-        monkeypatch, tmp_path, comparison=comparison,
+        monkeypatch,
+        tmp_path,
+        comparison=comparison,
         correct_hardware=frozenset({"receiver"}),
     )
     assert captured["only_fields"] == {"REC # / TYPE / VERS"}  # antenna NOT written
@@ -339,6 +347,9 @@ class TestPreviewReportsWhatTheWriteWillDo:
             "corrections": {"MARKER NUMBER": "10216M001"},
         }
         result, _ = _drive(
-            monkeypatch, tmp_path, comparison=comparison, resolved={"MARKER NUMBER": None}
+            monkeypatch,
+            tmp_path,
+            comparison=comparison,
+            resolved={"MARKER NUMBER": None},
         )
         assert result["changes"]["MARKER NUMBER"] == ("RHOF", "<line removed>")

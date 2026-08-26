@@ -39,8 +39,8 @@ def test_staged_removed_backup_kept_when_unconfirmed(tmp_path):
     stats = cleanup_after_push(
         [_detail(rnx, bak)], work_dir=tmp_path, confirm_fn=lambda *a: False
     )
-    assert not rnx.exists()          # staged obs removed
-    assert bak.exists()              # backup kept (not TOS-confirmed)
+    assert not rnx.exists()  # staged obs removed
+    assert bak.exists()  # backup kept (not TOS-confirmed)
     assert stats["staged_removed"] == 1
     assert stats["backups_kept"] == 1
     assert stats["backups_removed"] == 0
@@ -52,7 +52,7 @@ def test_backup_removed_when_tos_confirmed(tmp_path):
         [_detail(rnx, bak)], work_dir=tmp_path, confirm_fn=lambda *a: True
     )
     assert not rnx.exists()
-    assert not bak.exists()          # TOS-confirmed → backup deleted
+    assert not bak.exists()  # TOS-confirmed → backup deleted
     assert stats["backups_removed"] == 1
 
 
@@ -61,7 +61,7 @@ def test_rinex_org_never_deleted(tmp_path):
     stats = cleanup_after_push(
         [_detail(rnx, bak, org)], work_dir=tmp_path, confirm_fn=lambda *a: True
     )
-    assert org.exists()              # preservation survives even when confirmed
+    assert org.exists()  # preservation survives even when confirmed
     assert stats["org_kept"] == 1
 
 
@@ -70,7 +70,7 @@ def test_unfixed_detail_ignored(tmp_path):
     stats = cleanup_after_push(
         [_detail(rnx, bak, fixed=False)], work_dir=tmp_path, confirm_fn=lambda *a: True
     )
-    assert rnx.exists()              # not fixed → left alone
+    assert rnx.exists()  # not fixed → left alone
     assert bak.exists()
     assert stats["staged_removed"] == 0
 
@@ -82,5 +82,5 @@ def test_staged_outside_workdir_not_touched(tmp_path):
     stats = cleanup_after_push(
         [_detail(rnx, bak)], work_dir=other / "elsewhere", confirm_fn=lambda *a: True
     )
-    assert rnx.exists()              # not under the given work_dir → untouched
+    assert rnx.exists()  # not under the given work_dir → untouched
     assert stats["staged_removed"] == 0

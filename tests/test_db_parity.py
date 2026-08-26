@@ -408,9 +408,9 @@ def test_count_rows_skips_absent_tables_and_quotes_identifiers():
     assert got["file_tracking"] == 1
 
     counts_sql = [s for s, _ in conn.executed if "count(*)" in s]
-    assert counts_sql == [
-        'SELECT count(*) FROM "file_tracking"'
-    ], "the identifier must be quoted, and an absent table must never be counted"
+    assert counts_sql == ['SELECT count(*) FROM "file_tracking"'], (
+        "the identifier must be quoted, and an absent table must never be counted"
+    )
 
 
 class _GroupConn:

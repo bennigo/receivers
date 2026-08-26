@@ -170,7 +170,9 @@ def refresh_skeleton(existing: str, meta: SkeletonMetadata) -> Tuple[str, bool]:
     return updated, updated != existing
 
 
-def geodetic_to_ecef(lat_deg: float, lon_deg: float, height_m: float) -> Tuple[float, float, float]:
+def geodetic_to_ecef(
+    lat_deg: float, lon_deg: float, height_m: float
+) -> Tuple[float, float, float]:
     """Convert geodetic lat/lon/height (WGS84, degrees/metres) to ECEF X/Y/Z."""
     lat = math.radians(lat_deg)
     lon = math.radians(lon_deg)
@@ -217,21 +219,30 @@ def build_skeleton(
             "OBSERVER / AGENCY",
         ),
         (
-            _fmt_rec(meta.rec_serial or "", meta.rec_type or "", meta.rec_version or ""),
+            _fmt_rec(
+                meta.rec_serial or "", meta.rec_type or "", meta.rec_version or ""
+            ),
             "REC # / TYPE / VERS",
         ),
         (
-            _fmt_ant(meta.ant_serial or "", meta.ant_type or "", meta.ant_radome or "NONE"),
+            _fmt_ant(
+                meta.ant_serial or "", meta.ant_type or "", meta.ant_radome or "NONE"
+            ),
             "ANT # / TYPE",
         ),
         (f"{x:14.4f}{y:14.4f}{z:14.4f}".ljust(_LABEL_COL), "APPROX POSITION XYZ"),
         (
-            _fmt_delta(meta.antenna_h or 0.0, meta.antenna_e or 0.0, meta.antenna_n or 0.0),
+            _fmt_delta(
+                meta.antenna_h or 0.0, meta.antenna_e or 0.0, meta.antenna_n or 0.0
+            ),
             "ANTENNA: DELTA H/E/N",
         ),
         ("", "END OF HEADER"),
     ]
-    return "\n".join(f"{data:<{_LABEL_COL}}{label}".rstrip() for data, label in rows) + "\n"
+    return (
+        "\n".join(f"{data:<{_LABEL_COL}}{label}".rstrip() for data, label in rows)
+        + "\n"
+    )
 
 
 def upgrade_skeleton(existing: str) -> Tuple[str, bool]:

@@ -911,7 +911,8 @@ class TestPlanRinexRelocations:
             b"RINEX VERSION / TYPE\n"
             # Padding so the file clears MIN_RINEX_BYTES — this test is about
             # a MISSING position, not about the stub floor.
-            + b"teqc  2019Feb25   comment line padding".ljust(60) + b"COMMENT\n"
+            + b"teqc  2019Feb25   comment line padding".ljust(60)
+            + b"COMMENT\n"
             b"                                                            "
             b"END OF HEADER\n" + b" " * 256,
         )

@@ -24,7 +24,9 @@ class TestDiscovery:
             "/usr/bin/bnc --conf /cfg/rtcm2rinex-MOHA.bnc -nw",
             "sshd: gpsops@pts/0",
         ]
-        sup = StreamSupervisor("/usr/bin/bnc", tmp_path, process_lister=lambda: cmdlines)
+        sup = StreamSupervisor(
+            "/usr/bin/bnc", tmp_path, process_lister=lambda: cmdlines
+        )
         assert sup.running_stations() == ["GONH", "MOHA"]
 
 
@@ -82,7 +84,9 @@ class TestSupervise:
         def boom(_cmd):
             raise OSError("no bnc binary")
 
-        sup = StreamSupervisor("/usr/bin/bnc", tmp_path, process_lister=list, spawner=boom)
+        sup = StreamSupervisor(
+            "/usr/bin/bnc", tmp_path, process_lister=list, spawner=boom
+        )
         result = sup.supervise()
         assert result.started == []
         assert result.failed == ["GONH"]

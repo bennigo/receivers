@@ -149,9 +149,7 @@ class TestPushTargetGating:
     def _run(self, archive_sync_cfg):
         active_target = MagicMock(active=True)
         with (
-            patch(
-                "receivers.scheduling.config_loader.load_scheduler_config"
-            ) as m_cfg,
+            patch("receivers.scheduling.config_loader.load_scheduler_config") as m_cfg,
             patch("receivers.archive.load_sync_config") as m_sync,
         ):
             m_cfg.return_value = {"archive_sync": archive_sync_cfg}

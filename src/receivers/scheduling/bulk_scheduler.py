@@ -41,9 +41,7 @@ _load_monitor: Optional["LoadMonitor"] = None
 # Per-session batch result accumulator (thread-safe, reset after each daily summary)
 import threading as _threading
 
-_BATCH_STATS: dict = (
-    {}
-)  # {session_type: {"ok": [...], "fail": {...}, "expected": [...], "skipped": [...]}}
+_BATCH_STATS: dict = {}  # {session_type: {"ok": [...], "fail": {...}, "expected": [...], "skipped": [...]}}
 _BATCH_LOCK = _threading.Lock()
 
 
@@ -1611,7 +1609,9 @@ class BulkDownloadScheduler:
                     (
                         10
                         if session_type == "15s_24hr"
-                        else 15 if session_type == "1Hz_1hr" else 25
+                        else 15
+                        if session_type == "1Hz_1hr"
+                        else 25
                     ),
                 )
                 frequency = session_cfg.get(
@@ -1631,7 +1631,9 @@ class BulkDownloadScheduler:
                         (
                             3
                             if session_type == "15s_24hr"
-                            else 4 if session_type == "1Hz_1hr" else 5
+                            else 4
+                            if session_type == "1Hz_1hr"
+                            else 5
                         ),
                     ),
                     timeout_minutes=session_cfg.get(
@@ -1639,7 +1641,9 @@ class BulkDownloadScheduler:
                         (
                             45
                             if session_type == "15s_24hr"
-                            else 30 if session_type == "1Hz_1hr" else 15
+                            else 30
+                            if session_type == "1Hz_1hr"
+                            else 15
                         ),
                     ),
                     lookback_periods=session_cfg.get("lookback_periods", 1),
@@ -1660,7 +1664,9 @@ class BulkDownloadScheduler:
                         (
                             3
                             if session_type == "15s_24hr"
-                            else 4 if session_type == "1Hz_1hr" else 5
+                            else 4
+                            if session_type == "1Hz_1hr"
+                            else 5
                         ),
                     ),
                     timeout_minutes=session_cfg.get(
@@ -1668,7 +1674,9 @@ class BulkDownloadScheduler:
                         (
                             45
                             if session_type == "15s_24hr"
-                            else 30 if session_type == "1Hz_1hr" else 15
+                            else 30
+                            if session_type == "1Hz_1hr"
+                            else 15
                         ),
                     ),
                     lookback_periods=session_cfg.get("lookback_periods", 1),
@@ -2115,9 +2123,7 @@ class BulkDownloadScheduler:
             self.logger.info("Config change: refreshing stream capture configs")
             _run_stream_config_refresh_job()
             _run_stream_supervise_job()
-        except (
-            Exception
-        ) as e:  # noqa: BLE001 — never let stream refresh kill the watcher
+        except Exception as e:  # noqa: BLE001 — never let stream refresh kill the watcher
             self.logger.error(f"Stream refresh after config change failed: {e}")
 
     def _reseed_areas(self) -> None:
@@ -2690,9 +2696,7 @@ class BulkDownloadScheduler:
                     session_type="15s_24hr_rinex",
                 )
                 self.logger.info("external %s: fetched %d file(s)", sid, len(files))
-            except (
-                Exception
-            ) as exc:  # noqa: BLE001 - one station must not sink the sweep
+            except Exception as exc:  # noqa: BLE001 - one station must not sink the sweep
                 self.logger.warning("external %s: fetch failed: %s", sid, exc)
 
         # Mirror dual-write counters — silent unless something actually failed.
@@ -2779,7 +2783,9 @@ class BulkDownloadScheduler:
         """
         gap_cfg = self.yaml_config.get("gap_detection", {})
         if not gap_cfg.get("enabled", True):
-            self._mark_disabled("Gap detection", "gap_detection", "gap_detection_startup")
+            self._mark_disabled(
+                "Gap detection", "gap_detection", "gap_detection_startup"
+            )
             return
 
         from .gap_scheduler import _run_gap_detection_job
@@ -3701,9 +3707,7 @@ class BulkDownloadScheduler:
             )
 
         if not health_stations:
-            self._mark_disabled(
-                "Health monitoring (no eligible stations)", "health_*"
-            )
+            self._mark_disabled("Health monitoring (no eligible stations)", "health_*")
             return
 
         # Apply max stations limit

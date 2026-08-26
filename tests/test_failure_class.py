@@ -86,9 +86,7 @@ class TestPermanentSignatures:
     def test_runpkr00_other_exit_stays_transient_until_known(self):
         """Conservative by design: an unenumerated runpkr00 code is still
         retried (fold new permanent codes in explicitly as they surface)."""
-        assert (
-            classify_failure("runpkr00 failed with exit code 1").kind == TRANSIENT
-        )
+        assert classify_failure("runpkr00 failed with exit code 1").kind == TRANSIENT
 
 
 class TestTransientSignatures:

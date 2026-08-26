@@ -23,7 +23,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: GIS",
     "Topic :: Scientific/Engineering :: Physics",
@@ -32,10 +31,9 @@ classifiers = [
     "Environment :: Console",
     "Natural Language :: English",
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "python-dateutil>=2.9.0",
-    "pathlib2>=2.3.7; python_version<'3.4'",
     "rich>=13.0.0",
     "requests>=2.31.0",
     "tqdm>=4.60.0",
@@ -227,7 +225,7 @@ target-version = ['py312', 'py313']
 include = '\.pyi?$'
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 check_untyped_defs = true

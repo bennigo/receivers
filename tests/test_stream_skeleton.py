@@ -17,20 +17,25 @@ def _line(data: str, label: str) -> str:
 
 
 # Reconstructed GONH.SKL (label at col 61), the real stored skeleton on rek.
-GONH_SKL = "\n".join(
-    [
-        _line("File configured from IMO rt streams", "COMMENT"),
-        _line("GONH", "MARKER NAME"),
-        _line("GONH", "MARKER NUMBER"),
-        _line("HMF/BGO/HG          JH/IMO", "OBSERVER / AGENCY"),
-        _line("3605273             SEPT MOSAIC-X5      4.8.0", "REC # / TYPE / VERS"),
-        _line("60283B0038          TRM115000.10    NONE", "ANT # / TYPE"),
-        _line("  2605201.0352 -1066895.4189  5704422.1172", "APPROX POSITION XYZ"),
-        _line("        0.0000        0.0000        0.0000", "ANTENNA: DELTA H/E/N"),
-        _line("     1     1", "WAVELENGTH FACT L1/2"),
-        _line("", "END OF HEADER"),
-    ]
-) + "\n"
+GONH_SKL = (
+    "\n".join(
+        [
+            _line("File configured from IMO rt streams", "COMMENT"),
+            _line("GONH", "MARKER NAME"),
+            _line("GONH", "MARKER NUMBER"),
+            _line("HMF/BGO/HG          JH/IMO", "OBSERVER / AGENCY"),
+            _line(
+                "3605273             SEPT MOSAIC-X5      4.8.0", "REC # / TYPE / VERS"
+            ),
+            _line("60283B0038          TRM115000.10    NONE", "ANT # / TYPE"),
+            _line("  2605201.0352 -1066895.4189  5704422.1172", "APPROX POSITION XYZ"),
+            _line("        0.0000        0.0000        0.0000", "ANTENNA: DELTA H/E/N"),
+            _line("     1     1", "WAVELENGTH FACT L1/2"),
+            _line("", "END OF HEADER"),
+        ]
+    )
+    + "\n"
+)
 
 
 class TestFillReproducesGonh:
@@ -50,8 +55,14 @@ class TestFillReproducesGonh:
         )
         out = fill_skeleton(GONH_SKL, meta)
         lines = {ln[60:].strip(): ln[:60] for ln in out.splitlines()}
-        assert lines["REC # / TYPE / VERS"] == "3605273             SEPT MOSAIC-X5      4.8.0               "
-        assert lines["ANT # / TYPE"] == "60283B0038          TRM115000.10    NONE                    "
+        assert (
+            lines["REC # / TYPE / VERS"]
+            == "3605273             SEPT MOSAIC-X5      4.8.0               "
+        )
+        assert (
+            lines["ANT # / TYPE"]
+            == "60283B0038          TRM115000.10    NONE                    "
+        )
 
     def test_static_lines_preserved(self):
         # No TOS values → everything stays identical to the template.
@@ -60,7 +71,9 @@ class TestFillReproducesGonh:
 
     def test_position_never_touched(self):
         # Even a full refill leaves APPROX POSITION XYZ from the stored skeleton.
-        meta = SkeletonMetadata(rec_serial="999", rec_type="SEPT POLARX5", rec_version="5.5.0")
+        meta = SkeletonMetadata(
+            rec_serial="999", rec_type="SEPT POLARX5", rec_version="5.5.0"
+        )
         out = fill_skeleton(GONH_SKL, meta)
         pos = next(ln for ln in out.splitlines() if "APPROX POSITION" in ln)
         assert "2605201.0352 -1066895.4189  5704422.1172" in pos
@@ -103,7 +116,9 @@ class TestBuildSkeleton:
             ant_type="TRM115000.10",
             ant_radome="NONE",
         )
-        skl = build_skeleton(meta, latitude=63.885537, longitude=-22.270311, height=347.41)
+        skl = build_skeleton(
+            meta, latitude=63.885537, longitude=-22.270311, height=347.41
+        )
         lines = skl.splitlines()
         labels = [ln[60:].strip() for ln in lines]
         # 3.04 schema: version line first, MARKER TYPE present, no WAVELENGTH FACT
@@ -215,7 +230,7 @@ class TestMetadataFromTos:
         ant = next(ln for ln in skl.splitlines() if "ANT # / TYPE" in ln)
         assert ant.startswith(UNKNOWN_SERIAL)
         assert ant[20:35].strip() == "SEPPOLANT_X_MF"  # type field at cols 21-35
-        assert ant[36:40].strip() == "NONE"            # radome at cols 37-40
+        assert ant[36:40].strip() == "NONE"  # radome at cols 37-40
 
     def test_real_serial_passes_through(self):
         station = {

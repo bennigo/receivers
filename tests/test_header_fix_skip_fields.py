@@ -30,10 +30,14 @@ def _drive(monkeypatch, tmp_path, *, comparison, skip_fields=frozenset()):
     f = tmp_path / "RHOF0910.05D.Z"
     f.write_bytes(b"stub")
 
-    monkeypatch.setattr(hf, "_read_header_info", lambda *a, **k: {"MARKER NAME": "RHOF"})
+    monkeypatch.setattr(
+        hf, "_read_header_info", lambda *a, **k: {"MARKER NAME": "RHOF"}
+    )
     monkeypatch.setattr(tv, "compare_rinex_to_tos", lambda *a, **k: comparison)
     monkeypatch.setattr(
-        rp, "check_regenerable", lambda *a, **k: SimpleNamespace(regenerable=True, reason="")
+        rp,
+        "check_regenerable",
+        lambda *a, **k: SimpleNamespace(regenerable=True, reason=""),
     )
 
     captured: dict = {"only_fields": None}
@@ -48,8 +52,17 @@ def _drive(monkeypatch, tmp_path, *, comparison, skip_fields=frozenset()):
 
     monkeypatch.setattr(tc, "resolve_corrections", fake_resolve)
 
-    def fake_correct(target, station, *, observation_date, output_file, loglevel,
-                     only_fields, extra_corrections=None, tos_metadata_cache=None):
+    def fake_correct(
+        target,
+        station,
+        *,
+        observation_date,
+        output_file,
+        loglevel,
+        only_fields,
+        extra_corrections=None,
+        tos_metadata_cache=None,
+    ):
         captured["only_fields"] = set(only_fields)
         return output_file
 
@@ -57,12 +70,15 @@ def _drive(monkeypatch, tmp_path, *, comparison, skip_fields=frozenset()):
 
     tos_cache = SimpleNamespace(
         get_session=lambda sid, dt: {
-            "marker": "RHOF", "domes": "10216M001",
-            "observer": "GNSSatIMO", "agency": "Icelandic Meteorological Office",
+            "marker": "RHOF",
+            "domes": "10216M001",
+            "observer": "GNSSatIMO",
+            "agency": "Icelandic Meteorological Office",
         }
     )
     result = hf.fix_headers_in_file(
-        f, "RHOF",
+        f,
+        "RHOF",
         observation_date=datetime(2005, 4, 1),
         tos_cache=tos_cache,
         session_type="15s_24hr",
@@ -98,7 +114,8 @@ class TestSkipFields:
 
     def test_coordinates_can_be_skipped(self, monkeypatch, tmp_path):
         _, only = _drive(
-            monkeypatch, tmp_path,
+            monkeypatch,
+            tmp_path,
             comparison=_rhof_2005_comparison(),
             skip_fields=frozenset({"coordinates"}),
         )
@@ -109,7 +126,8 @@ class TestSkipFields:
         # The dry-run must describe the write. A field we refuse to write must
         # not appear in changed_labels either.
         result, _ = _drive(
-            monkeypatch, tmp_path,
+            monkeypatch,
+            tmp_path,
             comparison=_rhof_2005_comparison(),
             skip_fields=frozenset({"coordinates"}),
         )
@@ -117,7 +135,8 @@ class TestSkipFields:
 
     def test_skipping_every_discrepant_field_is_a_no_op(self, monkeypatch, tmp_path):
         result, only = _drive(
-            monkeypatch, tmp_path,
+            monkeypatch,
+            tmp_path,
             comparison=_rhof_2005_comparison(),
             skip_fields=frozenset({"coordinates", "domes", "observer_agency"}),
         )
@@ -126,7 +145,8 @@ class TestSkipFields:
 
     def test_skipping_an_unrelated_field_changes_nothing(self, monkeypatch, tmp_path):
         _, only = _drive(
-            monkeypatch, tmp_path,
+            monkeypatch,
+            tmp_path,
             comparison=_rhof_2005_comparison(),
             skip_fields=frozenset({"antenna_height"}),
         )

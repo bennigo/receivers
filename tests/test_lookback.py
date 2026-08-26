@@ -245,8 +245,7 @@ class TestPerSessionOverrides:
         lb = Lookback.from_config(self.CFG, default_days=7)
         text = lb.describe(["15s_24hr", "1Hz_1hr", "status_1hr"])
         assert text == (
-            "files_back=36 (15s_24hr=7) -> "
-            "15s_24hr: 7d, 1Hz_1hr: 36h, status_1hr: 36h"
+            "files_back=36 (15s_24hr=7) -> 15s_24hr: 7d, 1Hz_1hr: 36h, status_1hr: 36h"
         )
 
     def test_mapping_without_default_is_rejected(self):

@@ -198,7 +198,9 @@ class AuditLogger:
         # JSON file handler for audit trail. Cooperates with logrotate on the
         # server (WatchedFileHandler), self-rotates on dev (RotatingFileHandler).
         file_handler = make_log_file_handler(
-            self.audit_file, 50 * 1024 * 1024, 5  # 50 MB x 5 when self-rotating
+            self.audit_file,
+            50 * 1024 * 1024,
+            5,  # 50 MB x 5 when self-rotating
         )
         file_handler.setFormatter(JSONFormatter())
         self.logger.addHandler(file_handler)

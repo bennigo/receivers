@@ -84,7 +84,9 @@ class TestGpsWeekIsDerivedNotGuessed:
         ],
     )
     def test_week_matches_the_gps_epoch_arithmetic(self, obs, expected):
-        args = R00Converter("VMEY")._teqc_extra_args(datetime(obs.year, obs.month, obs.day))
+        args = R00Converter("VMEY")._teqc_extra_args(
+            datetime(obs.year, obs.month, obs.day)
+        )
         assert args == ["-week", str(expected)]
 
     def test_the_flag_is_actually_emitted(self):
@@ -94,7 +96,10 @@ class TestGpsWeekIsDerivedNotGuessed:
 
     def test_a_plain_date_works_too(self):
         # observation_date reaches converters as datetime, but be liberal.
-        assert R00Converter("VMEY")._teqc_extra_args(date(2010, 6, 2)) == ["-week", "1586"]
+        assert R00Converter("VMEY")._teqc_extra_args(date(2010, 6, 2)) == [
+            "-week",
+            "1586",
+        ]
 
     def test_the_t02_path_is_not_given_a_week(self):
         # The .T02/.T00 command was already correct; adding a derived flag there
@@ -152,7 +157,9 @@ class TestSessionStartNaming:
         # decoded first-obs date against the claim and refuse a mismatch.
         from pathlib import Path
 
-        got = R00Converter("VMEY")._extract_date_from_filename(Path("XXXX201004011900a.r00"))
+        got = R00Converter("VMEY")._extract_date_from_filename(
+            Path("XXXX201004011900a.r00")
+        )
         assert got.date().isoformat() == "2010-04-01"
 
     def test_the_week_is_derived_from_the_OBSERVATION_date(self):

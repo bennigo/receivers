@@ -85,7 +85,9 @@ class TestEnumerateSelection:
     def test_station_filter(self, tmp_path):
         src = _tree(tmp_path)
         eng = self._eng(tmp_path)
-        got = sorted(os.path.relpath(p, src) for p in eng.enumerate_selection(station="MYVA"))
+        got = sorted(
+            os.path.relpath(p, src) for p in eng.enumerate_selection(station="MYVA")
+        )
         assert got == [
             "2026/aug/MYVA/15s_24hr/raw/MYVA202608120000a.sbf.gz",
             "2026/aug/MYVA/15s_24hr/rinex/MYVA2240.26D.Z",
@@ -96,7 +98,9 @@ class TestEnumerateSelection:
     def test_session_filter(self, tmp_path):
         src = _tree(tmp_path)
         eng = self._eng(tmp_path)
-        got = sorted(os.path.relpath(p, src) for p in eng.enumerate_selection(session="1Hz_1hr"))
+        got = sorted(
+            os.path.relpath(p, src) for p in eng.enumerate_selection(session="1Hz_1hr")
+        )
         assert got == ["2026/aug/MYVA/1Hz_1hr/raw/MYVA202608120300b.sbf.gz"]
 
     def test_whole_day_window(self, tmp_path):
@@ -177,7 +181,9 @@ class TestSelect:
         eng = self._eng(tmp_path)
         monkeypatch.setattr(eng, "push_explicit", lambda paths: (len(paths), [], {}))
         monkeypatch.setattr(
-            eng_mod, "record_run", lambda *a, **k: pytest.fail("watermark must not advance")
+            eng_mod,
+            "record_run",
+            lambda *a, **k: pytest.fail("watermark must not advance"),
         )
 
         res = eng.select(
@@ -203,7 +209,11 @@ class TestSelect:
         _tree(tmp_path)
         eng = self._eng(tmp_path, dry_run=True)
         monkeypatch.setattr(eng, "push_explicit", lambda paths: (len(paths), [], {}))
-        res = eng.select(station="MYVA", start=datetime(2026, 8, 12), end=datetime(2026, 8, 12, 23, 59, 59))
+        res = eng.select(
+            station="MYVA",
+            start=datetime(2026, 8, 12),
+            end=datetime(2026, 8, 12, 23, 59, 59),
+        )
         assert res.transferred == 3
         assert res.cataloged == 0
         assert "would transfer" in res.message
@@ -232,7 +242,11 @@ class TestPushExplicitDryRun:
         )
 
         pushed, errors, _ = eng.push_explicit(
-            [os.path.join(str(src), "2026/aug/MYVA/15s_24hr/raw/MYVA202608120000a.sbf.gz")]
+            [
+                os.path.join(
+                    str(src), "2026/aug/MYVA/15s_24hr/raw/MYVA202608120000a.sbf.gz"
+                )
+            ]
         )
         assert pushed == 1
         assert errors == []

@@ -142,8 +142,7 @@ class TestSeptentrioOldest:
         index = "/DSK1/SSN/LOG2_1Hz_1hr/"
         tree = {
             index: ["26120"],
-            index
-            + "26120/": [
+            index + "26120/": [
                 "AFST202604300500b.sbf.gz",
                 "AFST202604300100b.sbf.gz",
                 "AFST202604300900b.sbf.gz",

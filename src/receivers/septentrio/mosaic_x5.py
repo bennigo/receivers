@@ -53,7 +53,9 @@ class MosaicX5(PolaRX5):
         super().__init__(station_id, station_info)
         # Read optional non-standard-layout overrides from station config. The
         # adapted config can carry them under "receiver", "station", or top level.
-        self._remote_session_dir = self._cfg_override(station_info, "remote_session_dir")
+        self._remote_session_dir = self._cfg_override(
+            station_info, "remote_session_dir"
+        )
         self._remote_filename_pattern = self._cfg_override(
             station_info, "remote_filename_pattern"
         )

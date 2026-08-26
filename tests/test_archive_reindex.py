@@ -87,8 +87,11 @@ def test_updated_refreshes_stale_hash(db_conn, tmp_path):
     _, real = _seed_gz(tmp_path, REL, b"corrected header payload" * 50)
 
     stats = reindex_files(
-        db_conn, [str(tmp_path / REL)], root=str(tmp_path),
-        storage_location=LOC, dest_prefix="~/gpsdata",
+        db_conn,
+        [str(tmp_path / REL)],
+        root=str(tmp_path),
+        storage_location=LOC,
+        dest_prefix="~/gpsdata",
     )
     assert (stats.updated, stats.inserted, stats.unchanged) == (1, 0, 0)
     assert _catalog_sha(db_conn, "eldc_a.sbf") == real
@@ -97,8 +100,11 @@ def test_updated_refreshes_stale_hash(db_conn, tmp_path):
 def test_inserted_when_no_prior_row(db_conn, tmp_path):
     _, real = _seed_gz(tmp_path, REL, b"brand new file" * 50)
     stats = reindex_files(
-        db_conn, [str(tmp_path / REL)], root=str(tmp_path),
-        storage_location=LOC, dest_prefix="~/gpsdata",
+        db_conn,
+        [str(tmp_path / REL)],
+        root=str(tmp_path),
+        storage_location=LOC,
+        dest_prefix="~/gpsdata",
     )
     assert (stats.updated, stats.inserted, stats.unchanged) == (0, 1, 0)
     assert _catalog_sha(db_conn, "eldc_a.sbf") == real
@@ -107,8 +113,12 @@ def test_inserted_when_no_prior_row(db_conn, tmp_path):
 def test_only_existing_skips_insert(db_conn, tmp_path):
     _seed_gz(tmp_path, REL, b"unseen file" * 50)
     stats = reindex_files(
-        db_conn, [str(tmp_path / REL)], root=str(tmp_path),
-        storage_location=LOC, dest_prefix="~/gpsdata", only_existing=True,
+        db_conn,
+        [str(tmp_path / REL)],
+        root=str(tmp_path),
+        storage_location=LOC,
+        dest_prefix="~/gpsdata",
+        only_existing=True,
     )
     assert (stats.updated, stats.inserted, stats.skipped_new) == (0, 0, 1)
     assert _catalog_sha(db_conn, "eldc_a.sbf") is None  # nothing written
@@ -118,8 +128,11 @@ def test_unchanged_when_hash_matches(db_conn, tmp_path):
     _, real = _seed_gz(tmp_path, REL, b"same content" * 50)
     _seed_row(db_conn, REL, real)
     stats = reindex_files(
-        db_conn, [str(tmp_path / REL)], root=str(tmp_path),
-        storage_location=LOC, dest_prefix="~/gpsdata",
+        db_conn,
+        [str(tmp_path / REL)],
+        root=str(tmp_path),
+        storage_location=LOC,
+        dest_prefix="~/gpsdata",
     )
     assert (stats.updated, stats.inserted, stats.unchanged) == (0, 0, 1)
 
@@ -128,8 +141,12 @@ def test_dry_run_writes_nothing(db_conn, tmp_path):
     _seed_row(db_conn, REL, "0" * 64)
     _seed_gz(tmp_path, REL, b"would-fix payload" * 50)
     stats = reindex_files(
-        db_conn, [str(tmp_path / REL)], root=str(tmp_path),
-        storage_location=LOC, dest_prefix="~/gpsdata", dry_run=True,
+        db_conn,
+        [str(tmp_path / REL)],
+        root=str(tmp_path),
+        storage_location=LOC,
+        dest_prefix="~/gpsdata",
+        dry_run=True,
     )
     assert stats.updated == 1
     assert _catalog_sha(db_conn, "eldc_a.sbf") == "0" * 64  # unchanged on disk
@@ -138,10 +155,12 @@ def test_dry_run_writes_nothing(db_conn, tmp_path):
 class TestCatalogHostResolution:
     def test_override_single(self):
         from receivers.archive.reindex import resolve_catalog_hosts
+
         assert resolve_catalog_hosts("pgdev.vedur.is") == ["pgdev.vedur.is"]
 
     def test_override_comma_list(self):
         from receivers.archive.reindex import resolve_catalog_hosts
+
         assert resolve_catalog_hosts("a.is, b.is , c.is") == ["a.is", "b.is", "c.is"]
 
     def test_default_is_local_not_config(self, monkeypatch):
@@ -169,7 +188,8 @@ class TestCatalogHostResolution:
             "receivers.config.receivers_config.get_receivers_config", lambda: _Cfg()
         )
         assert rx.resolve_catalog_hosts(None, prod=True) == [
-            "rek-d01.vedur.is", "pgdev.vedur.is"
+            "rek-d01.vedur.is",
+            "pgdev.vedur.is",
         ]
 
     def test_prod_empty_config_returns_empty_not_localhost(self, monkeypatch):
@@ -197,12 +217,16 @@ def test_reindex_files_multi_fans_out(monkeypatch, tmp_path):
         lambda host_override=None: seen_hosts.append(host_override) or object(),
     )
     monkeypatch.setattr(
-        rx, "reindex_files",
+        rx,
+        "reindex_files",
         lambda conn, files, **kw: rx.ReindexStats(updated=len(files)),
     )
     results = rx.reindex_files_multi(
-        ["pgdev.vedur.is", "rek-d01.vedur.is"], ["a", "b"],
-        root="/w", storage_location="imo_archive", dest_prefix="~/gpsdata",
+        ["pgdev.vedur.is", "rek-d01.vedur.is"],
+        ["a", "b"],
+        root="/w",
+        storage_location="imo_archive",
+        dest_prefix="~/gpsdata",
     )
     assert seen_hosts == ["pgdev.vedur.is", "rek-d01.vedur.is"]
     assert set(results) == {"pgdev.vedur.is", "rek-d01.vedur.is"}
@@ -218,10 +242,15 @@ def test_reindex_files_multi_records_per_host_failure(monkeypatch):
         return object()
 
     monkeypatch.setattr("receivers.db.connection.get_connection", _conn)
-    monkeypatch.setattr(rx, "reindex_files", lambda conn, files, **kw: rx.ReindexStats())
+    monkeypatch.setattr(
+        rx, "reindex_files", lambda conn, files, **kw: rx.ReindexStats()
+    )
     results = rx.reindex_files_multi(
-        ["good.host", "bad.host"], ["a"],
-        root="/w", storage_location="imo_archive", dest_prefix="~/gpsdata",
+        ["good.host", "bad.host"],
+        ["a"],
+        root="/w",
+        storage_location="imo_archive",
+        dest_prefix="~/gpsdata",
     )
     assert results["good.host"] is not None
     assert results["bad.host"] is None  # failure surfaced, not swallowed
@@ -287,8 +316,11 @@ def test_rinex_org_catalogs_as_distinct_row(db_conn, tmp_path):
     _, rnx_sha = _seed_gz(tmp_path, rnx_rel, b"fixed content")
     _, org_sha = _seed_gz(tmp_path, org_rel, b"original content")
     stats = reindex_files(
-        db_conn, [str(tmp_path / rnx_rel), str(tmp_path / org_rel)],
-        root=str(tmp_path), storage_location=LOC, dest_prefix="~/gpsdata",
+        db_conn,
+        [str(tmp_path / rnx_rel), str(tmp_path / org_rel)],
+        root=str(tmp_path),
+        storage_location=LOC,
+        dest_prefix="~/gpsdata",
     )
     assert stats.inserted == 2  # two distinct (file_category) rows
     with db_conn.cursor() as cur:
@@ -308,8 +340,11 @@ def test_unparsable_path_skipped(db_conn, tmp_path):
     stray = tmp_path / "stray.txt"
     stray.write_text("nope")
     stats = reindex_files(
-        db_conn, [str(stray)], root=str(tmp_path),
-        storage_location=LOC, dest_prefix="~/gpsdata",
+        db_conn,
+        [str(stray)],
+        root=str(tmp_path),
+        storage_location=LOC,
+        dest_prefix="~/gpsdata",
     )
     assert stats.skipped == 1
     assert stats.touched == 0
@@ -327,8 +362,11 @@ class TestPushReindexGlue:
         args = types.SimpleNamespace(reindex=False, catalog_host=None)
         # No DB touched; must not raise and must point at the reindex verb.
         _push_reindex(
-            args, ["/whatever"], root="/tmp/x",
-            storage_location="imo_archive", dest_prefix="~/gpsdata",
+            args,
+            ["/whatever"],
+            root="/tmp/x",
+            storage_location="imo_archive",
+            dest_prefix="~/gpsdata",
         )
         out = capsys.readouterr().out
         assert "archive-reindex" in out
@@ -339,12 +377,15 @@ class TestPushReindexGlue:
 
         from receivers.cli.main import _push_reindex
 
-        _seed_row(db_conn, REL, "0" * 64)          # stale row
+        _seed_row(db_conn, REL, "0" * 64)  # stale row
         _seed_gz(tmp_path, REL, b"pushed corrected payload" * 50)
         args = types.SimpleNamespace(reindex=True, catalog_host=None)  # localhost
         _push_reindex(
-            args, [str(tmp_path / REL)], root=str(tmp_path),
-            storage_location=LOC, dest_prefix="~/gpsdata",
+            args,
+            [str(tmp_path / REL)],
+            root=str(tmp_path),
+            storage_location=LOC,
+            dest_prefix="~/gpsdata",
         )
         out = capsys.readouterr().out
         assert "reindexed archive_catalog" in out
@@ -359,7 +400,10 @@ class TestPushReindexGlue:
 
         args = types.SimpleNamespace(reindex=True, catalog_host=None)
         _push_reindex(
-            args, ["/whatever"], root="/tmp/x",
-            storage_location=None, dest_prefix=None,
+            args,
+            ["/whatever"],
+            root="/tmp/x",
+            storage_location=None,
+            dest_prefix=None,
         )
         assert "no archive storage_location" in capsys.readouterr().out

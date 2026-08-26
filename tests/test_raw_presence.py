@@ -82,18 +82,14 @@ class TestCheckRegenerable:
         rnx = _make_rinex(tmp_path)
         _put_raw(tmp_path, "RHOF202606210000a.sbf.gz")  # hour 00, not 14
         hour14 = datetime(2026, 6, 21, 14)
-        r = check_regenerable(
-            rnx, hour14, station_id="RHOF", session_type="1Hz_1hr"
-        )
+        r = check_regenerable(rnx, hour14, station_id="RHOF", session_type="1Hz_1hr")
         assert not r.regenerable  # hour 14's raw is absent
 
     def test_hourly_regenerable_when_same_hour_present(self, tmp_path):
         rnx = _make_rinex(tmp_path)
         _put_raw(tmp_path, "RHOF202606211400a.sbf.gz")  # hour 14
         hour14 = datetime(2026, 6, 21, 14)
-        r = check_regenerable(
-            rnx, hour14, station_id="RHOF", session_type="1Hz_1hr"
-        )
+        r = check_regenerable(rnx, hour14, station_id="RHOF", session_type="1Hz_1hr")
         assert r.regenerable
 
 

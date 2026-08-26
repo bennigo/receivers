@@ -30,10 +30,9 @@ from receivers.dissemination.convert import (
 )
 
 _RINEX_HEADER = (
-    "     3.04           OBSERVATION DATA    M                   "
-    "RINEX VERSION / TYPE\n"
+    "     3.04           OBSERVATION DATA    M                   RINEX VERSION / TYPE\n"
 )
-_END = "                                                            " "END OF HEADER\n"
+_END = "                                                            END OF HEADER\n"
 
 
 def _complete_obs_text() -> str:

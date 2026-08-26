@@ -179,7 +179,7 @@ CONSTELLATION_LABEL_TO_TOS: Dict[str, str] = {
 
 
 def constellations_from_satellites(
-    satellites: Optional[Dict[str, Any]]
+    satellites: Optional[Dict[str, Any]],
 ) -> FrozenSet[str]:
     """Map the probe's per-constellation satellite counts to TOS codes.
 

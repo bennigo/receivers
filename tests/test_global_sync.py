@@ -264,7 +264,9 @@ def test_commit_falls_back_to_placeholder_identity(tmp_path, monkeypatch):
     _run(path, "init", "-q", "-b", "main")
     (path / "stations.cfg").write_text("[ROTH]\nx = 1\n")
     _run(path, "-c", "user.name=t", "-c", "user.email=t@t", "add", "stations.cfg")
-    _run(path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed")
+    _run(
+        path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed"
+    )
 
     (path / "stations.cfg").write_text("[ROTH]\nx = 2\n")
     res = git_commit_cfg(path, ["stations.cfg"], "msg")

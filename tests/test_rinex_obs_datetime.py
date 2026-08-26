@@ -12,16 +12,19 @@ import pytest
 from receivers.rinex.header_fix import _rinex_obs_datetime
 
 
-@pytest.mark.parametrize("name,expected", [
-    # RINEX 2 short — daily (session '0') → 00:00
-    ("RHOF1720.26D.Z", datetime(2026, 6, 21, 0)),
-    ("RHOF1720.26O", datetime(2026, 6, 21, 0)),
-    # RINEX 2 short — hourly (session a-x) → the file's hour
-    ("RHOF172a.26D.Z", datetime(2026, 6, 21, 0)),
-    ("RHOF172b.26D.Z", datetime(2026, 6, 21, 1)),
-    ("RHOF172n.26D.Z", datetime(2026, 6, 21, 13)),
-    ("RHOF172x.26D.Z", datetime(2026, 6, 21, 23)),
-])
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        # RINEX 2 short — daily (session '0') → 00:00
+        ("RHOF1720.26D.Z", datetime(2026, 6, 21, 0)),
+        ("RHOF1720.26O", datetime(2026, 6, 21, 0)),
+        # RINEX 2 short — hourly (session a-x) → the file's hour
+        ("RHOF172a.26D.Z", datetime(2026, 6, 21, 0)),
+        ("RHOF172b.26D.Z", datetime(2026, 6, 21, 1)),
+        ("RHOF172n.26D.Z", datetime(2026, 6, 21, 13)),
+        ("RHOF172x.26D.Z", datetime(2026, 6, 21, 23)),
+    ],
+)
 def test_parses_daily_and_hourly(name, expected):
     assert _rinex_obs_datetime(name, "RHOF") == expected
 

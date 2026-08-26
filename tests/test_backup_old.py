@@ -28,7 +28,11 @@ def _mk_rinex(tmp_path, *files):
 def test_backup_moves_only_matching_date(tmp_path):
     rinex = _mk_rinex(tmp_path, "RHOF0910.15D.Z", "RHOF0920.15D.Z")  # DOY 091, 092
     n = m._backup_existing_rinex_for_date(
-        rinex, datetime(2015, 4, 1), "RHOF", "15s_24hr", _LOG  # DOY 091
+        rinex,
+        datetime(2015, 4, 1),
+        "RHOF",
+        "15s_24hr",
+        _LOG,  # DOY 091
     )
     assert n == 1
     assert sorted(p.name for p in rinex.iterdir()) == ["RHOF0920.15D.Z"]
