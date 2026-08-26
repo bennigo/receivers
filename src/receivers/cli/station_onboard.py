@@ -597,6 +597,24 @@ def cmd_station_onboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_station_describe(args: argparse.Namespace) -> int:
+    """``receivers station describe`` — thin wrapper over ``tos station describe``.
+
+    Passes stdin through (so ``cat file | receivers station describe AUST`` works)
+    and forwards --text/--file/--date/--no-dry-run to the tostools verb.
+    """
+    cmd = [args.tos_bin, "station", "describe", args.station]
+    if args.text is not None:
+        cmd += ["--text", args.text]
+    if args.file is not None:
+        cmd += ["--file", args.file]
+    if args.date is not None:
+        cmd += ["--date", args.date]
+    if args.no_dry_run:
+        cmd += ["--no-dry-run"]
+    return subprocess.call(cmd)
+
+
 def create_station_onboard_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "station",
@@ -668,4 +686,35 @@ def create_station_onboard_parser(subparsers) -> argparse.ArgumentParser:
         help="Date for the record-visit vitjun (default: now; use YYYY-MM-DD to backfill)",
     )
     onboard.set_defaults(func=cmd_station_onboard)
+
+    describe = st.add_parser(
+        "describe",
+        help="Write a station description (wraps 'tos station describe')",
+        description=(
+            "Write the station ``description`` attribute from --text, --file, "
+            "or stdin — a thin wrapper over ``tos station describe``. Dates "
+            "from the station's ``date_start`` by default."
+        ),
+    )
+    describe.add_argument("station", help="4-char station id (e.g. AUST)")
+    describe.add_argument(
+        "--text", default=None, help="Description text (inline).",
+    )
+    describe.add_argument(
+        "--file", default=None,
+        help="Read the description from a UTF-8 text file.",
+    )
+    describe.add_argument(
+        "--date", default=None,
+        help="Date the value from (default: the station's date_start).",
+    )
+    describe.add_argument(
+        "--no-dry-run", action="store_true",
+        help="Commit the write (default is dry-run).",
+    )
+    describe.add_argument(
+        "--tos-bin", default="tos",
+        help="tos console script (default: tos on PATH)",
+    )
+    describe.set_defaults(func=cmd_station_describe)
     return parser
