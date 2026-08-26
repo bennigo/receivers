@@ -1,0 +1,5 @@
+# Bulk mechanical reformats — skipped by `git blame`.
+# Enable: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: apply ruff format repo-wide (2026-08-26)
+6d72249c2f9096165ccc4b55c6d43a8b0d08bf20
