@@ -1135,7 +1135,21 @@ def update_station_identity_in_cfg(
     if firmware_version:
         updates["receiver_firmware_version"] = firmware_version
     if receiver_model:
-        updates["receiver_model"] = receiver_model
+        # The PARAMETER is `receiver_model` because that is the key on the
+        # probe identity dict, but the stations.cfg KEY is `receiver_type` —
+        # see the FieldSpec in cfg/field_manifest.py, which is the authority on
+        # cfg key names. This wrote "receiver_model" for years; nothing reads
+        # that key, so every `health --update-cfg` receiver update silently
+        # no-opped while leaving a stray key behind (6 stations had collected
+        # one). Normalise through the manifest's own formatter too, so we write
+        # the short cfg vocabulary ("PolaRX5") rather than an IGS-style name
+        # ("SEPT POLARX5") that would break type detection; it passes unknown
+        # values through unchanged.
+        from ..cfg.field_manifest import _receiver_type_to_cfg
+
+        updates["receiver_type"] = (
+            _receiver_type_to_cfg(receiver_model) or receiver_model
+        )
     if serial_number:
         updates["receiver_serial"] = serial_number
 
