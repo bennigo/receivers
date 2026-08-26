@@ -997,11 +997,22 @@ All receivers use Phase 1 utilities by default:
 4. **Validation**: ArchiveValidator checks file integrity before and after archiving
 
 ### Benefits
-- **Code Consolidation**: ~540 lines of duplicate code eliminated (Phase 3B)
+- **Code Consolidation**: the Phase 1 *leaf utilities* are genuinely shared — all four drivers
+  construct `TimeParameterProcessor` / `ArchiveValidator` / `FileArchiver` and use them at every
+  archive site. ~540 lines of duplication were removed at that level (Phase 3B).
 - **Fault Tolerance**: Immediate archiving prevents data loss on crashes
 - **Maintainability**: Single source of truth for common operations
 - **Testing**: 72 comprehensive unit tests for Phase 1 utilities
 - **Simplicity**: No feature flags, single code path
+
+> ⚠️ **Scope of that consolidation — read before trusting it.** It holds at the leaf level and
+> **not** at the orchestration level. The `download_data` algorithm itself is still hand-copied
+> across all four drivers (NetR9 and NetRS are ~77 % identical text), so remaining duplication is
+> roughly 3–4× what Phase 3B removed. An abstraction built to unify that orchestration —
+> `base/septentrio/trimble/leica/download_manager.py`, 1,603 lines with a complete template
+> method — was **never adopted by any driver** and has now been deleted rather than left to look
+> authoritative. Do not re-add an orchestration layer without wiring the drivers to it in the same
+> change. See `docs/architecture-review-2026-08-26.md` §2 and §4.4-4.5.
 
 ### Documentation
 - **Scheduler guide**: `docs/scheduler/scheduler-guide.md` - Complete operational guide
