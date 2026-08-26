@@ -1,6 +1,7 @@
 """Shared pytest fixtures for the receivers suite.
 
-Currently one job: keep logging state from leaking between tests.
+Two jobs: keep logging state from leaking between tests, and keep the
+``manual/`` scripts out of collection entirely.
 """
 
 from __future__ import annotations
@@ -8,6 +9,13 @@ from __future__ import annotations
 import logging
 
 import pytest
+
+# ``tests/manual/`` holds operator-run scripts that talk to REAL receivers over
+# the network. They are named ``test_*.py`` and define ``test_*`` functions, and
+# ``pyproject.toml`` sets ``testpaths = ["tests"]`` — so without this line a bare
+# ``pytest`` collects them and authenticates against production hardware.
+# Run them deliberately instead: ``python tests/manual/test_natt_auth.py``.
+collect_ignore_glob = ["manual/*"]
 
 
 @pytest.fixture(autouse=True)

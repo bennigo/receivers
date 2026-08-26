@@ -14,6 +14,7 @@ Requirements:
     - Test station must be configured in stations.cfg
 """
 
+import os
 import logging
 import sys
 from datetime import datetime, timedelta
@@ -32,8 +33,8 @@ sys.path.insert(0, "/home/bgo/work/projects/gpslibrary/gtimes/src")
 TEST_STATION = "ISAF"  # Ísafjörður
 
 # Credentials (these will be added to stations.cfg later)
-TEST_USERNAME = "LMI"  # Corrected: LMI not IMO
-TEST_PASSWORD = "piene16"
+TEST_USERNAME = os.environ.get("NATT_TEST_USERNAME", "")
+TEST_PASSWORD = os.environ.get("NATT_TEST_PASSWORD", "")
 
 # Connection details
 TEST_IP = "193.109.17.51"
@@ -309,4 +310,12 @@ def main():
 
 
 if __name__ == "__main__":
+    if not TEST_USERNAME or not TEST_PASSWORD:
+        sys.exit(
+            "NATT credentials are not set.\n"
+            "These used to be hardcoded here and were committed to a PUBLIC repo;\n"
+            "they have been rotated and moved to the environment. Run as:\n"
+            "  NATT_TEST_USERNAME=... NATT_TEST_PASSWORD=... "
+            "python tests/manual/test_natt_auth.py"
+        )
     sys.exit(main())
