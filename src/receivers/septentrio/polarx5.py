@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime, timedelta, timezone
 from ftplib import FTP
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Callable, Dict, Optional, Union
 
 from gtimes.timefunc import currDatetime
 
@@ -87,14 +87,42 @@ class PolaRX5(BaseReceiver):
     PolaRX5 GNSS receivers used in the Icelandic Met Office GPS network.
     """
 
-    def __init__(self, station_id: str, station_info: Dict[str, Any]):
+    def __init__(
+        self,
+        station_id: str,
+        station_info: Dict[str, Any],
+        *,
+        ftp_factory: Optional[Callable[[], Any]] = None,
+    ):
         """Initialize PolaRX5 receiver.
 
         Args:
             station_id: Station identifier (e.g., 'REYK', 'HOFN')
             station_info: Station configuration dictionary with router/receiver info
+            ftp_factory: Zero-argument callable returning an object with the
+                ``ftplib.FTP`` interface. Defaults to ``ftplib.FTP``.
+
+                This exists so the download path can be exercised without a
+                receiver. Previously ``FTP()`` was constructed inline inside
+                ``download_data`` / ``_ftp_open_connection``, which left a test
+                nothing stable to attach a fake to — the only option was
+                patching an internal module path, and when that path moved the
+                mock detached SILENTLY and the test opened a real socket to a
+                production receiver. That is not hypothetical: it is what
+                happened to ``test_polarx5`` against 10.4.1.100:28784, fixed in
+                abc3735 (2026-08-23).
+
+                Injecting the constructor makes the attachment point explicit
+                and stable, so that failure mode cannot recur. A ``FakeFTP``
+                suitable for this already exists in
+                ``tests/test_receiver_horizon_probe.py``.
+
+                Keyword-only with a default, so every existing call site —
+                including ``ReceiverFactory.create_receiver`` — is unaffected.
         """
         super().__init__(station_id, station_info)
+
+        self._ftp_factory: Callable[[], Any] = ftp_factory or FTP
 
         # Set up logging
         self.logger = self._get_logger()
@@ -637,7 +665,7 @@ class PolaRX5(BaseReceiver):
             try:
                 from ftplib import FTP
 
-                ftp = FTP()
+                ftp = self._ftp_factory()
                 ftp.connect(self.ip_number, self.ip_port, timeout=3)
                 ftp.close()
                 self.logger.info(
@@ -1147,7 +1175,7 @@ class PolaRX5(BaseReceiver):
 
         ftp = None
         try:
-            ftp = FTP()
+            ftp = self._ftp_factory()
             ftp.connect(self.ip_number, self.ip_port, timeout=timeout)
             if self.ftp_anonymous:
                 ftp.login("anonymous")
