@@ -755,8 +755,18 @@ class G10HTTPExtractor:
             return "critical"
         elif "warning" in statuses:
             return "warning"
-        elif all(s == "ok" for s in statuses if s != "unknown"):
-            return "healthy"
+        else:
+            # Guard the empty case explicitly. `all(... for s in statuses if
+            # s != "unknown")` filters every element out when the station
+            # reported nothing but "unknown", and `all()` over an empty
+            # generator is True — so a station we know NOTHING about used to
+            # report "healthy", which is the one answer monitoring must never
+            # give. The `if not statuses` check above only catches an empty
+            # list, not an all-unknown one. Mirrors the Trimble extractor's
+            # `_calculate_overall_status`.
+            non_unknown = [s for s in statuses if s != "unknown"]
+            if non_unknown and all(s == "ok" for s in non_unknown):
+                return "healthy"
         return "unknown"
 
     def _count_statuses(self, statuses: List[str]) -> Dict[str, int]:
