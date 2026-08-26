@@ -491,6 +491,23 @@ class TestG10StatusCalculation:
         """Empty status list returns unknown."""
         assert extractor._calculate_overall_status([]) == "unknown"
 
+    def test_all_unknown_is_not_healthy(self, extractor):
+        """A station we know NOTHING about must never report healthy.
+
+        ``all(s == "ok" for s in statuses if s != "unknown")`` filters every
+        element out here, and ``all()`` over an empty generator is True — so
+        this returned "healthy" for a station that reported no usable metric at
+        all, which is the one answer monitoring must never give. The
+        ``if not statuses`` guard above only catches an EMPTY list, not an
+        all-unknown one, so it did not save us.
+        """
+        assert extractor._calculate_overall_status(["unknown"]) == "unknown"
+        assert extractor._calculate_overall_status(["unknown", "unknown"]) == "unknown"
+
+    def test_ok_alongside_unknown_is_still_healthy(self, extractor):
+        """Guarding the empty case must not break partial reporting."""
+        assert extractor._calculate_overall_status(["ok", "unknown"]) == "healthy"
+
     def test_status_counting(self, extractor):
         """Test status counting."""
         counts = extractor._count_statuses(
