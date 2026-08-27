@@ -26,7 +26,17 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 
 from ..cfg.field_manifest import (
     FIELDS,
@@ -34,6 +44,7 @@ from ..cfg.field_manifest import (
     fields_by_key,
     with_position_tolerance,
 )
+from ..cfg.reconcile_policy import ReconcilePolicy
 from ..cfg.reconciler import (
     FieldDiff,
     SourceUnavailableError,
@@ -978,6 +989,7 @@ def _reconcile_one(
     receiver_identity: Optional[Dict[str, Any]] = None,
     tos_data: Optional[Dict[str, Any]] = None,
     global_target: Optional[Path] = None,
+    prompt: Optional[Callable[..., Tuple[str, Any]]] = None,
 ) -> Tuple[List[FieldDiff], int, int]:
     """Reconcile one station given pre-fetched probe data.
 
@@ -986,11 +998,24 @@ def _reconcile_one(
     comparison, display, and writes — no network I/O.
 
     Returns ``(diffs, n_written, n_skipped)``.
+
+    ``prompt`` is the per-field decision function, defaulting to
+    :func:`_interactive_prompt`. It is injected rather than called directly so
+    the interactive path can be driven without a TTY — by a test replaying a
+    scripted sequence of answers, and eventually by a web form. Note the
+    contract already suits that: ``_interactive_prompt`` RETURNS
+    ``(action, value)`` and performs no writes itself, so a non-terminal
+    implementation is a drop-in.
     """
-    if not args.json:
+    prompt = prompt if prompt is not None else _interactive_prompt
+    # One resolved description of what this run may do, instead of fifteen
+    # scattered getattr(args, ...) reads. See cfg/reconcile_policy.py for why
+    # dry_run is required rather than defaulted.
+    policy = ReconcilePolicy.from_args(args)
+    if not policy.json:
         _print_setup_header(station_id, station_config)
 
-    tolerance_m = getattr(args, "position_tolerance_m", 2.0)
+    tolerance_m = policy.position_tolerance_m
     field_specs = with_position_tolerance(tolerance_m) if tolerance_m else None
 
     diffs = compare_station(
@@ -1003,14 +1028,14 @@ def _reconcile_one(
         field_specs=field_specs,
     )
 
-    silent = args.json
-    show_ok = not (args.only_diffs or getattr(args, "open", False))
+    silent = policy.json
+    show_ok = not (policy.only_diffs or policy.open_only)
     if not silent:
         _print_diff_table(diffs, show_ok=show_ok)
 
     # Position sanity gate — must run before any write logic so the warning
     # is visible even in dry-run mode.
-    abort_m: float = getattr(args, "position_abort_m", 50.0)
+    abort_m: float = policy.position_abort_m
     position_warn = _position_sanity_check(diffs, abort_m)
     if position_warn and not silent:
         print(f"\n   {position_warn}")
@@ -1041,7 +1066,7 @@ def _reconcile_one(
         return _changed
 
     actionable = [d for d in diffs if d.needs_attention]
-    canonicalize_on = getattr(args, "canonicalize", False)
+    canonicalize_on = policy.canonicalize
     fmt_mismatches = [d for d in diffs if d.format_mismatch] if canonicalize_on else []
     # cfg_placeholder rows are always collected — cleaned in --canonicalize or
     # interactively, independent of whether other fields need attention.
@@ -1057,7 +1082,7 @@ def _reconcile_one(
     ):
         return diffs, 0, 0
 
-    if args.dry_run:
+    if policy.dry_run:
         if not silent and actionable:
             print(
                 f"\n   {len(actionable)} field(s) need attention (dry-run, no writes)"
@@ -1084,8 +1109,8 @@ def _reconcile_one(
 
     # In JSON mode without an auto-resolution flag we can't make decisions —
     # nothing to do beyond returning diffs for the caller to report.
-    push_to_tos_on = getattr(args, "push_tos", False)
-    if silent and not (args.auto_fill or args.yes or push_to_tos_on):
+    push_to_tos_on = policy.push_tos
+    if silent and not (policy.auto_fill or policy.yes or push_to_tos_on):
         return diffs, 0, 0
 
     # --push-tos batch mode: push receiver values to TOS for all writable fields
@@ -1094,8 +1119,8 @@ def _reconcile_one(
         # Live writes require either explicit --yes or --dry-run. Interactive
         # mode without either is treated as "show me the table, ask again" —
         # not as implicit consent to write to TOS for every actionable field.
-        dry_run_flag: bool = getattr(args, "dry_run", False)
-        consent_given: bool = bool(args.yes) or dry_run_flag
+        dry_run_flag: bool = policy.dry_run
+        consent_given: bool = bool(policy.yes) or dry_run_flag
         if not silent:
             writable = [
                 d
@@ -1128,11 +1153,9 @@ def _reconcile_one(
             print("   ⚠️  --push-tos requires --source tos or --source both")
 
     # --sync-devices: create missing device entities in TOS
-    sync_devices_on: bool = getattr(args, "sync_devices", False)
+    sync_devices_on: bool = policy.sync_devices
     if sync_devices_on and push_to_tos_on and "tos" in sources:
-        consent_given: bool = bool(getattr(args, "yes", False)) or bool(
-            getattr(args, "dry_run", False)
-        )
+        consent_given: bool = bool(policy.yes) or bool(policy.dry_run)
         if consent_given:
             _sync_devices_to_tos(
                 station_id=station_id,
@@ -1146,11 +1169,11 @@ def _reconcile_one(
             print("   ⚠️  --sync-devices requires --yes or --dry-run to proceed")
 
     field_specs_by_key = fields_by_key()
-    no_receiver_primary: bool = getattr(args, "no_receiver_primary", False) or getattr(
-        args, "interactive", False
-    )
-    # Position sanity failure disables receiver-primary auto-push regardless of flags.
-    receiver_primary_active = not no_receiver_primary and position_warn is None
+    # Position sanity failure disables receiver-primary auto-push regardless of
+    # flags — that gate depends on the diffs, so it stays here rather than in
+    # the policy. The flag half (--no-receiver-primary / --interactive) is
+    # policy.receiver_primary_active.
+    receiver_primary_active = policy.receiver_primary_active and position_warn is None
 
     if not silent:
         print()
@@ -1179,7 +1202,11 @@ def _reconcile_one(
             and d.spec.tos_writable
             and tos_data is not None
         )
-        if args.auto_fill and d.verdict == Verdict.MISSING and d.suggestion is not None:
+        if (
+            policy.auto_fill
+            and d.verdict == Verdict.MISSING
+            and d.suggestion is not None
+        ):
             if is_primary and d.suggestion_source in ("receiver", "agree"):
                 action, new_value = "set_and_push_tos", d.suggestion
                 if not silent:
@@ -1192,7 +1219,7 @@ def _reconcile_one(
                     print(
                         f"     → auto-fill from {d.suggestion_source}: {d.suggestion!r}"
                     )
-        elif args.yes and d.suggestion is not None:
+        elif policy.yes and d.suggestion is not None:
             if is_primary and d.suggestion_source in ("receiver", "agree"):
                 action, new_value = "set_and_push_tos", d.suggestion
                 if not silent:
@@ -1205,7 +1232,7 @@ def _reconcile_one(
                     print(
                         f"     → accept suggestion ({d.suggestion_source}): {d.suggestion!r}"
                     )
-        elif args.yes and is_primary and d.receiver_value is not None:
+        elif policy.yes and is_primary and d.receiver_value is not None:
             # --yes with receiver_primary but no agreed suggestion: still take receiver
             action, new_value = "set_and_push_tos", d.receiver_value
             if not silent:
@@ -1216,7 +1243,7 @@ def _reconcile_one(
             # JSON mode without an applicable auto-rule: cannot prompt; skip.
             action, new_value = "skip", None
         else:
-            action, new_value = _interactive_prompt(
+            action, new_value = prompt(
                 d, receiver_primary_active=receiver_primary_active, tos_data=tos_data
             )
 
@@ -1255,7 +1282,7 @@ def _reconcile_one(
             attribute_code = component_info["attribute_code"]
             value = component_info["value"]
             if not silent:
-                mode = "[DRY-RUN] " if getattr(args, "dry_run", True) else ""
+                mode = "[DRY-RUN] " if policy.dry_run else ""
                 print(
                     f"     {mode}→ push component to TOS: {entity}.{attribute_code} = {value!r}"
                 )
@@ -1268,7 +1295,7 @@ def _reconcile_one(
 
                 from ..cfg.tos_push import push_component_to_tos
 
-                writer = TOSWriter(dry_run=getattr(args, "dry_run", True))
+                writer = TOSWriter(dry_run=policy.dry_run)
                 result = push_component_to_tos(
                     writer=writer,
                     entity=entity,
@@ -1390,7 +1417,7 @@ def _reconcile_one(
         for d in fmt_mismatches:
             rx_val = d.receiver_value  # guaranteed non-None by format_mismatch
             assert rx_val is not None
-            if args.dry_run:
+            if policy.dry_run:
                 if not silent:
                     print(f"     ≈ {d.cfg_key}: {d.cfg_raw!r} → {rx_val!r} (dry-run)")
             else:
@@ -1417,7 +1444,7 @@ def _reconcile_one(
             if not silent:
                 print(f"\n   Removing {len(cfg_placeholders)} placeholder value(s)…")
             for d in cfg_placeholders:
-                if args.dry_run:
+                if policy.dry_run:
                     if not silent:
                         print(f"     ~ {d.cfg_key}: remove {d.cfg_raw!r} (dry-run)")
                 else:
@@ -1435,7 +1462,7 @@ def _reconcile_one(
                     except Exception as exc:  # noqa: BLE001
                         if not silent:
                             print(f"     ❌ {d.cfg_key}: removal failed: {exc}")
-        elif not silent and not args.dry_run:
+        elif not silent and not policy.dry_run:
             # Interactive: prompt for each placeholder
             print(f"\n   {len(cfg_placeholders)} placeholder value(s) in cfg:")
             for d in cfg_placeholders:
@@ -1466,7 +1493,7 @@ def _reconcile_one(
     # These are NOT "needs_attention" conflicts — they're silent gaps the operator
     # may want to fill. Show them separately so `C` is available without cluttering
     # the main diff flow.
-    if not silent and not args.dry_run and tos_fillable_list:
+    if not silent and not policy.dry_run and tos_fillable_list:
         print(
             f"\n   {len(tos_fillable_list)} field(s) where cfg has a value but TOS has none:"
         )
