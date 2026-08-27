@@ -5368,8 +5368,13 @@ def cmd_rec_upgrade_firmware(args) -> int:
                     "--no-dry-run",
                 ],
             )
+            # Sync stations.cfg receiver_firmware_version from TOS — NOT the
+            # receiver. Post-5.7 the receiver sits behind the auth cliff and the
+            # TCP probe fails, but update-device just wrote the true firmware to
+            # TOS, so TOS is authoritative here. --global --push commits the
+            # gps-config-data repo so the sync timer propagates to rek-d01.
             _run(
-                "reconcile (local cfg)",
+                "reconcile (local cfg ← TOS)",
                 [
                     "cfg",
                     "reconcile",
@@ -5377,7 +5382,23 @@ def cmd_rec_upgrade_firmware(args) -> int:
                     "--field",
                     "receiver_firmware_version",
                     "--source",
-                    "receiver",
+                    "tos",
+                    "--yes",
+                ],
+            )
+            _run(
+                "reconcile (gps-config-data commit/push)",
+                [
+                    "cfg",
+                    "reconcile",
+                    sid,
+                    "--field",
+                    "receiver_firmware_version",
+                    "--source",
+                    "tos",
+                    "--yes",
+                    "--global",
+                    "--push",
                 ],
             )
             # A firmware flash is exactly the kind of intervention the vitjun
@@ -5402,10 +5423,6 @@ def cmd_rec_upgrade_firmware(args) -> int:
                     "rec-provision re-enabled FTP and disabled the HTTPS redirect",
                     "--no-dry-run",
                 ],
-            )
-            print(
-                "  ℹ when back online, finalize the repo: "
-                f"receivers cfg reconcile {sid} --global --push"
             )
         _run("health", ["health", sid])
 
