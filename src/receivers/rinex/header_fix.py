@@ -230,7 +230,7 @@ def fix_headers_in_file(
     """
     from tostools.rinex import correct_rinex_from_tos
     from tostools.rinex.corrector import render_correction, resolve_corrections
-    from tostools.rinex.reader import _parse_daily_rinex_date
+    from tostools.rinex.reader import parse_daily_rinex_date
     from tostools.rinex.validator import compare_rinex_to_tos
 
     source_path = Path(rinex_file)  # the original (may be read-only)
@@ -525,7 +525,7 @@ def discover_all_rinex_files(
     Walks ``<data_prepath>/<YYYY>/<mon>/<STA>/<session>/rinex/`` for every
     year+month that exists on disk. Used by ``--fix-headers --all``.
     """
-    from tostools.rinex.reader import _parse_daily_rinex_date
+    from tostools.rinex.reader import parse_daily_rinex_date
 
     root = Path(data_prepath)
     if not root.is_dir():

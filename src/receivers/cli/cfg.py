@@ -111,23 +111,23 @@ def _add_list_models_flag(parser: argparse.ArgumentParser, *, what: str) -> None
 def _print_igs_models(*, antennas: bool = True, radomes: bool = True) -> int:
     """Print the IGS lookup tables the ``--model``/``--radome`` flags validate against.
 
-    Reuses ``tostools.device._format_known_models`` so this output is the same
+    Reuses ``tostools.device.format_known_models`` so this output is the same
     text an operator gets in the ValueError on a bad model — one rendering, so
     the two can't drift.
     """
-    from tostools.device import _format_known_models
+    from tostools.device import format_known_models
     from tostools.standards.igs_equipment import ANTENNA_IGS, RADOME_IGS
 
     blocks = []
     if antennas:
         blocks.append(
-            _format_known_models(
+            format_known_models(
                 ANTENNA_IGS, "Accepted antenna models (aliases in parentheses):"
             )
         )
     if radomes:
         blocks.append(
-            _format_known_models(
+            format_known_models(
                 RADOME_IGS, "Accepted radome codes (aliases in parentheses):"
             )
         )

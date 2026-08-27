@@ -118,7 +118,7 @@ def resolve_credentials(
 
     Precedence (each of username/password independently): explicit override →
     ``[teltonika] *_pass_path`` (via pass(1)) → ``[teltonika]`` cleartext. The
-    pass-path support reuses :func:`tostools.api.tos_writer._load_from_pass`,
+    pass-path support reuses :func:`tostools.api.tos_writer.load_password_from_pass`,
     the same helper backing the ``[tos]`` credentials, so the operator gets the
     identical "cleartext for convenience, pass for secrecy" choice.
 
@@ -126,10 +126,10 @@ def resolve_credentials(
     """
     # Reuse the battle-tested pass resolver from tostools (already a dependency).
     try:
-        from tostools.api.tos_writer import _load_from_pass
+        from tostools.api.tos_writer import load_password_from_pass
     except Exception:  # noqa: BLE001 — pass support optional; cleartext still works
 
-        def _load_from_pass(pass_spec: str) -> Optional[str]:  # type: ignore[misc]
+        def load_password_from_pass(pass_spec: str) -> Optional[str]:  # type: ignore[misc]
             return None
 
     path = _find_receivers_cfg(cfg_path)
@@ -141,12 +141,12 @@ def resolve_credentials(
             if cp.has_section("teltonika"):
                 u_pp = cp.get("teltonika", "username_pass_path", fallback=None)
                 if u_pp:
-                    cfg_user = _load_from_pass(u_pp.strip())
+                    cfg_user = load_password_from_pass(u_pp.strip())
                 if not cfg_user:
                     cfg_user = cp.get("teltonika", "username", fallback=None) or None
                 p_pp = cp.get("teltonika", "password_pass_path", fallback=None)
                 if p_pp:
-                    cfg_pass = _load_from_pass(p_pp.strip())
+                    cfg_pass = load_password_from_pass(p_pp.strip())
                 if not cfg_pass:
                     cfg_pass = cp.get("teltonika", "password", fallback=None) or None
         except Exception as exc:  # noqa: BLE001
