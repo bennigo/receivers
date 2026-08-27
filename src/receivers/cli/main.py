@@ -5737,7 +5737,12 @@ def _push_reconverted(work_dir, args, logger, only_rel=None) -> Dict[str, Any]:
         # Incremental flush: push exactly these (the files staged since the last
         # flush) so archive-side --backup-old never re-touches already-pushed
         # files. The caller tracks which rel paths have gone.
-        rel = list(only_rel)
+        # Only finished products: the flush lists whatever is in rinex/ right
+        # now, including the converter's in-flight intermediates (`.oT`, `.o`,
+        # `.d`) that vanish before rsync stats them — link_stat / exit 23
+        # churn. Archive products are always compressed (.Z/.gz); intermediates
+        # never are — same discriminator as the else branch below.
+        rel = [r for r in only_rel if Path(r).suffix in (".Z", ".gz")]
     else:
         # Only finished products. The converter stages its intermediates in the
         # SAME rinex/ directory (`ISAK…0000a.13o`, `…_gfzrnx.13o`) and deletes
