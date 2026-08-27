@@ -693,3 +693,55 @@ def test_default_owner_when_neither_cli_nor_file_supplies(
     assert rc == 0
     attrs = {a["code"]: a["value"] for a in writer.create_device.call_args.args[1]}
     assert attrs["owner"] == "Jarðeðlismælihópur"
+
+
+def test_empty_string_owner_falls_back_to_the_default(
+    parser, owners_yaml, tmp_path
+) -> None:
+    """`--owner ""` takes the DEFAULT — the gates test falsiness, not None.
+
+    Every fill-in here is `if not getattr(args, key, None)`, so an empty string
+    is treated as "not supplied". That is the sensible reading of `--owner ""`
+    (there is no owner named ""; TOS would reject it), but it is a distinction
+    a request-object refactor erases without noticing: a frozen dataclass with
+    `Optional[str]` and an `is None` check would carry the empty string
+    straight through to a TOS write that then fails validation.
+
+    Verified by mutation: swapping the falsy test for `is None` left the whole
+    intake suite green before this test existed.
+    """
+    import yaml as _yaml
+
+    owners_yaml.write_text(
+        _yaml.safe_dump(
+            {"owners": ["Veðurstofa Íslands", "Jarðeðlismælihópur"]}, allow_unicode=True
+        )
+    )
+    intake = _write_intake_file(tmp_path)
+    body = _yaml.safe_load(intake.read_text())
+    body.pop("owner")
+    intake.write_text(_yaml.safe_dump(body, allow_unicode=True), encoding="utf-8")
+
+    args = parser.parse_args(
+        [
+            "cfg",
+            "add-receiver",
+            "--from-file",
+            str(intake),
+            "--owner",
+            "",
+            "--owners-cache",
+            str(owners_yaml),
+        ]
+    )
+    writer = _make_writer_mock()
+    with (
+        patch("receivers.cfg.device_probe.probe_receiver"),
+        patch("tostools.api.tos_writer.TOSWriter", return_value=writer),
+    ):
+        rc = cmd_cfg_add_receiver(args)
+    assert rc == 0
+    attrs = {a["code"]: a["value"] for a in writer.create_device.call_args.args[1]}
+    assert attrs["owner"] == "Jarðeðlismælihópur", (
+        "an empty --owner must fall through to the default, not be written as ''"
+    )

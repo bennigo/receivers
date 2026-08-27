@@ -44,6 +44,7 @@ from ..cfg.field_manifest import (
     fields_by_key,
     with_position_tolerance,
 )
+from ..cfg.intake_request import FILE_FILLABLE, IntakeRequest
 from ..cfg.reconcile_apply import CfgTargets, resolve_effective_date, silent_emit
 from ..cfg.reconcile_plan import decide_field
 from ..cfg.reconcile_policy import ReconcilePolicy
@@ -1950,7 +1951,6 @@ def _print_probed_fields(fields: Dict[str, str], host: Optional[str]) -> None:
 def cmd_cfg_extract(args) -> int:
     """``cfg extract`` — probe a receiver and add a new station section to stations.cfg."""
     import re
-    from datetime import date
     from pathlib import Path
 
     from ..config.receivers_config import create_station_section
@@ -2055,7 +2055,6 @@ def cmd_cfg_add_tos_station(args) -> int:
     import sys
     from argparse import Namespace
     from contextlib import nullcontext, redirect_stdout
-    from datetime import date
     from pathlib import Path
 
     from tostools.tos import main as tos_main
@@ -2459,6 +2458,11 @@ def cmd_cfg_add_receiver(args) -> int:
             return 2
         print(f"Resolved {station} → {args.probe}")
 
+    # One resolved description of what this intake is asking for, instead of
+    # three separate getattr/setattr passes over the same eight names at three
+    # points in this function. See cfg/intake_request.py.
+    intake = IntakeRequest.from_args(args)
+
     # ---- --from-file: load identity + defaults from YAML ----------------
     # CLI args take precedence; file fills in only what was not supplied
     # via CLI. Required fields (owner/location/date_start) must come from
@@ -2483,21 +2487,13 @@ def cmd_cfg_add_receiver(args) -> int:
             print("❌ --from-file must contain a YAML mapping", file=sys.stderr)
             return 2
 
-        # Fill in CLI args from file when not already supplied
-        for key in (
-            "owner",
-            "location",
-            "date_start",
-            "station_hint",
-            "firmware",
-            "comment",
-            "galvos",
-            "probe_type",
-        ):
-            if not getattr(args, key, None):
-                file_val = data.get(key)
-                if file_val not in (None, ""):
-                    setattr(args, key, file_val)
+        # Fill in CLI args from file when not already supplied.
+        # The precedence rule itself lives in cfg/intake_request.py; args is
+        # still written back because the rest of this 450-line verb reads from
+        # it. Narrowing that is the next step, not this one.
+        intake = intake.merged_with_file(data)
+        for key in FILE_FILLABLE:
+            setattr(args, key, getattr(intake, key))
 
         # Build a ReceiverIdentity from file fields — replaces probe call.
         # Accept either 'model_raw' (probe-shaped) or 'model' as a
@@ -2512,35 +2508,20 @@ def cmd_cfg_add_receiver(args) -> int:
             partial=bool(data.get("partial", False)),
         )
 
-    # ---- Apply default --owner if neither CLI nor file supplied one -----
-    # Jarðeðlismælihópur owns the GPS receiver fleet for IMO. Every
-    # existing open child of B9 - Kjallari - Jörð (id_entity=4) has this
-    # as its owner attribute, so it's the right default for any new
-    # warehouse intake of receivers/antennas/radomes/monuments. Operators
-    # add devices owned by another group with --owner Vatnamælihópur
-    # (etc.) or via the owner key in --from-file.
-    if not getattr(args, "owner", None):
-        args.owner = "Jarðeðlismælihópur"
-
-    # ---- Apply default --location ---------------------------------------
-    # ~71% of historical intakes land at B9 - Kjallari - Jörð (id_entity=4
-    # in TOS — the main GPS warehouse). Saves the operator typing the
-    # exact string every time; override via --location or via the
-    # `location` key in --from-file for non-B9 warehouses.
-    if not getattr(args, "location", None):
-        args.location = "B9 - Kjallari - Jörð"
-
-    # ---- Apply default --date-start (today) -----------------------------
-    # The intake almost always happens "now" — registering today's
-    # warehouse arrival. For back-dated intakes pass --date-start
-    # explicitly or set `date_start:` in --from-file.
-    if not getattr(args, "date_start", None):
-        args.date_start = date.today().isoformat()
+    # ---- Apply the built-in defaults ------------------------------------
+    # owner: Jarðeðlismælihópur owns the GPS receiver fleet for IMO; every
+    # open child of B9 - Kjallari - Jörð carries it. location: ~71% of
+    # historical intakes land at that warehouse. date_start: an intake is
+    # almost always "now". Each is overridable on the CLI or via --from-file;
+    # the rules and their precedence live in cfg/intake_request.py.
+    intake = intake.with_defaults()
+    for key in FILE_FILLABLE:
+        setattr(args, key, getattr(intake, key))
 
     # ---- Required-field validation (CLI-or-file) ------------------------
-    missing = [
-        f for f in ("owner", "location", "date_start") if not getattr(args, f, None)
-    ]
+    # Deliberately AFTER defaults: it can only fire if a default is itself
+    # empty. Checking earlier would reject valid invocations.
+    missing = intake.missing_required()
     if missing:
         print(
             "❌ missing required field(s): "
