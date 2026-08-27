@@ -44,6 +44,7 @@ from ..cfg.field_manifest import (
     fields_by_key,
     with_position_tolerance,
 )
+from ..cfg.reconcile_plan import decide_field
 from ..cfg.reconcile_policy import ReconcilePolicy
 from ..cfg.reconciler import (
     FieldDiff,
@@ -1192,56 +1193,23 @@ def _reconcile_one(
                 tos = d.tos_value if d.tos_value is not None else "[N/A]"
                 print(f"     TOS:      {tos}")
 
-        # Resolve action
+        # Resolve action. The rules live in cfg/reconcile_plan.py — they are a
+        # pure function of (diff, policy) and were only ever entangled here
+        # because each branch printed its own reason. decide_field returns None
+        # when the field genuinely needs a human, which is a different thing
+        # from deciding to skip.
         action: str
         new_value: Optional[str]
-        is_primary = (
-            receiver_primary_active
-            and d.spec.receiver_primary
-            and d.receiver_value is not None
-            and d.spec.tos_writable
-            and tos_data is not None
+        decision = decide_field(
+            d,
+            policy,
+            receiver_primary_active=receiver_primary_active,
+            tos_available=tos_data is not None,
         )
-        if (
-            policy.auto_fill
-            and d.verdict == Verdict.MISSING
-            and d.suggestion is not None
-        ):
-            if is_primary and d.suggestion_source in ("receiver", "agree"):
-                action, new_value = "set_and_push_tos", d.suggestion
-                if not silent:
-                    print(
-                        f"     → auto-fill from {d.suggestion_source}: {d.suggestion!r} (cfg + TOS)"
-                    )
-            else:
-                action, new_value = "set", d.suggestion
-                if not silent:
-                    print(
-                        f"     → auto-fill from {d.suggestion_source}: {d.suggestion!r}"
-                    )
-        elif policy.yes and d.suggestion is not None:
-            if is_primary and d.suggestion_source in ("receiver", "agree"):
-                action, new_value = "set_and_push_tos", d.suggestion
-                if not silent:
-                    print(
-                        f"     → accept suggestion ({d.suggestion_source}): {d.suggestion!r} (cfg + TOS)"
-                    )
-            else:
-                action, new_value = "set", d.suggestion
-                if not silent:
-                    print(
-                        f"     → accept suggestion ({d.suggestion_source}): {d.suggestion!r}"
-                    )
-        elif policy.yes and is_primary and d.receiver_value is not None:
-            # --yes with receiver_primary but no agreed suggestion: still take receiver
-            action, new_value = "set_and_push_tos", d.receiver_value
-            if not silent:
-                print(
-                    f"     → accept receiver (primary): {d.receiver_value!r} (cfg + TOS)"
-                )
-        elif silent:
-            # JSON mode without an applicable auto-rule: cannot prompt; skip.
-            action, new_value = "skip", None
+        if decision is not None:
+            action, new_value = decision.action, decision.value
+            if decision.message and not silent:
+                print(f"     → {decision.message}")
         else:
             action, new_value = prompt(
                 d, receiver_primary_active=receiver_primary_active, tos_data=tos_data

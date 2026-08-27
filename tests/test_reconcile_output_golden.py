@@ -277,3 +277,92 @@ def test_interactive_output_is_unchanged(recorded_writes):
         pytest.skip(f"regenerated {golden.name}")
     assert golden.exists(), f"missing golden {golden}"
     assert produced == golden.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# The automatic decision branches
+# ---------------------------------------------------------------------------
+# --auto-fill and --yes only reach the per-field decision loop when
+# dry_run=False; in dry-run _reconcile_one returns early. So the dry-run goldens
+# above do NOT cover those branches, and extracting them into
+# cfg/reconcile_plan.py would have been unverified without these.
+
+
+@pytest.mark.parametrize("mode", ["yes", "auto_fill"])
+def test_automatic_decision_output_is_unchanged(mode, recorded_writes):
+    """Golden for the branches that only run with dry_run=False.
+
+    Both get a scripted prompt, because neither flag resolves EVERY field:
+    --auto-fill only fills MISSING values, so a genuine conflict (here,
+    firmware 5.5.0 vs 5.6.0) still falls through and asks. That is correct
+    behaviour and worth having pinned — a future change that made --auto-fill
+    silently resolve conflicts would show up here.
+    """
+    flags = {"yes": True} if mode == "yes" else {"auto_fill": True}
+    args = argparse.Namespace(**{**BASE_FLAGS, "dry_run": False, **flags})
+    scripted = _Scripted([("skip", None)] * 20)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _reconcile_one(
+            "TEST",
+            STATION_CONFIG,
+            ["receiver"],
+            None,
+            args,
+            RECEIVER_IDENTITY,
+            TOS_DATA,
+            prompt=scripted,
+        )
+    produced = buf.getvalue()
+    if mode == "auto_fill":
+        assert scripted.seen, (
+            "--auto-fill resolved every field without asking; it must only fill "
+            "MISSING values and leave conflicts to the operator"
+        )
+
+    golden = GOLDEN_DIR / f"auto_{mode}.txt"
+    if os.environ.get("RECONCILE_GOLDEN_UPDATE"):
+        golden.parent.mkdir(parents=True, exist_ok=True)
+        golden.write_text(produced, encoding="utf-8")
+        pytest.skip(f"regenerated {golden.name}")
+    assert golden.exists(), f"missing golden {golden}"
+    assert produced == golden.read_text(encoding="utf-8")
+
+
+def test_yes_accepts_the_suggestion_and_writes_it(recorded_writes):
+    """--yes must actually write, and write the suggested value."""
+    args = argparse.Namespace(**{**BASE_FLAGS, "dry_run": False, "yes": True})
+    with contextlib.redirect_stdout(io.StringIO()):
+        _reconcile_one(
+            "TEST",
+            STATION_CONFIG,
+            ["receiver"],
+            None,
+            args,
+            RECEIVER_IDENTITY,
+            TOS_DATA,
+        )
+    cfg_writes = [w for w in recorded_writes if w[0] == "cfg"]
+    assert cfg_writes, "--yes wrote nothing; the decision branch is not reached"
+    assert all(w[3] is not None for w in cfg_writes), "wrote a None value"
+
+
+def test_json_mode_never_prompts_and_never_writes(recorded_writes, monkeypatch):
+    """JSON mode cannot ask, so it must skip — not guess."""
+
+    def _boom(*a, **k):
+        raise AssertionError("JSON mode prompted; it has no way to receive an answer")
+
+    monkeypatch.setattr("builtins.input", _boom)
+    args = argparse.Namespace(**{**BASE_FLAGS, "dry_run": False, "json": True})
+    with contextlib.redirect_stdout(io.StringIO()):
+        _reconcile_one(
+            "TEST",
+            STATION_CONFIG,
+            ["receiver"],
+            None,
+            args,
+            RECEIVER_IDENTITY,
+            TOS_DATA,
+        )
+    assert recorded_writes == [], f"JSON mode wrote {recorded_writes}"
