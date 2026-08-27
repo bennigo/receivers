@@ -166,6 +166,20 @@ MUTATIONS = [
         "        for target in self.targets[:1]:\n            if self._apply(",
         "test_cfg_targets",
     ),
+    (
+        "M19 bare Enter no longer deletes the placeholder",
+        CLI,
+        '                if choice in ("d", "delete", ""):',
+        '                if choice in ("d", "delete"):',
+        "test_bare_enter_DELETES_the_placeholder",
+    ),
+    (
+        "M20 tos-fillable push made case-insensitive — 'c' starts pushing to TOS",
+        CLI,
+        '            if raw == "C":',
+        '            if raw.lower() == "c":',
+        "test_lowercase_c_does_NOT_push",
+    ),
 ]
 
 ORIGINALS = {CLI: CLI.read_text(), APPLY: APPLY.read_text()}

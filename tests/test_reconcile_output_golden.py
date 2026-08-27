@@ -827,3 +827,38 @@ def test_set_and_push_tos_pushes_the_receiver_value_not_the_typed_one(
         f"pushed {pushes[0][3]!r}; the receiver value 5.6.0 must win over the "
         f"typed value"
     )
+
+
+# --- the two answers nothing pinned -----------------------------------------
+# Both are properties of the raw `input()` handling in the placeholder and
+# tos-fillable blocks. They are pinned HERE, against the un-extracted code, so
+# the prompt extraction that follows is verified against them rather than
+# defining them.
+
+
+def test_bare_enter_DELETES_the_placeholder(recorded_writes):
+    """Empty input is `delete`, not skip — a destructive default.
+
+    `if choice in ("d", "delete", "")`. Whether that default is wise is a
+    separate question; it is what the tool does today, and an extraction that
+    quietly turned bare Enter into "keep" would change behaviour operators rely
+    on without anyone noticing.
+    """
+    _run_b(keys="")
+    removals = [w for w in recorded_writes if w[0] == "remove"]
+    assert removals, "bare Enter no longer deletes the placeholder"
+    assert removals[0][2] == "antenna_serial"
+
+
+def test_lowercase_c_does_NOT_push_cfg_to_tos(recorded_writes):
+    """The tos-fillable prompt is case-SENSITIVE, unlike the placeholder one.
+
+    It reads `.strip()` where the placeholder block reads `.strip().lower()`.
+    That asymmetry is load-bearing: `C` pushes a cfg value into TOS, and a
+    stray lowercase `c` must not. Normalising both while extracting would make
+    `c` start writing to production TOS.
+    """
+    _run_b(keys="c")
+    assert not [w for w in recorded_writes if w[0] == "tos_push"], (
+        "lowercase 'c' pushed to TOS; the prompt must stay case-sensitive"
+    )
