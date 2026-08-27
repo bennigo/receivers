@@ -5346,16 +5346,17 @@ def cmd_rec_upgrade_firmware(args) -> int:
                 continue
 
         # ---- aftermath (chained existing verbs) ----
-        def _run(label: str, argv: List[str]) -> None:
+        def _run(label: str, argv: List[str]) -> int:
             print(f"  → {label}: receivers {' '.join(argv)}")
             r = subprocess.run([sys.executable, "-m", "receivers.cli.main", *argv])
             if r.returncode != 0:
                 print(f"    ⚠ {label} returned {r.returncode} — run it manually")
+            return r.returncode
 
         if not args.no_provision:
             _run("rec-provision", ["rec-provision", sid])
         if not args.no_record:
-            _run(
+            upd_rc = _run(
                 "update-device (TOS)",
                 [
                     "cfg",
@@ -5368,6 +5369,32 @@ def cmd_rec_upgrade_firmware(args) -> int:
                     "--no-dry-run",
                 ],
             )
+            if upd_rc != 0:
+                # update-device probes the receiver and looks it up by serial in
+                # TOS; that lookup can miss (e.g. a pure-numeric serial that
+                # /basic_search/ won't match) even when the flash itself
+                # succeeded and the target version is known. Fall back to the
+                # value-driven set-attr, which writes the target version
+                # directly — no probe, no serial lookup. (ENTC 2026-08-27:
+                # update-device returned 1 on the serial lookup, leaving TOS at
+                # 5.5.0 until set-attr ran by hand.)
+                _run(
+                    "set-attr fallback (TOS)",
+                    [
+                        "cfg",
+                        "set-attr",
+                        "--station",
+                        sid,
+                        "--subtype",
+                        "gnss_receiver",
+                        "--field",
+                        "firmware_version",
+                        "--value",
+                        target_version,
+                        "--change",
+                        "--no-dry-run",
+                    ],
+                )
             # Sync stations.cfg receiver_firmware_version from TOS — NOT the
             # receiver. Post-5.7 the receiver sits behind the auth cliff and the
             # TCP probe fails, but update-device just wrote the true firmware to
