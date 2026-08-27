@@ -55,3 +55,62 @@ def test_stream_suf_aborts_without_ready_signal(tmp_path):
 
     # Only the exeResetReceiver command was sent — no firmware payload.
     assert sent == [b"exeResetReceiver, Upgrade, none\n"]
+
+
+def test_wait_for_reboot_and_verify_stops_on_login_rejection(monkeypatch):
+    """A rejected login must abort the poll loop immediately.
+
+    Retrying turns one rejected login into ~24 over the 240s reboot window, and
+    on 5.7.0 that trips the GLOBAL brute-force lockout that blocks rec-provision
+    itself. So a single False from login() must stop the loop.
+    """
+    calls = {"login": 0}
+    fake_sock = MagicMock()
+
+    def fake_connect_control(ip, port, **kw):
+        return fake_sock, False
+
+    def fake_login(sock, username, password):
+        calls["login"] += 1
+        return False  # definitive rejection (wrong creds or lockout)
+
+    read_version = MagicMock()
+    monkeypatch.setattr(fw, "connect_control", fake_connect_control)
+    monkeypatch.setattr(fw, "login", fake_login)
+    monkeypatch.setattr(fw, "read_firmware_version", read_version)
+
+    with pytest.raises(fw.FirmwareUpgradeError, match="login was rejected"):
+        fw.wait_for_reboot_and_verify(
+            "10.0.0.1",
+            28784,
+            username="u",
+            password="p",
+            expect_version="5.7.0",
+            reboot_wait_s=30,
+            poll_every_s=1,
+        )
+
+    # login attempted exactly ONCE, and the version was never read.
+    assert calls["login"] == 1
+    read_version.assert_not_called()
+
+
+def test_wait_for_reboot_and_verify_success(monkeypatch):
+    """A successful login proceeds to read and confirm the firmware version."""
+    fake_sock = MagicMock()
+    monkeypatch.setattr(
+        fw, "connect_control", lambda ip, port, **kw: (fake_sock, False)
+    )
+    monkeypatch.setattr(fw, "login", lambda sock, username, password: True)
+    monkeypatch.setattr(fw, "read_firmware_version", lambda sock: "5.7.0")
+
+    ver = fw.wait_for_reboot_and_verify(
+        "10.0.0.1",
+        28784,
+        username="u",
+        password="p",
+        expect_version="5.7.0",
+        reboot_wait_s=30,
+        poll_every_s=1,
+    )
+    assert ver == "5.7.0"
