@@ -810,9 +810,9 @@ class TestProbeStation:
         from receivers.cli.cfg import _probe_station
 
         monkeypatch.setattr(
-            "receivers.cli.cfg._query_receiver_identity", lambda *_: None
+            "receivers.cfg.probe._query_receiver_identity", lambda *_: None
         )
-        monkeypatch.setattr("receivers.cli.cfg._query_tos", lambda *_: None)
+        monkeypatch.setattr("receivers.cfg.probe._query_tos", lambda *_: None)
 
         rx, tos = _probe_station("ELDC", {}, ["receiver", "tos"], json_mode=True)
         assert rx is None
@@ -824,9 +824,9 @@ class TestProbeStation:
         rx_data = {"receiver_model": "PolaRX5", "serial_number": "12345"}
         tos_data = {"name": "Eldey", "device_history": []}
         monkeypatch.setattr(
-            "receivers.cli.cfg._query_receiver_identity", lambda *_: rx_data
+            "receivers.cfg.probe._query_receiver_identity", lambda *_: rx_data
         )
-        monkeypatch.setattr("receivers.cli.cfg._query_tos", lambda *_: tos_data)
+        monkeypatch.setattr("receivers.cfg.probe._query_tos", lambda *_: tos_data)
 
         rx, tos = _probe_station("ELDC", {}, ["receiver", "tos"], json_mode=True)
         assert rx == rx_data
@@ -837,11 +837,11 @@ class TestProbeStation:
 
         called: list = []
         monkeypatch.setattr(
-            "receivers.cli.cfg._query_receiver_identity",
+            "receivers.cfg.probe._query_receiver_identity",
             lambda *_: called.append("rx") or {},
         )
         tos_data = {"name": "Eldey"}
-        monkeypatch.setattr("receivers.cli.cfg._query_tos", lambda *_: tos_data)
+        monkeypatch.setattr("receivers.cfg.probe._query_tos", lambda *_: tos_data)
 
         _, tos = _probe_station("ELDC", {}, ["tos"], json_mode=True)
         assert called == []
@@ -852,11 +852,11 @@ class TestProbeStation:
 
         called: list = []
         monkeypatch.setattr(
-            "receivers.cli.cfg._query_tos", lambda *_: called.append("tos") or {}
+            "receivers.cfg.probe._query_tos", lambda *_: called.append("tos") or {}
         )
         rx_data = {"receiver_model": "PolaRX5"}
         monkeypatch.setattr(
-            "receivers.cli.cfg._query_receiver_identity", lambda *_: rx_data
+            "receivers.cfg.probe._query_receiver_identity", lambda *_: rx_data
         )
 
         rx, _ = _probe_station("ELDC", {}, ["receiver"], json_mode=True)
@@ -868,10 +868,10 @@ class TestProbeStation:
 
         called = []
         monkeypatch.setattr(
-            "receivers.cli.cfg._query_receiver_identity",
+            "receivers.cfg.probe._query_receiver_identity",
             lambda *_: called.append("rx") or {},
         )
-        monkeypatch.setattr("receivers.cli.cfg._query_tos", lambda *_: None)
+        monkeypatch.setattr("receivers.cfg.probe._query_tos", lambda *_: None)
 
         cfg = {"_adhoc": True}
         rx, _ = _probe_station("ELDC", cfg, ["receiver", "tos"], json_mode=True)
@@ -890,11 +890,11 @@ class TestProbeStation:
         tos_map = {sid: {"name": f"Name-{sid}"} for sid in station_ids}
 
         monkeypatch.setattr(
-            "receivers.cli.cfg._query_receiver_identity",
+            "receivers.cfg.probe._query_receiver_identity",
             lambda sid, _: rx_map.get(sid),
         )
         monkeypatch.setattr(
-            "receivers.cli.cfg._query_tos",
+            "receivers.cfg.probe._query_tos",
             lambda sid: tos_map.get(sid),
         )
 
