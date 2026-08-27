@@ -356,6 +356,91 @@ def _write_cfg(
     return changed
 
 
+def canonicalize_notation(
+    diffs: List[FieldDiff],
+    *,
+    targets: CfgTargets,
+    dry_run: bool,
+    emit: Emit,
+) -> int:
+    """Rewrite notation-only mismatches to the receiver's spelling.
+
+    ``--canonicalize`` handles fields where cfg is logically CORRECT but spelled
+    differently from what the receiver reports ("NP 4.81 / SP 4.81" vs "4.81").
+    Nothing is being decided here — the values already agree once normalised —
+    which is why this needs no prompt and no consent gate beyond ``dry_run``.
+
+    Deliberately does NOT route through :func:`apply_decision`: ``set`` runs
+    ``cfg_format``, and the whole point is to write the receiver's RAW spelling.
+    It also reports per field rather than per decision, and the wording differs.
+
+    Returns the number of cfg files actually changed.
+    """
+    written = 0
+    for diff in diffs:
+        raw = diff.receiver_value  # guaranteed non-None by format_mismatch
+        assert raw is not None
+        if dry_run:
+            emit(f"     ≈ {diff.cfg_key}: {diff.cfg_raw!r} → {raw!r} (dry-run)")
+            continue
+        try:
+            changed = targets.apply(diff, raw, resolved_by="canonicalize")
+        except SourceUnavailableError as exc:
+            emit(f"     ❌ {diff.cfg_key}: could not write: {exc}")
+            continue
+        except Exception as exc:  # noqa: BLE001
+            emit(f"     ❌ {diff.cfg_key}: write failed: {exc}")
+            continue
+        if changed:
+            written += 1
+            emit(f"     ✅ {diff.cfg_key}: {diff.cfg_raw!r} → {raw!r}")
+        else:
+            emit(f"     ⏭  {diff.cfg_key} already canonical")
+    return written
+
+
+def remove_placeholders(
+    diffs: List[FieldDiff],
+    *,
+    targets: CfgTargets,
+    dry_run: bool,
+    emit: Emit,
+) -> int:
+    """Drop cfg keys whose value is a recognised placeholder.
+
+    A placeholder is a raw value ``normalize()`` strips to ``None`` — typically
+    a TOS synthetic device identifier (``antenna-AFST-20210527``) that leaked
+    into cfg. The key should be REMOVED rather than kept or written to, because
+    a value that normalises away is worse than an absent one: it looks like
+    data.
+
+    This is the unattended ``--canonicalize`` path. The interactive path asks
+    per key and still lives in the CLI, because it is a prompt, not a write —
+    and its error handling is deliberately broader (see the note there).
+
+    Returns the number of cfg files actually changed.
+    """
+    written = 0
+    for diff in diffs:
+        if dry_run:
+            emit(f"     ~ {diff.cfg_key}: remove {diff.cfg_raw!r} (dry-run)")
+            continue
+        try:
+            changed = targets.remove(diff, resolved_by="canonicalize")
+        except SourceUnavailableError as exc:
+            emit(f"     ❌ {diff.cfg_key}: could not remove: {exc}")
+            continue
+        except Exception as exc:  # noqa: BLE001
+            emit(f"     ❌ {diff.cfg_key}: removal failed: {exc}")
+            continue
+        if changed:
+            written += 1
+            emit(f"     ✅ {diff.cfg_key}: removed {diff.cfg_raw!r}")
+        else:
+            emit(f"     ⏭  {diff.cfg_key} already absent")
+    return written
+
+
 def apply_decision(
     action: str,
     value: Any,
