@@ -157,3 +157,123 @@ def test_no_network_io_contract_holds(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", _boom)
 
     _run()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Interactive path
+# ---------------------------------------------------------------------------
+# Reaching the prompt loop requires dry_run=False, because _reconcile_one
+# returns early in dry-run — so these tests MUST stub the writers. That is not
+# a compromise: it is the more valuable assertion. Recording which writes were
+# attempted, in order, pins the DECISION behaviour, which is exactly what the
+# planned plan/apply extraction has to reproduce. The goldens pin what the
+# operator sees; these recordings pin what the machine does.
+
+
+class _Scripted:
+    """A prompt that replays a fixed sequence of answers, no TTY involved.
+
+    `_interactive_prompt` already returns `(action, value)` and performs no
+    writes, so this is a drop-in — the same property that will let a web form
+    substitute for it.
+    """
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.seen: list[str] = []
+
+    def __call__(self, diff, **kwargs):
+        self.seen.append(diff.cfg_key)
+        return self.answers.pop(0) if self.answers else ("skip", None)
+
+
+@pytest.fixture
+def recorded_writes(monkeypatch):
+    """Stub the cfg writer and the TOS push; record every attempt."""
+    from receivers.cli import cfg as mod
+
+    writes: list[tuple] = []
+    monkeypatch.setattr(
+        mod,
+        "apply_diff",
+        lambda sid, d, v, **kw: writes.append(("cfg", sid, d.cfg_key, v)) or True,
+    )
+    monkeypatch.setattr(
+        mod,
+        "remove_diff",
+        lambda sid, d, **kw: writes.append(("remove", sid, d.cfg_key)) or True,
+    )
+    monkeypatch.setattr(
+        mod,
+        "_do_push_tos",
+        lambda *a, **kw: writes.append(("tos_push", a, tuple(sorted(kw)))),
+    )
+    return writes
+
+
+def _run_interactive(answers, recorded, **overrides):
+    args = argparse.Namespace(**{**BASE_FLAGS, "dry_run": False, **overrides})
+    scripted = _Scripted(answers)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _reconcile_one(
+            "TEST",
+            STATION_CONFIG,
+            ["receiver"],
+            None,
+            args,
+            RECEIVER_IDENTITY,
+            TOS_DATA,
+            prompt=scripted,
+        )
+    return buf.getvalue(), scripted, recorded
+
+
+def test_prompt_is_injectable_and_no_tty_is_touched(recorded_writes, monkeypatch):
+    """The seam exists and is honoured — builtins.input must never be called."""
+
+    def _boom(*a, **k):
+        raise AssertionError(
+            "_reconcile_one called input(); the prompt seam was bypassed"
+        )
+
+    monkeypatch.setattr("builtins.input", _boom)
+    out, scripted, writes = _run_interactive([("skip", None)] * 20, recorded_writes)
+    assert scripted.seen, "the injected prompt was never called"
+
+
+def test_skipping_everything_writes_nothing(recorded_writes):
+    _, scripted, writes = _run_interactive([("skip", None)] * 20, recorded_writes)
+    assert writes == [], f"skip must not write, got {writes}"
+
+
+def test_quit_stops_at_the_first_field(recorded_writes):
+    """`quit` must abandon the station, not fall through to the next field."""
+    _, scripted, writes = _run_interactive([("quit", None)], recorded_writes)
+    assert len(scripted.seen) == 1, f"prompted for {scripted.seen} after quit"
+    assert writes == []
+
+
+def test_set_writes_exactly_the_chosen_field(recorded_writes):
+    """One `set`, then skip: exactly one cfg write, for that field only."""
+    _, scripted, writes = _run_interactive(
+        [("set", "5.6.0")] + [("skip", None)] * 20, recorded_writes
+    )
+    cfg_writes = [w for w in writes if w[0] == "cfg"]
+    assert len(cfg_writes) == 1, f"expected 1 cfg write, got {cfg_writes}"
+    assert cfg_writes[0][3] == "5.6.0"
+    assert cfg_writes[0][2] == scripted.seen[0]
+
+
+def test_interactive_output_is_unchanged(recorded_writes):
+    """Golden for the interactive path, now that it can be driven headlessly."""
+    produced, _, _ = _run_interactive(
+        [("set", "5.6.0")] + [("skip", None)] * 20, recorded_writes
+    )
+    golden = GOLDEN_DIR / "interactive_set_then_skip.txt"
+    if os.environ.get("RECONCILE_GOLDEN_UPDATE"):
+        golden.parent.mkdir(parents=True, exist_ok=True)
+        golden.write_text(produced, encoding="utf-8")
+        pytest.skip(f"regenerated {golden.name}")
+    assert golden.exists(), f"missing golden {golden}"
+    assert produced == golden.read_text(encoding="utf-8")
