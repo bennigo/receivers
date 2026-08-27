@@ -16,14 +16,20 @@ wrong answer during this work:
   the same second yield a `.pyc` that mtime+size invalidation accepts, so the
   second run silently imports the first mutation's bytecode. Hence
   PYTHONDONTWRITEBYTECODE=1.
-* **Ambiguous anchors.** Six identical `n_written += 1` lines exist; mutating
-  the wrong one is indistinguishable from an undetected guard. Hence LINE:.
+* **Ambiguous anchors**, in two flavours, both of which mutate the WRONG code
+  while still changing the file — so "did it apply?" says yes and a healthy
+  guard is reported as undetected:
+    - identical lines (six `n_written += 1`) — hence the `LINE:...#n` form;
+    - substring matches — `'    if raw == "C":'` is a substring of
+      `'        if raw == "C":'` in another function. Hence text anchors are
+      line-anchored and must match EXACTLY once.
 
 Anchors are literal source text, so they WILL rot as the code moves. A rotted
 anchor reports "ANCHOR NOT FOUND" and fails the run rather than passing
 silently — fix the anchor, never delete the mutation.
 """
 
+import os
 import pathlib
 import subprocess
 import sys
@@ -77,16 +83,16 @@ MUTATIONS = [
     (
         "M6  placeholder [k]eep silently deletes anyway",
         CLI,
-        '                if choice in ("d", "delete", ""):',
-        "                if True:",
-        "test_placeholder_keep_removes_nothing",
+        '    if choice in ("d", "delete", ""):\n        return ("remove", None)',
+        '    if True:\n        return ("remove", None)',
+        "test_placeholder_prompt_parsing",
     ),
     (
         "M7  tos-fillable [k]eep pushes anyway",
         CLI,
-        '            if raw == "C":',
-        "            if True:",
-        "test_tos_fillable_keep_pushes_nothing",
+        '    if raw == "C":',
+        "    if True:",
+        "test_tos_fillable_prompt_parsing",
     ),
     (
         "M11 --push-tos no longer requires a tos source",
@@ -169,18 +175,69 @@ MUTATIONS = [
     (
         "M19 bare Enter no longer deletes the placeholder",
         CLI,
-        '                if choice in ("d", "delete", ""):',
-        '                if choice in ("d", "delete"):',
-        "test_bare_enter_DELETES_the_placeholder",
+        '    if choice in ("d", "delete", ""):',
+        '    if choice in ("d", "delete"):',
+        "test_placeholder_prompt_parsing",
     ),
     (
         "M20 tos-fillable push made case-insensitive — 'c' starts pushing to TOS",
         CLI,
-        '            if raw == "C":',
-        '            if raw.lower() == "c":',
-        "test_lowercase_c_does_NOT_push",
+        '    if raw == "C":',
+        '    if raw.lower() == "c":',
+        "test_tos_fillable_prompt_parsing",
     ),
 ]
+
+
+def _refuse_if_pytest_is_running():
+    """This harness REWRITES source files in a loop. Anything else importing
+    them at the same time reads a file that is changing underneath it.
+
+    That is not theoretical: running it beside a full `pytest tests/` produced
+    four spurious failures in `test_push_degradation_gate.py`, whose assertions
+    use `inspect.getsource` — the line offsets shifted mid-run, so it sliced a
+    completely different function and reported a healthy guard as missing.
+    Twenty minutes went into "which of my changes broke this".
+    """
+    me = os.getpid()
+    try:
+        pids = subprocess.run(
+            ["pgrep", "-f", "-x", r".*python.* -m pytest.*"],
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+    except OSError:
+        return
+    others = []
+    for pid in pids:
+        if int(pid) == me:
+            continue
+        try:
+            # Match on the process CWD, not on the command line: pytest is
+            # usually invoked with a RELATIVE path, so a command-line filter
+            # for the repo path silently matches nothing. (It did — this guard
+            # failed to fire the first time and let the collision happen twice.)
+            if os.readlink(f"/proc/{pid}/cwd") != str(REPO):
+                continue
+            argv = pathlib.Path(f"/proc/{pid}/cmdline").read_text().split(chr(0))
+            # argv[0] must BE a python, not merely a shell whose command line
+            # mentions pytest — otherwise the wrapper of a compound command
+            # like `pytest ... && mutate.py` trips the guard against itself,
+            # and a guard that cries wolf gets deleted.
+            if "python" not in pathlib.Path(argv[0]).name:
+                continue
+            others.append(f"{pid} {' '.join(argv)[:110]}")
+        except OSError:
+            continue
+    if others:
+        print("REFUSING: a pytest run is already using this working tree:")
+        for ln in others[:3]:
+            print("   ", ln[:120])
+        print("This harness rewrites src/ in a loop; concurrent runs corrupt both.")
+        sys.exit(2)
+
+
+_refuse_if_pytest_is_running()
 
 ORIGINALS = {CLI: CLI.read_text(), APPLY: APPLY.read_text()}
 
@@ -213,7 +270,13 @@ def pytest_k(selector):
             "PYTHONDONTWRITEBYTECODE": "1",
         },
     )
-    return r.returncode, (r.stdout.strip().splitlines()[-1] if r.stdout else "")
+    last = r.stdout.strip().splitlines()[-1] if r.stdout else ""
+    if r.returncode == 5:
+        # pytest exit 5 = no tests collected. Non-zero, so it reads as
+        # "DETECTED" — a selector that matches nothing would silently certify
+        # a mutation nobody tested. Surface it as a harness error instead.
+        return "NO_TESTS", last
+    return r.returncode, last
 
 
 def apply_mutation(path, old, new):
@@ -231,9 +294,18 @@ def apply_mutation(path, old, new):
         lines[i] = " " * indent + new + "\n"
         path.write_text("".join(lines))
         return True
-    if old not in s:
+    # Anchor at a line boundary and require EXACTLY one match. Plain
+    # `old in s` matches mid-line: `'    if raw == "C":'` is a substring of
+    # `'        if raw == "C":'` in a different function, so `.replace(..., 1)`
+    # silently mutated the wrong one — the file changed, so the "did it apply?"
+    # check passed, and a good guard was reported as undetected.
+    hits = s.count("\n" + old)
+    if hits != 1:
+        print(
+            f"       ({'ambiguous' if hits else 'absent'}: {hits} line-anchored matches)"
+        )
         return False
-    path.write_text(s.replace(old, new, 1))
+    path.write_text(s.replace("\n" + old, "\n" + new, 1))
     return True
 
 
@@ -247,9 +319,13 @@ try:
             continue
         assert path.read_text() != ORIGINALS[path]
         rc, last = pytest_k(selector)
-        verdict = "DETECTED" if rc != 0 else "❌ NOT DETECTED"
-        if rc == 0:
+        if rc == "NO_TESTS":
+            verdict = "⚠️  NO TESTS MATCHED"
             bad.append(name)
+        else:
+            verdict = "DETECTED" if rc != 0 else "❌ NOT DETECTED"
+            if rc == 0:
+                bad.append(name)
         print(f"{verdict:16} {name}\n{'':17}{last}")
 finally:
     restore()
