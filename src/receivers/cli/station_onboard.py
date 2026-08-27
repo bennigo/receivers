@@ -86,9 +86,14 @@ def _resolve_archive_root(override: Optional[str] = None) -> Optional[str]:
 
 
 def _resolve_program(name: str) -> str:
-    """Console-script name if on PATH, else resolve through this interpreter."""
+    """Console-script name if on PATH, else resolve the sibling in this env."""
     if shutil.which(name):
         return name
+    # Not on PATH (env not activated in this shell) — the console script is
+    # always a sibling of the running interpreter (same env bin/ dir).
+    sibling = Path(sys.executable).with_name(name)
+    if sibling.exists():
+        return str(sibling)
     return sys.executable
 
 
