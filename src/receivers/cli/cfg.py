@@ -326,164 +326,18 @@ def _all_station_ids() -> List[str]:
     )
 
 
-def _query_receiver_identity(
-    station_id: str, station_config: Dict[str, Any]
-) -> Optional[Dict[str, Any]]:
-    """Run a receiver health probe and return the identity dict, or None.
-
-    The probe skips file/NTRIP checks since we only need identity. Returns
-    ``None`` on any failure (unreachable, auth error, parse failure).
-    """
-    try:
-        from ..base.receiver_factory import create_receiver
-
-        receiver = create_receiver(station_id, station_config)
-        # Identity-only path: bypass NTRIP/file checks. Most extractors
-        # populate receiver_identity inside get_health_status() itself.
-        health = receiver.get_health_status()
-        if not isinstance(health, dict):
-            return None
-
-        identity = dict(health.get("receiver_identity") or {})
-
-        # Enrich identity with position from PVT solution — receiver coordinates
-        # are reconcilable QC values, but the extractor stores them under
-        # metrics.position rather than receiver_identity. Promote them here so
-        # the cfg reconcile field manifest can read everything from one dict.
-        position = (health.get("metrics") or {}).get("position") or {}
-        for key in ("latitude", "longitude", "height"):
-            val = position.get(key)
-            if val is not None:
-                identity[key] = val
-
-        # Antenna metadata (type/serial/radome/height delta) is only useful
-        # for cfg reconcile, so the extractor doesn't probe it during routine
-        # 5-min health checks. Run the dedicated ASCII probe here. Best-effort:
-        # failure leaves the antenna fields blank in the diff, which the
-        # reconciler renders as NO_DATA.
-        antenna_info = _query_antenna_info(station_id, station_config)
-        if antenna_info:
-            identity.update(antenna_info)
-
-        if not identity:
-            logger.debug("[%s] receiver returned no identity dict", station_id)
-            return None
-        return identity
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[%s] receiver probe failed: %s", station_id, exc)
-        return None
-
-
-def _query_antenna_info(
-    station_id: str, station_config: Dict[str, Any]
-) -> Optional[Dict[str, Any]]:
-    """Probe antenna metadata via the PolaRX5 ASCII control channel.
-
-    Currently only PolaRX5 exposes antenna config over the control port. For
-    other receiver types this is a no-op — the cfg reconcile flow falls back
-    to TOS as the only authoritative source, which is correct.
-    """
-    try:
-        receiver_type = (station_config.get("receiver_type") or "").lower()
-        if "polarx" not in receiver_type:
-            return None
-        from ..health.polarx5_tcp_extractor import PolaRX5TCPExtractor
-
-        host = (
-            station_config.get("router_ip")
-            or station_config.get("ip_number")
-            or (station_config.get("router") or {}).get("ip")
-        )
-        if not host:
-            return None
-        control_port = int(
-            station_config.get("receiver_controlport")
-            or station_config.get("control_port")
-            or (station_config.get("receiver") or {}).get("controlport")
-            or 28784
-        )
-        extractor = PolaRX5TCPExtractor(host, station_id, port=control_port)
-        return extractor.query_antenna_info()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("[%s] antenna probe failed: %s", station_id, exc)
-        return None
-
-
-def _query_tos(station_id: str) -> Optional[Dict[str, Any]]:
-    try:
-        from tostools.api.tos_client import TOSClient
-    except ImportError:
-        return None
-    try:
-        client = TOSClient()
-        data = client.get_complete_station_metadata(station_id)
-        return data
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[%s] TOS query failed: %s", station_id, exc)
-        return None
-
-
 # ---------------------------------------------------------------------------
-# Per-station probe (parallelisable I/O — no side effects, no prompts)
+# Per-station probes moved to receivers.cfg.probe (pure I/O, no prompts) so a
+# non-terminal caller — the planned rek_new web UI — can reach them without
+# importing this 9,000-line command module. Re-exported here so existing
+# imports and dotted-path patch targets keep resolving.
 # ---------------------------------------------------------------------------
-
-
-def _probe_station(
-    station_id: str,
-    station_config: Dict[str, Any],
-    sources: List[str],
-    json_mode: bool,
-    verbose: bool = True,
-) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    """Query receiver and TOS for one station.
-
-    Pure I/O — creates its own network connections, returns data only.
-    Safe to call from a thread.  When ``verbose=False`` (parallel mode)
-    per-station progress lines are suppressed so interleaved output doesn't
-    corrupt the terminal.
-
-    Returns ``(receiver_identity, tos_data)``.
-    """
-    receiver_identity: Optional[Dict[str, Any]] = None
-    tos_data: Optional[Dict[str, Any]] = None
-
-    if "receiver" in sources:
-        if station_config.get("_adhoc"):
-            if verbose:
-                _progress(
-                    f"   ↳ {station_id}: ad-hoc config, skipping receiver probe",
-                    json_mode=json_mode,
-                )
-        else:
-            if verbose:
-                _progress(
-                    f"   ↳ {station_id}: probing receiver…",
-                    json_mode=json_mode,
-                    flush=True,
-                )
-            receiver_identity = _query_receiver_identity(station_id, station_config)
-            if receiver_identity is None and verbose:
-                _progress(
-                    f"   ↳ {station_id}: receiver unreachable or no identity",
-                    json_mode=json_mode,
-                )
-
-    if "tos" in sources:
-        if verbose:
-            _progress(
-                f"   ↳ {station_id}: querying TOS…",
-                json_mode=json_mode,
-                flush=True,
-            )
-        tos_data = _query_tos(station_id)
-        if tos_data is None and verbose:
-            _progress(
-                f"   ↳ {station_id}: not in TOS or TOS unavailable",
-                json_mode=json_mode,
-            )
-
-    return receiver_identity, tos_data
-
+from ..cfg.probe import (  # noqa: E402
+    _probe_station,
+    _query_antenna_info,
+    _query_receiver_identity,
+    _query_tos,
+)
 
 # ---------------------------------------------------------------------------
 # Rendering
@@ -1872,7 +1726,13 @@ def cmd_cfg_reconcile(args) -> int:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(
-                    _probe_station, sid, configs[sid], sources, args.json, False
+                    _probe_station,
+                    sid,
+                    configs[sid],
+                    sources,
+                    args.json,
+                    False,
+                    _progress,
                 ): sid
                 for sid in ordered_sids
             }
@@ -1887,7 +1747,12 @@ def cmd_cfg_reconcile(args) -> int:
         for sid in station_ids:
             if sid in configs:
                 probe_results[sid] = _probe_station(
-                    sid, configs[sid], sources, args.json, verbose=True
+                    sid,
+                    configs[sid],
+                    sources,
+                    args.json,
+                    verbose=True,
+                    progress=_progress,
                 )
 
     # --- Process phase (sequential: display, write, prompt) -----------------
@@ -4467,21 +4332,8 @@ def cmd_cfg_sync_from_tos(args) -> int:
 # ---------------------------------------------------------------------------
 
 
-def create_cfg_parser(subparsers) -> None:
-    """Register the ``cfg`` subcommand on the main parser."""
-    cfg_parser = subparsers.add_parser(
-        "cfg",
-        help="Manage stations.cfg (reconcile, audit)",
-        description=(
-            "Three-way reconciliation between stations.cfg, the live "
-            "receiver, and TOS. The intended workflow is TOS → cfg with "
-            "the receiver as a validation source."
-        ),
-    )
-    cfg_subparsers = cfg_parser.add_subparsers(
-        dest="cfg_command", help="cfg subcommands"
-    )
-
+def _add_reconcile_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg reconcile``."""
     rec = cfg_subparsers.add_parser(
         "reconcile",
         help="Compare cfg vs receiver vs TOS and (optionally) update cfg",
@@ -4715,6 +4567,10 @@ Diagnosing TCP authentication failures:
     rec.set_defaults(func=cmd_cfg_reconcile)
 
     # ----- cfg sync-from-tos ---------------------------------------------
+
+
+def _add_sync_from_tos_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg sync-from-tos``."""
     sync = cfg_subparsers.add_parser(
         "sync-from-tos",
         help="Overwrite stations.cfg device fields from current TOS state",
@@ -4762,6 +4618,10 @@ Diagnosing TCP authentication failures:
     sync.set_defaults(func=cmd_cfg_sync_from_tos)
 
     # ----- cfg list -------------------------------------------------------
+
+
+def _add_list_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg list``."""
     lst = cfg_subparsers.add_parser(
         "list",
         help="List currently-open cfg discrepancies",
@@ -4804,6 +4664,10 @@ Examples:
     lst.set_defaults(func=cmd_cfg_list)
 
     # ----- cfg history ----------------------------------------------------
+
+
+def _add_history_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg history``."""
     hist = cfg_subparsers.add_parser(
         "history",
         help="Show the detection/resolution history for a station or field",
@@ -4852,6 +4716,9 @@ Examples:
     )
     hist.set_defaults(func=cmd_cfg_history)
 
+
+def _add_extract_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg extract``."""
     ext = cfg_subparsers.add_parser(
         "extract",
         help="Probe a receiver and add a new station section to stations.cfg",
@@ -4891,6 +4758,10 @@ Examples:
     # ------------------------------------------------------------------
     # add-tos-station — greenfield orchestrator (TOS site+station + cfg)
     # ------------------------------------------------------------------
+
+
+def _add_add_tos_station_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg add-tos-station``."""
     ats = cfg_subparsers.add_parser(
         "add-tos-station",
         help="Probe a receiver, create its TOS site + station, and write stations.cfg",
@@ -5023,6 +4894,10 @@ and every RINEX header comes out incomplete.
     # ------------------------------------------------------------------
     # add-receiver — warehouse intake via tostools.device (step 6)
     # ------------------------------------------------------------------
+
+
+def _add_add_receiver_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg add-receiver``."""
     from ..cfg.device_probe import PROBE_TYPE_CHOICES
 
     add_rx = cfg_subparsers.add_parser(
@@ -5227,6 +5102,10 @@ Examples:
     add_rx.set_defaults(func=cmd_cfg_add_receiver)
 
     # ---- add-antenna -----------------------------------------------------
+
+
+def _add_add_antenna_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg add-antenna``."""
     add_ant = cfg_subparsers.add_parser(
         "add-antenna",
         help="Register a GNSS antenna (and radome) in TOS and join it to a station",
@@ -5375,6 +5254,10 @@ Examples:
     add_ant.set_defaults(func=cmd_cfg_add_antenna)
 
     # ---- add-monument ----------------------------------------------------
+
+
+def _add_add_monument_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg add-monument``."""
     add_mon = cfg_subparsers.add_parser(
         "add-monument",
         help="Register a survey monument in TOS and join it to a station",
@@ -5514,6 +5397,10 @@ Examples:
     add_mon.set_defaults(func=cmd_cfg_add_monument)
 
     # ---- import-campaigns ------------------------------------------------
+
+
+def _add_import_campaigns_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg import-campaigns``."""
     imp = cfg_subparsers.add_parser(
         "import-campaigns",
         help="Import GAMIT station.info campaign occupations into TOS",
@@ -5606,6 +5493,10 @@ Examples:
     imp.set_defaults(func=cmd_cfg_import_campaigns)
 
     # ---- set-continuity --------------------------------------------------
+
+
+def _add_set_continuity_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg set-continuity``."""
     cont = cfg_subparsers.add_parser(
         "set-continuity",
         help="Transition a station's campaign/continuous continuity tag",
@@ -5680,6 +5571,10 @@ Examples:
     cont.set_defaults(func=cmd_cfg_set_continuity)
 
     # ---- add-station -----------------------------------------------------
+
+
+def _add_add_station_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg add-station``."""
     addst = cfg_subparsers.add_parser(
         "add-station",
         help="Create a stations.cfg section for a station that exists in TOS",
@@ -5760,6 +5655,10 @@ Examples:
     addst.set_defaults(func=cmd_cfg_add_station)
 
     # ---- discover-phone --------------------------------------------------
+
+
+def _add_discover_phone_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg discover-phone``."""
     disc = cfg_subparsers.add_parser(
         "discover-phone",
         help="Reveal a router SIM's own phone number by texting a catcher mobile",
@@ -5817,6 +5716,12 @@ Examples:
     disc.set_defaults(func=cmd_cfg_discover_phone)
 
     # ---- update-device ---------------------------------------------------
+
+
+def _add_update_device_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg update-device``."""
+    from ..cfg.device_probe import PROBE_TYPE_CHOICES
+
     upd = cfg_subparsers.add_parser(
         "update-device",
         help="Probe a receiver and update its TOS device attribute(s)",
@@ -5983,6 +5888,10 @@ Examples:
     upd.set_defaults(func=cmd_cfg_update_device)
 
     # ---- move-device (unified: station OR warehouse target) -------------
+
+
+def _add_move_device_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg move-device``."""
     move = cfg_subparsers.add_parser(
         "move-device",
         help="Move a receiver to a station OR a warehouse — TOS Pattern 2",
@@ -6309,6 +6218,10 @@ Examples:
     move.set_defaults(func=cmd_cfg_move_device)
 
     # ---- visit (create / edit / show / list) ----------------------------
+
+
+def _add_visit_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg visit``."""
     visit = cfg_subparsers.add_parser(
         "visit",
         help="Vitjun (maintenance record): list, show, create, or edit",
@@ -6468,6 +6381,10 @@ Examples:
     visit.set_defaults(func=cmd_cfg_visit)
 
     # ---- replace-receiver ----------------------------------------------
+
+
+def _add_replace_receiver_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg replace-receiver``."""
     rr = cfg_subparsers.add_parser(
         "replace-receiver",
         help="One-shot warehouse + retire + install for a receiver swap",
@@ -6657,6 +6574,10 @@ step in isolation, or just --no-dry-run after eyeballing the args.
     rr.set_defaults(func=cmd_cfg_replace_receiver)
 
     # ---- replace-modem (telemetry: GSM modem / router swap) -------------
+
+
+def _add_replace_modem_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg replace-modem``."""
     rm = cfg_subparsers.add_parser(
         "replace-modem",
         help="Swap a station's GSM modem/router — TOS modem_gsm Pattern 2 + cfg",
@@ -6848,6 +6769,10 @@ Examples:
     rm.set_defaults(func=cmd_cfg_replace_modem)
 
     # ---- replace-sim (telemetry: SIM card / IP swap) -------------------
+
+
+def _add_replace_sim_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg replace-sim``."""
     rs = cfg_subparsers.add_parser(
         "replace-sim",
         help="Swap a station's SIM card (new IP) — TOS sim_card Pattern 2 + cfg",
@@ -7004,6 +6929,10 @@ Examples:
     rs.set_defaults(func=cmd_cfg_replace_sim)
 
     # ---- set-attr (single attribute on an existing device) --------------
+
+
+def _add_set_attr_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg set-attr``."""
     sa = cfg_subparsers.add_parser(
         "set-attr",
         help="Set ONE attribute on a station's open device — no full swap",
@@ -7082,6 +7011,10 @@ Examples:
     sa.set_defaults(func=cmd_cfg_set_attr)
 
     # ---- ensure-port-forwards (Teltonika router DNAT) -------------------
+
+
+def _add_ensure_port_forwards_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg ensure-port-forwards``."""
     epf = cfg_subparsers.add_parser(
         "ensure-port-forwards",
         help="Ensure a receiver's control/ftp/http DNAT forwards on its Teltonika router",
@@ -7160,6 +7093,10 @@ Examples:
     epf.set_defaults(func=cmd_cfg_ensure_port_forwards)
 
     # ---- ensure-conntrack-helper (Teltonika FTP passive-mode fix, SSH) --
+
+
+def _add_ensure_conntrack_helper_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg ensure-conntrack-helper``."""
     ecth = cfg_subparsers.add_parser(
         "ensure-conntrack-helper",
         help="Enable the RutOS conntrack FTP helper over SSH (fixes passive-mode FTP through NAT)",
@@ -7233,6 +7170,10 @@ Examples:
     ecth.set_defaults(func=cmd_cfg_ensure_conntrack_helper)
 
     # ---- correct-date (Pattern 4 historical date correction) ------------
+
+
+def _add_correct_date_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg correct-date``."""
     cd = cfg_subparsers.add_parser(
         "correct-date",
         help="Shift every TOS boundary at one date to another (fix a mis-dated swap)",
@@ -7292,6 +7233,10 @@ Examples:
     cd.set_defaults(func=cmd_cfg_correct_date)
 
     # ---- delete-join ----------------------------------------------------
+
+
+def _add_delete_join_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg delete-join``."""
     dj = cfg_subparsers.add_parser(
         "delete-join",
         help="Permanently delete a TOS entity_connection (join) row by id",
@@ -7337,6 +7282,10 @@ Examples:
     dj.set_defaults(func=cmd_cfg_delete_join)
 
     # ---- close-join ------------------------------------------------------
+
+
+def _add_close_join_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg close-join``."""
     cj = cfg_subparsers.add_parser(
         "close-join",
         help="Close an OPEN join (set time_to) — the non-destructive delete-join",
@@ -7420,6 +7369,10 @@ Examples:
     cj.set_defaults(func=cmd_cfg_close_join)
 
     # ---- replace-antenna -------------------------------------------------
+
+
+def _add_replace_antenna_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg replace-antenna``."""
     ra = cfg_subparsers.add_parser(
         "replace-antenna",
         help="Swap a station's GNSS antenna — TOS Pattern 2 + stations.cfg",
@@ -7647,6 +7600,10 @@ Examples:
     ra.set_defaults(func=cmd_cfg_replace_antenna)
 
     # ---- replace-radome --------------------------------------------------
+
+
+def _add_replace_radome_parser(cfg_subparsers) -> None:
+    """Register ``receivers cfg replace-radome``."""
     rrad = cfg_subparsers.add_parser(
         "replace-radome",
         help="Swap a station's radome only — TOS Pattern 2 + stations.cfg",
@@ -7794,6 +7751,61 @@ Examples:
     )
     _add_global_flags(rrad, swap_warning=True)
     rrad.set_defaults(func=cmd_cfg_replace_radome)
+
+
+def create_cfg_parser(subparsers) -> None:
+    """Register the ``cfg`` subcommand on the main parser.
+
+    Each verb's parser is built by its own ``_add_<verb>_parser`` factory
+    below. This function used to be a single 3,329-line body containing all
+    28 of them, which made it the file's worst merge-conflict hotspot — every
+    new verb edited the same function — and meant no verb's parser could be
+    constructed in isolation for testing. The neighbouring archive_sync.py
+    already used per-verb factories; this matches it.
+
+    Order is preserved exactly: it determines --help listing order.
+    """
+    """Register the ``cfg`` subcommand on the main parser."""
+    cfg_parser = subparsers.add_parser(
+        "cfg",
+        help="Manage stations.cfg (reconcile, audit)",
+        description=(
+            "Three-way reconciliation between stations.cfg, the live "
+            "receiver, and TOS. The intended workflow is TOS → cfg with "
+            "the receiver as a validation source."
+        ),
+    )
+    cfg_subparsers = cfg_parser.add_subparsers(
+        dest="cfg_command", help="cfg subcommands"
+    )
+
+    _add_reconcile_parser(cfg_subparsers)
+    _add_sync_from_tos_parser(cfg_subparsers)
+    _add_list_parser(cfg_subparsers)
+    _add_history_parser(cfg_subparsers)
+    _add_extract_parser(cfg_subparsers)
+    _add_add_tos_station_parser(cfg_subparsers)
+    _add_add_receiver_parser(cfg_subparsers)
+    _add_add_antenna_parser(cfg_subparsers)
+    _add_add_monument_parser(cfg_subparsers)
+    _add_import_campaigns_parser(cfg_subparsers)
+    _add_set_continuity_parser(cfg_subparsers)
+    _add_add_station_parser(cfg_subparsers)
+    _add_discover_phone_parser(cfg_subparsers)
+    _add_update_device_parser(cfg_subparsers)
+    _add_move_device_parser(cfg_subparsers)
+    _add_visit_parser(cfg_subparsers)
+    _add_replace_receiver_parser(cfg_subparsers)
+    _add_replace_modem_parser(cfg_subparsers)
+    _add_replace_sim_parser(cfg_subparsers)
+    _add_set_attr_parser(cfg_subparsers)
+    _add_ensure_port_forwards_parser(cfg_subparsers)
+    _add_ensure_conntrack_helper_parser(cfg_subparsers)
+    _add_correct_date_parser(cfg_subparsers)
+    _add_delete_join_parser(cfg_subparsers)
+    _add_close_join_parser(cfg_subparsers)
+    _add_replace_antenna_parser(cfg_subparsers)
+    _add_replace_radome_parser(cfg_subparsers)
 
 
 def _parse_attr_pairs(pairs: Optional[List[str]]) -> Dict[str, Optional[str]]:
