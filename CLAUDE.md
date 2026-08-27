@@ -107,21 +107,31 @@ receivers cfg reconcile --list-fields
 - TOS-only: `station_name` (receiver MarkerName carries the 4-char ID),
   `rinex_marker_number` (IERS DOMES → RINEX MARKER NUMBER; TOS-canonical, cfg follows)
 
-**⚠️ Changing the reconcile write path? Run the mutation harness.**
+**⚠️ Changing the reconcile write path or the intake precedence? Run the harness.**
 
 ```bash
-python3 scripts/dev/mutate_reconcile.py     # 18 mutations, all must be DETECTED
+python3 scripts/dev/mutate_reconcile.py     # every mutation must be DETECTED
 PYTHONPATH=scripts/dev pytest tests/ -p no_network_plugin   # blocks outbound sockets
 ```
 
-`_reconcile_one` performs **live TOS writes** behind consent gates, and the decision
-and write halves are now split across `cfg/reconcile_policy.py` (intent),
-`cfg/reconcile_plan.py` (what to do) and `cfg/reconcile_apply.py` (doing it). The
-harness breaks each guard in turn and asserts the test claiming to cover it goes red —
-it has already caught **three** tests that passed while proving nothing, and the
-consent gates themselves went untested for two sessions. Its anchors are literal
-source text and *will* rot when `cli/cfg.py` moves; a rotted anchor fails loudly with
-`ANCHOR NOT FOUND` — fix the anchor, never delete the mutation.
+It covers two policy surfaces that both write to production:
+
+* **reconcile** — `_reconcile_one` performs **live TOS writes** behind consent gates.
+  The decision and write halves are split across `cfg/reconcile_policy.py` (intent),
+  `cfg/reconcile_plan.py` (what to do about a field) and `cfg/reconcile_apply.py`
+  (doing it). All three questions it asks an operator are injectable, so no test needs
+  a TTY.
+* **intake** — `cfg/intake_request.py` resolves `CLI > --from-file > default` for
+  `cfg add-receiver`. Note the gates test FALSINESS: `--owner ""` takes the default.
+
+The harness breaks each guard in turn and asserts the test claiming to cover it goes
+red. It has already caught **five** tests that passed while proving nothing, and the
+`--push-tos` consent gate went untested for two sessions. Do not run it beside a test
+run — it rewrites `src/` in a loop and will corrupt both (it refuses, and says so).
+
+Its anchors are literal source text and *will* rot when the code moves. A rotted or
+ambiguous anchor fails loudly (`ANCHOR NOT FOUND`), as does a `-k` selector matching
+nothing (`NO TESTS MATCHED`) — **fix the anchor, never delete the mutation.**
 
 Terminal output is pinned byte-for-byte by `tests/test_reconcile_output_golden.py`
 (operators diff it against runbooks). Regenerate only deliberately, with

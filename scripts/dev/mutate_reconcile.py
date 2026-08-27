@@ -37,7 +37,13 @@ import sys
 REPO = pathlib.Path(__file__).resolve().parents[2]
 CLI = REPO / "src/receivers/cli/cfg.py"
 APPLY = REPO / "src/receivers/cfg/reconcile_apply.py"
-TESTS = ["tests/test_reconcile_output_golden.py", "tests/test_reconcile_apply.py"]
+INTAKE = REPO / "src/receivers/cfg/intake_request.py"
+TESTS = [
+    "tests/test_reconcile_output_golden.py",
+    "tests/test_reconcile_apply.py",
+    "tests/test_intake_request.py",
+    "tests/test_cli_add_receiver.py",
+]
 #: `no_network_plugin` lives beside this file — the suite is known to reach live
 #: receivers and the live TOS API when a mock detaches.
 PP = str(pathlib.Path(__file__).resolve().parent)
@@ -189,22 +195,22 @@ MUTATIONS = [
     (
         "M21 canonicalize writes in a DRY RUN",
         APPLY,
-        "        if dry_run:\n            emit(f\"     ≈ {diff.cfg_key}",
-        "        if False:\n            emit(f\"     ≈ {diff.cfg_key}",
+        '        if dry_run:\n            emit(f"     ≈ {diff.cfg_key}',
+        '        if False:\n            emit(f"     ≈ {diff.cfg_key}',
         "test_canonicalize_dry_run_writes_nothing",
     ),
     (
         "M22 placeholder removal happens in a DRY RUN",
         APPLY,
-        "        if dry_run:\n            emit(f\"     ~ {diff.cfg_key}",
-        "        if False:\n            emit(f\"     ~ {diff.cfg_key}",
+        '        if dry_run:\n            emit(f"     ~ {diff.cfg_key}',
+        '        if False:\n            emit(f"     ~ {diff.cfg_key}',
         "test_remove_placeholders_dry_run",
     ),
     (
         "M23 canonicalize aborts the station on the first failure",
         APPLY,
-        "            emit(f\"     ❌ {diff.cfg_key}: could not write: {exc}\")\n            continue",
-        "            emit(f\"     ❌ {diff.cfg_key}: could not write: {exc}\")\n            break",
+        '            emit(f"     ❌ {diff.cfg_key}: could not write: {exc}")\n            continue',
+        '            emit(f"     ❌ {diff.cfg_key}: could not write: {exc}")\n            break',
         "test_canonicalize_keeps_going",
     ),
     (
@@ -213,6 +219,63 @@ MUTATIONS = [
         '            changed = targets.apply(diff, raw, resolved_by="canonicalize")',
         "            changed = targets.apply(diff, raw)",
         "test_canonicalize_writes_the_receivers_RAW_spelling",
+    ),
+    # --- cfg add-receiver intake precedence: CLI > --from-file > default ---
+    (
+        "P1  file value overrides an explicit CLI arg (precedence inverted)",
+        INTAKE,
+        "            if _supplied(getattr(self, field)):\n                continue",
+        "            if False:\n                continue",
+        "test_the_file_never_overrides or test_cli_beats_file",
+    ),
+    (
+        "P2  default owner overwrites a supplied one",
+        INTAKE,
+        '        if not _supplied(self.owner):\n            updates["owner"] = DEFAULT_OWNER',
+        '        if True:\n            updates["owner"] = DEFAULT_OWNER',
+        "test_cli_beats_file_beats_default",
+    ),
+    (
+        "P3  default location overwrites a supplied one",
+        INTAKE,
+        '        if not _supplied(self.location):\n            updates["location"] = DEFAULT_LOCATION',
+        '        if True:\n            updates["location"] = DEFAULT_LOCATION',
+        "test_the_file_never_overrides_an_explicit_argument",
+    ),
+    (
+        "P4  date_start default overwrites a supplied one",
+        INTAKE,
+        '        if not _supplied(self.date_start):\n            updates["date_start"] =',
+        '        if True:\n            updates["date_start"] =',
+        "test_an_explicit_date_survives or test_a_file_date_beats_today",
+    ),
+    (
+        "P5  no default owner at all",
+        INTAKE,
+        '        if not _supplied(self.owner):\n            updates["owner"] = DEFAULT_OWNER',
+        '        if False:\n            updates["owner"] = DEFAULT_OWNER',
+        "test_cli_beats_file_beats_default",
+    ),
+    (
+        "P6  falsiness -> is-None: an empty --owner stops taking the default",
+        INTAKE,
+        "    return bool(value)",
+        "    return value is not None",
+        "test_an_empty_string_counts_as_not_supplied",
+    ),
+    (
+        "P7  required-field check no longer reports anything",
+        INTAKE,
+        "        return [f for f in REQUIRED_FIELDS if not _supplied(getattr(self, f))]",
+        "        return []",
+        "test_required_check_runs_AFTER_defaults",
+    ),
+    (
+        "P8  a blank file value counts as supplied",
+        INTAKE,
+        '            if file_val not in (None, ""):',
+        "            if file_val is not None:",
+        "test_an_empty_string_in_the_file_is_ignored_too",
     ),
 ]
 
@@ -267,7 +330,7 @@ def _refuse_if_pytest_is_running():
 
 _refuse_if_pytest_is_running()
 
-ORIGINALS = {CLI: CLI.read_text(), APPLY: APPLY.read_text()}
+ORIGINALS = {CLI: CLI.read_text(), APPLY: APPLY.read_text(), INTAKE: INTAKE.read_text()}
 
 
 def restore():
