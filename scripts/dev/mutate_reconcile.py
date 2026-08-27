@@ -104,16 +104,16 @@ MUTATIONS = [
     (
         "M13 interactive placeholder removal not counted as a write",
         CLI,
-        "LINE:n_written += 1#3",
+        "LINE:n_written += 1#1",
         "n_written += 0",
         "test_counters_count_placeholder_removal_as_a_write",
     ),
     (
         "M15 canonicalize placeholder removal not counted as a write",
-        CLI,
-        "LINE:n_written += 1#2",
-        "n_written += 0",
-        "test_canonicalize",
+        APPLY,
+        "LINE:written += 1#2",
+        "written += 0",
+        "test_remove_placeholders_removes",
     ),
     # --- the extracted module ---
     (
@@ -185,6 +185,34 @@ MUTATIONS = [
         '    if raw == "C":',
         '    if raw.lower() == "c":',
         "test_tos_fillable_prompt_parsing",
+    ),
+    (
+        "M21 canonicalize writes in a DRY RUN",
+        APPLY,
+        "        if dry_run:\n            emit(f\"     ≈ {diff.cfg_key}",
+        "        if False:\n            emit(f\"     ≈ {diff.cfg_key}",
+        "test_canonicalize_dry_run_writes_nothing",
+    ),
+    (
+        "M22 placeholder removal happens in a DRY RUN",
+        APPLY,
+        "        if dry_run:\n            emit(f\"     ~ {diff.cfg_key}",
+        "        if False:\n            emit(f\"     ~ {diff.cfg_key}",
+        "test_remove_placeholders_dry_run",
+    ),
+    (
+        "M23 canonicalize aborts the station on the first failure",
+        APPLY,
+        "            emit(f\"     ❌ {diff.cfg_key}: could not write: {exc}\")\n            continue",
+        "            emit(f\"     ❌ {diff.cfg_key}: could not write: {exc}\")\n            break",
+        "test_canonicalize_keeps_going",
+    ),
+    (
+        "M24 canonicalize loses the resolved_by audit tag",
+        APPLY,
+        '            changed = targets.apply(diff, raw, resolved_by="canonicalize")',
+        "            changed = targets.apply(diff, raw)",
+        "test_canonicalize_writes_the_receivers_RAW_spelling",
     ),
 ]
 

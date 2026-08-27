@@ -20,8 +20,10 @@ from receivers.cfg.reconcile_apply import (
     ApplyOutcome,
     CfgTargets,
     apply_decision,
+    canonicalize_notation,
     push_component_value,
     push_field_value,
+    remove_placeholders,
     resolve_effective_date,
     silent_emit,
 )
@@ -503,3 +505,114 @@ def test_push_field_value_refuses_to_guess(omit):
     kwargs.pop(omit)
     with pytest.raises(TypeError):
         push_field_value(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# canonicalize_notation / remove_placeholders
+# ---------------------------------------------------------------------------
+# The unattended --canonicalize writes. No prompt, no consent gate beyond
+# dry_run — the values already agree once normalised, so nothing is being
+# decided. Which is exactly why they must not silently start writing in a
+# dry run.
+
+
+def _recording_targets():
+    calls = []
+
+    def _apply(sid, d, v, **kw):
+        calls.append(("apply", d.cfg_key, v, kw.get("resolved_by")))
+        return True
+
+    def _remove(sid, d, **kw):
+        calls.append(("remove", d.cfg_key, kw.get("resolved_by")))
+        return True
+
+    return calls, CfgTargets("TEST", [None], apply_diff=_apply, remove_diff=_remove)
+
+
+def test_canonicalize_writes_the_receivers_RAW_spelling(emitted):
+    """The point is the raw spelling — so this must NOT go through cfg_format.
+
+    `apply_decision`'s `set` runs `_normalise_for_cfg`, which would map the
+    value back to cfg vocabulary and undo the canonicalisation entirely.
+    """
+    lines, emit = emitted
+    calls, targets = _recording_targets()
+    diff = make_diff(cfg_raw="NP 4.81 / SP 4.81", receiver_value="4.81")
+    written = canonicalize_notation([diff], targets=targets, dry_run=False, emit=emit)
+    assert written == 1
+    assert calls == [("apply", "receiver_firmware_version", "4.81", "canonicalize")]
+    assert "→ '4.81'" in "\n".join(lines)
+
+
+def test_canonicalize_dry_run_writes_nothing():
+    calls, targets = _recording_targets()
+    diff = make_diff(cfg_raw="NP 4.81", receiver_value="4.81")
+    written = canonicalize_notation(
+        [diff], targets=targets, dry_run=True, emit=silent_emit
+    )
+    assert (written, calls) == (0, [])
+
+
+def test_canonicalize_counts_only_files_that_changed():
+    """An already-canonical field is reported, not counted."""
+    targets = CfgTargets(
+        "TEST",
+        [None],
+        apply_diff=lambda *a, **kw: False,
+        remove_diff=lambda *a, **kw: False,
+    )
+    diff = make_diff(cfg_raw="4.81", receiver_value="4.81")
+    assert (
+        canonicalize_notation([diff], targets=targets, dry_run=False, emit=silent_emit)
+        == 0
+    )
+
+
+def test_canonicalize_keeps_going_after_one_field_fails(emitted):
+    """One unwritable field must not abandon the rest of the station."""
+    lines, emit = emitted
+    seen = []
+
+    def _apply(sid, d, v, **kw):
+        seen.append(d.cfg_key)
+        if d.cfg_key == "receiver_firmware_version":
+            raise SourceUnavailableError("no cfg")
+        return True
+
+    targets = CfgTargets(
+        "TEST", [None], apply_diff=_apply, remove_diff=lambda *a, **kw: True
+    )
+    written = canonicalize_notation(
+        [
+            make_diff(cfg_raw="NP 4.81", receiver_value="4.81"),
+            make_diff(
+                "receiver_serial", cfg_raw="0003067157", receiver_value="3067157"
+            ),
+        ],
+        targets=targets,
+        dry_run=False,
+        emit=emit,
+    )
+    assert written == 1, "a failure on field 1 stopped field 2"
+    assert seen == ["receiver_firmware_version", "receiver_serial"]
+    assert "could not write" in "\n".join(lines)
+
+
+def test_remove_placeholders_removes_and_tags_the_audit_trail():
+    calls, targets = _recording_targets()
+    diff = make_diff("antenna_serial", cfg_value=None, cfg_raw="antenna-TEST-20210527")
+    written = remove_placeholders(
+        [diff], targets=targets, dry_run=False, emit=silent_emit
+    )
+    assert written == 1
+    assert calls == [("remove", "antenna_serial", "canonicalize")]
+
+
+def test_remove_placeholders_dry_run_removes_nothing(emitted):
+    lines, emit = emitted
+    calls, targets = _recording_targets()
+    diff = make_diff("antenna_serial", cfg_value=None, cfg_raw="antenna-TEST-20210527")
+    written = remove_placeholders([diff], targets=targets, dry_run=True, emit=emit)
+    assert (written, calls) == (0, [])
+    assert "(dry-run)" in "\n".join(lines)

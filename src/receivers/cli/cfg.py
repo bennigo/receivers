@@ -1252,27 +1252,9 @@ def _reconcile_one(
     if canonicalize_on and fmt_mismatches:
         if not silent:
             print(f"\n   Canonicalizing {len(fmt_mismatches)} notation-only field(s)…")
-        for d in fmt_mismatches:
-            rx_val = d.receiver_value  # guaranteed non-None by format_mismatch
-            assert rx_val is not None
-            if policy.dry_run:
-                if not silent:
-                    print(f"     ≈ {d.cfg_key}: {d.cfg_raw!r} → {rx_val!r} (dry-run)")
-            else:
-                try:
-                    changed = targets.apply(d, rx_val, resolved_by="canonicalize")
-                    if changed:
-                        n_written += 1
-                        if not silent:
-                            print(f"     ✅ {d.cfg_key}: {d.cfg_raw!r} → {rx_val!r}")
-                    elif not silent:
-                        print(f"     ⏭  {d.cfg_key} already canonical")
-                except SourceUnavailableError as exc:
-                    if not silent:
-                        print(f"     ❌ {d.cfg_key}: could not write: {exc}")
-                except Exception as exc:  # noqa: BLE001
-                    if not silent:
-                        print(f"     ❌ {d.cfg_key}: write failed: {exc}")
+        n_written += reconcile_apply.canonicalize_notation(
+            fmt_mismatches, targets=targets, dry_run=policy.dry_run, emit=emit
+        )
 
     # Placeholder cleanup: remove keys whose raw cfg value is a recognized placeholder
     # (e.g. TOS synthetic serials like antenna-AFST-20210527).
@@ -1281,25 +1263,9 @@ def _reconcile_one(
         if canonicalize_on:
             if not silent:
                 print(f"\n   Removing {len(cfg_placeholders)} placeholder value(s)…")
-            for d in cfg_placeholders:
-                if policy.dry_run:
-                    if not silent:
-                        print(f"     ~ {d.cfg_key}: remove {d.cfg_raw!r} (dry-run)")
-                else:
-                    try:
-                        changed = targets.remove(d, resolved_by="canonicalize")
-                        if changed:
-                            n_written += 1
-                            if not silent:
-                                print(f"     ✅ {d.cfg_key}: removed {d.cfg_raw!r}")
-                        elif not silent:
-                            print(f"     ⏭  {d.cfg_key} already absent")
-                    except SourceUnavailableError as exc:
-                        if not silent:
-                            print(f"     ❌ {d.cfg_key}: could not remove: {exc}")
-                    except Exception as exc:  # noqa: BLE001
-                        if not silent:
-                            print(f"     ❌ {d.cfg_key}: removal failed: {exc}")
+            n_written += reconcile_apply.remove_placeholders(
+                cfg_placeholders, targets=targets, dry_run=policy.dry_run, emit=emit
+            )
         elif not silent and not policy.dry_run:
             # Interactive: ask about each placeholder. The question lives in
             # placeholder_prompt so a web form can answer it; only the write
