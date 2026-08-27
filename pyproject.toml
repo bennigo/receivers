@@ -93,7 +93,27 @@ dependencies = [
     #     agency-abbreviation resolution (dfd1c3a), fleet-wide `visit search`.
     #   * `tos search` validates attribute codes (a typo used to ANSWER rather
     #     than error: 'typo = null' matched the whole fleet).
-    "tostools @ git+https://github.com/bgo-gnss/tostools@c9bd76b",
+    #
+    # @bdf093c (2026-08-27) — 22 commits on from c9bd76b:
+    #   * PUBLIC NAMES for the three symbols this package used to reach for
+    #     through an underscore (390ffad): `load_password_from_pass`,
+    #     `format_known_models`, `parse_daily_rinex_date`. The private names
+    #     are still there as the alias targets, so this bump is not required
+    #     for the imports to work — but the imports here now use the public
+    #     ones, so a later tostools release that drops the underscores is a
+    #     non-event instead of an outage.
+    #   * F1 COMPLETE (8f1b44e): `legacy/gps_metadata_qc.py` deleted, 994 L.
+    #     The live site-log renderer no longer routes through a fork copy.
+    #   * library code raises `TOSConnectionError` instead of `sys.exit(1)`
+    #     (111f9f0) — review item 6. An import-time `sys.exit` in a library
+    #     killed the CALLER; 11 importers were exposed.
+    #   * lazy package re-exports, PEP 562 (58e508d): `import tostools`
+    #     ~0.6s -> 0.018s, and the cheap paths no longer drag in
+    #     pandas/numpy/requests/pyproj.
+    #   * deterministic marker-typo verdict for MARKER NAME mismatches
+    #     (918e871) + the current device session merged into the rinex verdict
+    #     (504e2ab), so the marker check uses the receiver serial.
+    "tostools @ git+https://github.com/bgo-gnss/tostools@bdf093c",
     # gps_parser main @257a2ee: passive-station schema (2c5b428) + canonical
     # module-level parse_station_role (257a2ee) — the API config_utils imports.
     "gps-parser @ git+https://github.com/bgo-gnss/gps_parser@257a2ee",
