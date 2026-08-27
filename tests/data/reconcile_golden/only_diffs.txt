@@ -1,0 +1,11 @@
+
+=== TEST ===
+
+   Field                    stations.cfg           Receiver               TOS                   
+   ------------------------ ---------------------- ---------------------- ----------------------
+ ≈ Receiver Type            PolaRX5                SSRC7                  —                     
+ ✗ Receiver Firmware        5.5.0                  5.6.0                  —                     
+ · Station Name             —                      —                      —                     
+ · FTP Mode                 —                      —                      —                     
+
+   1 field(s) need attention (dry-run, no writes)
