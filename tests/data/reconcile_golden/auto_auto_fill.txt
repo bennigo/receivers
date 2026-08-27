@@ -1,0 +1,24 @@
+
+=== TEST ===
+
+   Field                    stations.cfg           Receiver               TOS                   
+   ------------------------ ---------------------- ---------------------- ----------------------
+ ≈ Receiver Type            PolaRX5                SSRC7                  —                     
+ ✓ Receiver Serial          3067157                3067157                —                     
+ ✗ Receiver Firmware        5.5.0                  5.6.0                  —                     
+ · Antenna Type             LEIAR25.R4             —                      —                     
+ · Antenna Serial           —                      —                      —                     
+ · Radome                   —                      —                      —                     
+ · Antenna Height           —                      —                      —                     
+ ✓ Antenna East             0.0000                 0.0000                 —                     
+ ✓ Antenna North            0.0000                 0.0000                 —                     
+ · Latitude                 —                      —                      —                     
+ · Longitude                —                      —                      —                     
+ · Height                   —                      —                      —                     
+ · Station Name             —                      —                      —                     
+ · Marker Number (DOMES)    —                      —                      —                     
+ · FTP Mode                 —                      —                      —                     
+
+  [1/1] receiver_firmware_version (conflict)  [receiver-primary]
+     cfg:      5.5.0
+     receiver: 5.6.0
