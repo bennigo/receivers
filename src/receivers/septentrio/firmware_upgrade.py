@@ -163,6 +163,15 @@ def tls_lifeline_ok(host: str, port: int, *, timeout: float = 5.0) -> bool:
 
 
 def login(sock: socket.socket, username: str, password: str) -> bool:
+    """Send ``login`` and report whether the session is usable.
+
+    True on success (``$R! LogIn``) or when the firmware does not know the
+    command (pre-5.7 → ``$E: Invalid command`` → proceed unauthenticated).
+    False is a DEFINITIVE rejection — ``$R? LogIn: Wrong username or password``
+    or ``$R? LogIn: Too many failed login attempts``. Callers must NOT retry on
+    False: every rejected login feeds the receiver's brute-force counter, which
+    on 5.7.0 produces a global lockout (see ``septentrio.fw_policy``).
+    """
     resp = _send(sock, f"login, {username}, {password}")
     return "$R! LogIn" in resp or "IP" in resp and "$R? LogIn" not in resp
 
@@ -333,7 +342,18 @@ def wait_for_reboot_and_verify(
         if sock is None:
             continue
         try:
-            login(sock, username, password)
+            if not login(sock, username, password):
+                # Definitive rejection (wrong creds or the post-flash lockout).
+                # STOP — do not retry. Retrying turns one rejected login into
+                # ~24 over the reboot window, and on 5.7.0 that trips the GLOBAL
+                # brute-force lockout which blocks rec-provision itself.
+                raise FirmwareUpgradeError(
+                    f"{ip}:{port} came back but login was rejected (wrong "
+                    f"credentials or lockout). Not retrying, to avoid feeding "
+                    f"the lockout counter — the flash itself may have succeeded. "
+                    f"Run rec-provision to restore accounts/FTP, then reconcile "
+                    f"the firmware version."
+                )
             ver = read_firmware_version(sock)
         finally:
             try:
