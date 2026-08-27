@@ -107,6 +107,27 @@ receivers cfg reconcile --list-fields
 - TOS-only: `station_name` (receiver MarkerName carries the 4-char ID),
   `rinex_marker_number` (IERS DOMES → RINEX MARKER NUMBER; TOS-canonical, cfg follows)
 
+**⚠️ Changing the reconcile write path? Run the mutation harness.**
+
+```bash
+python3 scripts/dev/mutate_reconcile.py     # 18 mutations, all must be DETECTED
+PYTHONPATH=scripts/dev pytest tests/ -p no_network_plugin   # blocks outbound sockets
+```
+
+`_reconcile_one` performs **live TOS writes** behind consent gates, and the decision
+and write halves are now split across `cfg/reconcile_policy.py` (intent),
+`cfg/reconcile_plan.py` (what to do) and `cfg/reconcile_apply.py` (doing it). The
+harness breaks each guard in turn and asserts the test claiming to cover it goes red —
+it has already caught **three** tests that passed while proving nothing, and the
+consent gates themselves went untested for two sessions. Its anchors are literal
+source text and *will* rot when `cli/cfg.py` moves; a rotted anchor fails loudly with
+`ANCHOR NOT FOUND` — fix the anchor, never delete the mutation.
+
+Terminal output is pinned byte-for-byte by `tests/test_reconcile_output_golden.py`
+(operators diff it against runbooks). Regenerate only deliberately, with
+`RECONCILE_GOLDEN_UPDATE=1 pytest tests/test_reconcile_output_golden.py`, and review
+the diff as part of the change.
+
 **Sync cfg from TOS — `cfg sync-from-tos STATION [STATION…] | --all`**: the inverse
 direction of `reconcile` for **TOS-canonical** fields — after a TOS change, write the
 current TOS values into stations.cfg (**no receiver probe**). Scope = the manifest fields
@@ -1027,7 +1048,7 @@ All receivers use Phase 1 utilities by default:
 
 ---
 
-**Last updated**: 2026-08-24
+**Last updated**: 2026-08-27
 **Package version**: Development (gpslibrary_new)
 **Phase Status**: Phase 3C Complete - Distribution window optimization, midnight offset, multi-session backfill, gap detection, archive reconciler, integrity checker, archive format system, unified logging, adaptive download timeouts
 

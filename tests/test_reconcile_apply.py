@@ -148,6 +148,8 @@ def test_push_field_value_upserts_when_tos_has_nothing(tos_spy, emitted):
         tos_data={"id_entity": 1},
         dry_run=True,
         emit=emit,
+        no_transition=False,
+        effective_date=None,
     )
     assert tos_spy["upsert"] is not None
     assert tos_spy["transition"] is None
@@ -169,6 +171,8 @@ def test_push_field_value_transitions_on_a_real_change(tos_spy, emitted):
         tos_data={"id_entity": 1},
         dry_run=True,
         emit=emit,
+        no_transition=False,
+        effective_date=None,
     )
     assert tos_spy["transition"] is not None, "a change must open a new period"
     assert tos_spy["upsert"] is None
@@ -186,6 +190,8 @@ def test_push_field_value_upserts_when_tos_already_agrees(tos_spy):
         tos_data={"id_entity": 1},
         dry_run=True,
         emit=silent_emit,
+        no_transition=False,
+        effective_date=None,
     )
     assert tos_spy["upsert"] is not None
     assert tos_spy["transition"] is None
@@ -200,6 +206,7 @@ def test_no_transition_forces_pattern_1(tos_spy):
         tos_data={"id_entity": 1},
         dry_run=True,
         no_transition=True,
+        effective_date=None,
         emit=silent_emit,
     )
     assert tos_spy["upsert"] is not None
@@ -216,6 +223,8 @@ def test_push_field_value_hands_dry_run_to_the_writer(tos_spy, dry_run):
         tos_data={"id_entity": 1},
         dry_run=dry_run,
         emit=silent_emit,
+        no_transition=False,
+        effective_date=None,
     )
     assert tos_spy["writer_dry_run"] is dry_run
 
@@ -229,6 +238,7 @@ def test_push_field_value_passes_the_operator_date_through(tos_spy):
         dry_run=True,
         effective_date="2026-01-02T03:04:05",
         emit=silent_emit,
+        no_transition=False,
     )
     assert tos_spy["upsert"]["date_from"] == "2026-01-02T03:04:05"
 
@@ -242,6 +252,8 @@ def test_push_field_value_without_tos_data_reports_and_stops(tos_spy, emitted):
         tos_data=None,
         dry_run=False,
         emit=emit,
+        no_transition=False,
+        effective_date=None,
     )
     assert tos_spy["writer_dry_run"] is None, "built a writer with no TOS data"
     assert "cannot push to TOS" in "\n".join(lines)
@@ -267,6 +279,8 @@ def test_push_field_value_reports_a_failure_instead_of_raising(monkeypatch, emit
         tos_data={"id_entity": 1},
         dry_run=False,
         emit=emit,
+        no_transition=False,
+        effective_date=None,
     )
     assert "TOS push failed: TOS said no" in "\n".join(lines)
 
@@ -303,6 +317,7 @@ def test_component_push_hands_dry_run_to_the_writer(monkeypatch, dry_run):
         tos_data={"id_entity": 1},
         dry_run=dry_run,
         emit=silent_emit,
+        effective_date=None,
     )
     assert seen["dry_run"] is dry_run
     assert seen["kw"]["attribute_code"] == "antenna_height"
@@ -316,6 +331,7 @@ def test_component_push_without_tos_data_reports_and_stops(emitted):
         tos_data=None,
         dry_run=False,
         emit=emit,
+        effective_date=None,
     )
     assert "no TOS data — cannot push component" in "\n".join(lines)
 
@@ -349,6 +365,8 @@ def _decide(action, value, diff=None, **kw):
         field_specs_by_key=fields_by_key(),
         emit=kw.pop("emit", silent_emit),
         station_id="TEST",
+        no_transition=kw.pop("no_transition", False),
+        effective_date=kw.pop("effective_date", None),
         **kw,
     )
 
@@ -451,3 +469,37 @@ def test_resolve_effective_date_falls_back_to_now():
 def test_resolve_effective_date_treats_empty_string_as_absent():
     """`--effective-date ''` is not a date; falling through to now is correct."""
     assert resolve_effective_date("") != ""
+
+
+# ---------------------------------------------------------------------------
+# The required-argument discipline
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("omit", ["dry_run", "no_transition", "effective_date", "emit"])
+def test_push_field_value_refuses_to_guess(omit):
+    """Omitting any TOS-write input must be a TypeError, never a default.
+
+    `effective_date` is the sharpest of the four: defaulted, a *historical*
+    correction would silently be dated "now", opening a TOS attribute period on
+    the wrong day. That is a corrupted equipment history, not a cosmetic slip,
+    and it is invisible until someone regenerates a site log years later.
+    `no_transition` omitted silently enables Pattern 2; `dry_run` omitted is the
+    difference between a preview and a production write; `emit` omitted would
+    lose all operator output on a live run.
+
+    Guards against a future "tidy-up" adding defaults back for convenience.
+    """
+    kwargs = dict(
+        station_id="TEST",
+        diff=make_diff(),
+        value="5.6.0",
+        tos_data={"id_entity": 1},
+        dry_run=True,
+        no_transition=False,
+        effective_date=None,
+        emit=silent_emit,
+    )
+    kwargs.pop(omit)
+    with pytest.raises(TypeError):
+        push_field_value(**kwargs)

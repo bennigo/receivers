@@ -25,7 +25,12 @@ fallbacks would authorise writes to production TOS.
 
 **``effective_date`` stays a raw ``Optional[str]``** and is resolved to "now"
 only at the moment of a push. Resolving it earlier would make an otherwise pure
-value time-dependent, and any golden covering a push non-deterministic.
+value time-dependent, and any golden covering a push non-deterministic. It is
+**required** — ``None`` must be said out loud. Defaulting it would let a caller
+silently date a *historical* correction at "now", which opens a TOS attribute
+period on the wrong day; that is the damage class recorded in the station.info
+era-boundary notes, not a cosmetic slip. ``no_transition`` is required for the
+same reason: omitted, it silently enables Pattern 2.
 """
 
 from __future__ import annotations
@@ -133,8 +138,8 @@ def push_field_value(
     value: str,
     tos_data: Optional[Dict[str, Any]],
     dry_run: bool,
-    no_transition: bool = False,
-    effective_date: Optional[str] = None,
+    no_transition: bool,
+    effective_date: Optional[str],
     emit: Emit,
 ) -> None:
     """Push *value* for ``diff.spec`` to TOS; handles errors and dry-run.
@@ -215,7 +220,7 @@ def push_component_value(
     component: Dict[str, str],
     tos_data: Optional[Dict[str, Any]],
     dry_run: bool,
-    effective_date: Optional[str] = None,
+    effective_date: Optional[str],
     emit: Emit,
 ) -> None:
     """Push one sub-component of a composite field (e.g. the antenna ARP) to TOS.
@@ -362,8 +367,8 @@ def apply_decision(
     field_specs_by_key: Dict[str, FieldSpec],
     emit: Emit,
     station_id: str,
-    no_transition: bool = False,
-    effective_date: Optional[str] = None,
+    no_transition: bool,
+    effective_date: Optional[str],
 ) -> ApplyOutcome:
     """Carry out one decision about one field.
 
