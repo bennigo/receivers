@@ -402,11 +402,14 @@ def test_json_mode_never_prompts_and_never_writes(recorded_writes, monkeypatch):
 #   placeholder cleanup               STATION_CONFIG has no placeholder value
 #   tos-fillable offer                sources=["receiver"], so nothing is fillable
 #
-# The last two also call `input()` DIRECTLY rather than the injected `prompt` —
-# so `test_prompt_is_injectable_and_no_tty_is_touched` passes not because the
-# seam is honoured everywhere, but because the blocks that bypass it are
-# unreachable in that fixture. Pinned here so the gap is recorded rather than
-# invisible; closing it is a separate step (inject a prompt there too).
+# The last two USED to call `input()` DIRECTLY rather than the injected
+# `prompt` — so `test_prompt_is_injectable_and_no_tty_is_touched` passed not
+# because the seam was honoured everywhere, but because the blocks that bypass
+# it were unreachable in that fixture. Closed 2026-08-27: they now ask through
+# `placeholder_prompt` / `fillable_prompt`, and `_run_b` makes `input` RAISE
+# for the whole call. Their answer PARSING is unit-tested at the end of this
+# file, where the destructive bare-Enter default and the case-sensitive `C`
+# live.
 
 # Fixture B — antenna_serial holds a TOS synthetic device identifier, which
 # `_strip_placeholder` normalises to None, making that row a cfg_placeholder.
@@ -461,29 +464,46 @@ TOS_DATA_C: dict = {
 _UNSET = object()
 
 
+def _answer(spec):
+    """Turn a fixed answer, or a per-diff callable, into a prompt."""
+    return spec if callable(spec) else (lambda _d: spec)
+
+
+def _boom_input(*a, **k):
+    raise AssertionError(
+        "_reconcile_one called input(); one of the three prompt seams was bypassed"
+    )
+
+
 def _run_b(
     answers=None,
     *,
     station_config=None,
     tos_data=_UNSET,
     sources=("receiver", "tos"),
-    keys="q",
+    placeholder=("quit", None),
+    fillable=("quit", None),
     **overrides,
 ):
     """Drive `_reconcile_one` against fixture B with both sources queried.
 
-    ``keys`` is what `input()` returns — needed because the placeholder-cleanup
-    and tos-fillable blocks call `input()` directly rather than the injected
-    ``prompt``. Having to pass it AT ALL is the gap being recorded; the default
-    ``"q"`` makes both blocks a no-op so tests aimed at the other branches are
-    not perturbed by them.
+    All THREE prompts are injected, and `builtins.input` is made to raise — so
+    these tests prove the seams are honoured rather than merely not reaching
+    the blocks that bypass them. (An earlier version had to pass a ``keys=``
+    string because the placeholder and tos-fillable blocks called `input()`
+    directly; needing that argument was the evidence of the gap, and its
+    disappearance is the evidence it closed.)
+
+    ``placeholder``/``fillable`` take a fixed ``(action, value)`` or a callable
+    of the diff. Both default to quit, so a test aimed at the main loop is not
+    perturbed by the two trailing blocks.
     """
     args = argparse.Namespace(**{**BASE_FLAGS, "dry_run": False, **overrides})
     scripted = _Scripted(answers if answers is not None else [("skip", None)] * 20)
     buf = io.StringIO()
     with (
         contextlib.redirect_stdout(buf),
-        mock.patch("builtins.input", lambda *a, **k: keys),
+        mock.patch("builtins.input", _boom_input),
     ):
         _, n_written, n_skipped = _reconcile_one(
             "TEST",
@@ -494,6 +514,8 @@ def _run_b(
             RECEIVER_IDENTITY_B,
             TOS_DATA_B if tos_data is _UNSET else tos_data,
             prompt=scripted,
+            placeholder_prompt=_answer(placeholder),
+            fillable_prompt=_answer(fillable),
         )
     scripted.counts = (n_written, n_skipped)
     return buf.getvalue(), scripted
@@ -640,9 +662,9 @@ def test_sync_devices_needs_push_tos(recorded_sync, recorded_writes):
 
 
 # --- placeholder cleanup ---------------------------------------------------
-# NOTE: the interactive half of this block calls `input()` directly instead of
-# the injected `prompt`. That is a real gap in the seam, pinned rather than
-# fixed here.
+# The interactive half asks through the injected `placeholder_prompt`; these
+# tests supply the ANSWER and assert the write. What each keystroke means is
+# tested separately against `_placeholder_prompt` itself.
 
 
 def test_canonicalize_removes_placeholders(recorded_writes):
@@ -666,12 +688,12 @@ def test_canonicalize_dry_run_removes_nothing(recorded_writes):
 
 def test_placeholder_keep_removes_nothing(recorded_writes):
     """Interactive `[k]eep` must leave the placeholder in cfg."""
-    _run_b(keys="k")
+    _run_b(placeholder=("skip", None))
     assert not [w for w in recorded_writes if w[0] == "remove"]
 
 
 def test_placeholder_delete_removes_it(recorded_writes):
-    _run_b(keys="d")
+    _run_b(placeholder=("remove", None))
     removals = [w for w in recorded_writes if w[0] == "remove"]
     assert removals, "interactive [d]elete removed nothing"
     assert removals[0][2] == "antenna_serial"
@@ -681,20 +703,20 @@ def test_placeholder_delete_removes_it(recorded_writes):
 
 
 def test_tos_fillable_keep_pushes_nothing(recorded_writes):
-    _run_b(keys="k")
+    _run_b(fillable=("skip", None))
     assert not [w for w in recorded_writes if w[0] == "tos_push"]
 
 
 def test_tos_fillable_capital_c_pushes_the_cfg_value(recorded_writes):
     """`C` is the only way cfg's value reaches TOS from this block."""
-    _run_b(keys="C")
+    _run_b(fillable=lambda d: ("push_cfg_to_tos", d.cfg_value))
     assert [w for w in recorded_writes if w[0] == "tos_push"], (
         "C pushed nothing; the tos-fillable branch is unreached"
     )
 
 
 def test_tos_fillable_quit_stops_the_block(recorded_writes):
-    _run_b(keys="q")
+    _run_b(fillable=("quit", None))
     assert not [w for w in recorded_writes if w[0] == "tos_push"]
 
 
@@ -704,12 +726,22 @@ def test_tos_placeholder_offers_z_and_writes_the_unknown_marker(recorded_writes)
     Deliberately bypasses `cfg_format`: writing a value that `normalize` strips
     is the point. Fixture C is the only one that reaches this.
     """
-    out, _ = _run_b(keys="z", station_config=STATION_CONFIG_C, tos_data=TOS_DATA_C)
+    out, _ = _run_b(
+        fillable=("set_unknown", "0000000000"),
+        station_config=STATION_CONFIG_C,
+        tos_data=TOS_DATA_C,
+    )
     cfg_writes = [w for w in recorded_writes if w[0] == "cfg"]
     assert ("cfg", "TEST", "antenna_serial", "0000000000") in cfg_writes, (
         f"z did not write the unknown marker; got {cfg_writes}"
     )
-    assert "recorded as UNKNOWN" in out
+    # The write must bypass cfg_format — `normalize()` strips this value, which
+    # is the point. Routing it through apply_decision would instead print
+    # "cfg_format normalised '0000000000' to None — skipping" and write nothing.
+    assert "wrote antenna_serial = '0000000000' to cfg" in out
+    # What the OPERATOR is told ("TOS: recorded as UNKNOWN") is now rendered by
+    # the prompt, so it is asserted where it lives — see
+    # test_tos_fillable_prompt_offers_z_only_for_a_tos_placeholder.
 
 
 # --- prompt-driven push actions -------------------------------------------
@@ -787,7 +819,7 @@ def test_prompt_component_push_uses_the_policy_dry_run(monkeypatch, recorded_wri
 
 def test_counters_when_everything_is_declined(recorded_writes):
     """Quitting both interactive blocks: one skipped field, nothing written."""
-    _, scripted = _run_b(keys="q")
+    _, scripted = _run_b()
     assert scripted.counts == (0, 1)
 
 
@@ -797,7 +829,9 @@ def test_counters_count_placeholder_removal_as_a_write(recorded_writes):
     `keys="d"` deletes the placeholder and, in the tos-fillable block, falls
     through to "keep" for each of the three fillable fields.
     """
-    _, scripted = _run_b([("set", "5.6.0")], keys="d")
+    _, scripted = _run_b(
+        [("set", "5.6.0")], placeholder=("remove", None), fillable=("skip", None)
+    )
     n_written, n_skipped = scripted.counts
     assert n_written == 2, "expected 1 cfg write + 1 placeholder removal"
     assert n_skipped == 3, "expected the 3 tos-fillable fields to count as kept"
@@ -805,7 +839,7 @@ def test_counters_count_placeholder_removal_as_a_write(recorded_writes):
 
 def test_tos_push_is_not_counted_as_a_cfg_write(recorded_writes):
     """A TOS push is not a cfg mutation and must not inflate n_written."""
-    _, scripted = _run_b([("push_tos", "5.6.0")], keys="q")
+    _, scripted = _run_b([("push_tos", "5.6.0")])
     assert [w for w in recorded_writes if w[0] == "tos_push"], "no push happened"
     assert scripted.counts[0] == 0, "a TOS push was counted as a cfg write"
 
@@ -820,7 +854,7 @@ def test_set_and_push_tos_pushes_the_receiver_value_not_the_typed_one(
     None-check, and a "tidy-up" to `new_value` would silently change what
     reaches production TOS.
     """
-    _run_b([("set_and_push_tos", "9.9.9")], keys="q")
+    _run_b([("set_and_push_tos", "9.9.9")])
     pushes = [w for w in recorded_writes if w[0] == "tos_push"]
     assert pushes, "set_and_push_tos pushed nothing"
     assert pushes[0][3] == "5.6.0", (
@@ -829,36 +863,149 @@ def test_set_and_push_tos_pushes_the_receiver_value_not_the_typed_one(
     )
 
 
-# --- the two answers nothing pinned -----------------------------------------
-# Both are properties of the raw `input()` handling in the placeholder and
-# tos-fillable blocks. They are pinned HERE, against the un-extracted code, so
-# the prompt extraction that follows is verified against them rather than
-# defining them.
+# --- the prompts themselves ------------------------------------------------
+# Now that the two blocks ask through injectable functions, their ANSWER
+# PARSING is directly unit-testable. Both of these encode a decision that is
+# easy to "clean up" into a production incident.
 
 
-def test_bare_enter_DELETES_the_placeholder(recorded_writes):
-    """Empty input is `delete`, not skip — a destructive default.
+def _ask(fn, diff, typed):
+    with contextlib.redirect_stdout(io.StringIO()):
+        with mock.patch("builtins.input", lambda *a, **k: typed):
+            return fn(diff)
+
+
+def _placeholder_diff():
+    from receivers.cfg.reconciler import compare_station
+
+    diffs = compare_station(
+        station_id="TEST",
+        station_config=STATION_CONFIG_B,
+        receiver_identity=RECEIVER_IDENTITY_B,
+        tos_data=TOS_DATA_B,
+        fields=None,
+        queried_sources={"receiver", "tos", "cfg"},
+        field_specs=None,
+    )
+    return next(d for d in diffs if d.cfg_placeholder)
+
+
+def _fillable_diff(tos_placeholder=False):
+    from receivers.cfg.reconciler import compare_station
+    from receivers.cli.cfg import _is_tos_fillable
+
+    diffs = compare_station(
+        station_id="TEST",
+        station_config=STATION_CONFIG_C if tos_placeholder else STATION_CONFIG_B,
+        receiver_identity=None if tos_placeholder else RECEIVER_IDENTITY_B,
+        tos_data=TOS_DATA_C if tos_placeholder else TOS_DATA_B,
+        fields=None,
+        queried_sources={"tos", "cfg"}
+        if tos_placeholder
+        else {"receiver", "tos", "cfg"},
+        field_specs=None,
+    )
+    return next(
+        d for d in diffs if _is_tos_fillable(d) and d.tos_placeholder == tos_placeholder
+    )
+
+
+@pytest.mark.parametrize(
+    "typed,expected",
+    [
+        ("d", "remove"),
+        ("delete", "remove"),
+        ("", "remove"),  # bare Enter DELETES — see the docstring below
+        ("D", "remove"),  # lower-cased, unlike the tos-fillable prompt
+        ("k", "skip"),
+        ("keep", "skip"),
+        ("x", "skip"),  # anything unrecognised is a safe no-op
+        ("q", "quit"),
+        ("quit", "quit"),
+    ],
+)
+def test_placeholder_prompt_parsing(typed, expected):
+    """Bare Enter is DELETE — a destructive default, and the established one.
 
     `if choice in ("d", "delete", "")`. Whether that default is wise is a
-    separate question; it is what the tool does today, and an extraction that
-    quietly turned bare Enter into "keep" would change behaviour operators rely
-    on without anyone noticing.
+    separate question; an extraction that quietly turned it into "keep" would
+    change behaviour operators rely on. Note `D` also deletes: this prompt
+    lower-cases, and the tos-fillable one deliberately does not.
     """
-    _run_b(keys="")
-    removals = [w for w in recorded_writes if w[0] == "remove"]
-    assert removals, "bare Enter no longer deletes the placeholder"
-    assert removals[0][2] == "antenna_serial"
+    from receivers.cli.cfg import _placeholder_prompt
+
+    action, _ = _ask(_placeholder_prompt, _placeholder_diff(), typed)
+    assert action == expected
 
 
-def test_lowercase_c_does_NOT_push_cfg_to_tos(recorded_writes):
-    """The tos-fillable prompt is case-SENSITIVE, unlike the placeholder one.
+@pytest.mark.parametrize(
+    "typed,expected",
+    [
+        ("C", "push_cfg_to_tos"),
+        ("c", "skip"),  # case-SENSITIVE — see the docstring below
+        ("k", "skip"),
+        ("", "skip"),  # bare Enter does NOT push, unlike the placeholder prompt
+        ("q", "quit"),
+        ("quit", "quit"),
+        ("z", "skip"),  # no TOS placeholder here, so z is not on offer
+    ],
+)
+def test_tos_fillable_prompt_parsing(typed, expected):
+    """`C` pushes a cfg value into production TOS; a stray `c` must not.
 
-    It reads `.strip()` where the placeholder block reads `.strip().lower()`.
-    That asymmetry is load-bearing: `C` pushes a cfg value into TOS, and a
-    stray lowercase `c` must not. Normalising both while extracting would make
-    `c` start writing to production TOS.
+    This prompt `.strip()`s but does NOT lower-case, where `_placeholder_prompt`
+    directly above it does. Folding the two for consistency — the obvious
+    cleanup — would make a typo write to TOS. Note bare Enter is a no-op here
+    and a DELETE there; the two prompts genuinely differ.
     """
-    _run_b(keys="c")
-    assert not [w for w in recorded_writes if w[0] == "tos_push"], (
-        "lowercase 'c' pushed to TOS; the prompt must stay case-sensitive"
-    )
+    from receivers.cli.cfg import _tos_fillable_prompt
+
+    action, _ = _ask(_tos_fillable_prompt, _fillable_diff(), typed)
+    assert action == expected
+
+
+def test_tos_fillable_prompt_offers_z_only_for_a_tos_placeholder():
+    """`z` is meaningful only when TOS records the serial as UNKNOWN.
+
+    Then the device EXISTS with an unknown serial — very different from TOS
+    having no value — and the cfg value may belong to a PREVIOUS device, so
+    pushing it would mislabel the current one.
+    """
+    from receivers.cli.cfg import _UNKNOWN_SERIAL_MARKER, _tos_fillable_prompt
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with mock.patch("builtins.input", lambda *a, **k: "z"):
+            action, value = _tos_fillable_prompt(_fillable_diff(True))
+    assert (action, value) == ("set_unknown", _UNKNOWN_SERIAL_MARKER)
+    out = buf.getvalue()
+    assert "recorded as UNKNOWN" in out, "the operator was not told TOS has a device"
+    assert "[z]set cfg" in out, "z was not offered"
+    # The warning is the only thing standing between an operator and
+    # mislabelling the CURRENT device with a PREVIOUS device's serial.
+    assert (
+        "⚠ push C only if the cfg value truly belongs to the CURRENT device" in out
+    ), "the mislabelling warning is missing or reworded"
+
+    # Without a TOS placeholder the option must not even appear — offering it
+    # would invite writing 'unknown' over a field TOS simply has no value for.
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with mock.patch("builtins.input", lambda *a, **k: "k"):
+            _tos_fillable_prompt(_fillable_diff(False))
+    assert "[z]set cfg" not in buf.getvalue()
+
+
+@pytest.mark.parametrize("fn", ["_placeholder_prompt", "_tos_fillable_prompt"])
+def test_both_prompts_treat_eof_as_quit(fn):
+    """A closed stdin must abandon the block, never fall through to a write."""
+    import receivers.cli.cfg as mod
+
+    def _eof(*a, **k):
+        raise EOFError
+
+    diff = _placeholder_diff() if "placeholder" in fn else _fillable_diff()
+    with contextlib.redirect_stdout(io.StringIO()):
+        with mock.patch("builtins.input", _eof):
+            action, _ = getattr(mod, fn)(diff)
+    assert action == "quit"

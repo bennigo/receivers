@@ -58,6 +58,12 @@ from ..cfg.reconciler import (
 
 logger = logging.getLogger(__name__)
 
+#: The cfg-side spelling of "serial unknown" — all zeros, fleet-wide. Written
+#: DELIBERATELY bypassing `cfg_format`: `normalize()` strips this value, which
+#: is the point. It records "we asked and nobody knows", distinct from the key
+#: being absent.
+_UNKNOWN_SERIAL_MARKER = "0000000000"
+
 
 # ---------------------------------------------------------------------------
 # --global: write the gps-config-data repo (source of truth) + git commit
@@ -676,6 +682,79 @@ def _interactive_prompt(
         print(f"     unknown action {choice!r}")
 
 
+def _placeholder_prompt(diff: FieldDiff) -> Tuple[str, Any]:
+    """Ask what to do about one cfg placeholder value.
+
+    Returns ``("remove", None)``, ``("skip", None)`` or ``("quit", None)``.
+
+    Two details are load-bearing and deliberately preserved:
+
+    * **Bare Enter means DELETE.** The empty string is in the accept set
+      alongside ``d``/``delete``. A destructive default, but the established
+      one; changing it belongs in its own commit with a golden review.
+    * The answer is lower-cased here, unlike
+      :func:`_tos_fillable_prompt` — that prompt's ``C`` and ``z`` are
+      case-sensitive and must not be folded together with these.
+
+    EOF is treated as ``quit``, so a closed stdin abandons the remaining
+    placeholders rather than deleting them.
+    """
+    print(f"\n     ~ {diff.cfg_key} = {diff.cfg_raw!r}  (placeholder — no real value)")
+    print("       [d]elete · [k]eep · [q]uit")
+    try:
+        choice = input("       > ").strip().lower()
+    except EOFError:
+        choice = "q"
+    if choice in ("q", "quit"):
+        return ("quit", None)
+    if choice in ("d", "delete", ""):
+        return ("remove", None)
+    return ("skip", None)
+
+
+def _tos_fillable_prompt(diff: FieldDiff) -> Tuple[str, Any]:
+    """Ask what to do about a field cfg has but TOS does not.
+
+    Returns ``("push_cfg_to_tos", cfg_value)``, ``("set_unknown", marker)``,
+    ``("skip", None)`` or ``("quit", None)``.
+
+    **Case-sensitive on purpose** — the answer is ``.strip()``ed but NOT
+    lower-cased. ``C`` pushes a cfg value into production TOS; a stray ``c``
+    must do nothing. Folding case here (the obvious "consistency" cleanup,
+    given :func:`_placeholder_prompt` right above does lower) would make a
+    typo write to TOS.
+
+    ``z`` is offered only when TOS holds a *placeholder*: the device exists and
+    its serial is recorded-as-UNKNOWN, which is very different from TOS having
+    no value. The cfg value may belong to a PREVIOUS device, so pushing it
+    would mislabel the current one — ``z`` writes the cfg-side unknown marker
+    instead.
+    """
+    if diff.tos_placeholder:
+        print(f"       TOS: recorded as UNKNOWN (placeholder {diff.tos_raw!r})")
+        print(
+            "       ⚠ push C only if the cfg value truly belongs to the CURRENT device"
+        )
+        print(
+            "       [z]set cfg = '0000000000' (unknown) · "
+            "[C]push-cfg-to-TOS · [k]eep · [q]uit"
+        )
+    else:
+        print("       TOS: [no value — use C to populate]")
+        print("       [C]push-cfg-to-TOS · [k]eep · [q]uit")
+    try:
+        raw = input("       > ").strip()
+    except EOFError:
+        return ("quit", None)
+    if raw in ("q", "quit"):
+        return ("quit", None)
+    if raw == "z" and diff.tos_placeholder:
+        return ("set_unknown", _UNKNOWN_SERIAL_MARKER)
+    if raw == "C":
+        return ("push_cfg_to_tos", diff.cfg_value)
+    return ("skip", None)
+
+
 # ---------------------------------------------------------------------------
 # TOS push helper
 # ---------------------------------------------------------------------------
@@ -900,6 +979,8 @@ def _reconcile_one(
     tos_data: Optional[Dict[str, Any]] = None,
     global_target: Optional[Path] = None,
     prompt: Optional[Callable[..., Tuple[str, Any]]] = None,
+    placeholder_prompt: Optional[Callable[..., Tuple[str, Any]]] = None,
+    fillable_prompt: Optional[Callable[..., Tuple[str, Any]]] = None,
 ) -> Tuple[List[FieldDiff], int, int]:
     """Reconcile one station given pre-fetched probe data.
 
@@ -908,6 +989,14 @@ def _reconcile_one(
     comparison, display, and writes — no network I/O.
 
     Returns ``(diffs, n_written, n_skipped)``.
+
+    THREE questions are asked of an operator, and all three are injectable:
+    ``prompt`` for a conflicting field, ``placeholder_prompt`` for a cfg
+    placeholder to clean up, and ``fillable_prompt`` for a field cfg has but
+    TOS does not. The last two used to call ``input()`` directly, which meant
+    the "prompt is injectable" contract held only for the first — and the tests
+    that claimed to prove it passed only because those two blocks were
+    unreachable in their fixture.
 
     ``prompt`` is the per-field decision function, defaulting to
     :func:`_interactive_prompt`. It is injected rather than called directly so
@@ -918,6 +1007,12 @@ def _reconcile_one(
     implementation is a drop-in.
     """
     prompt = prompt if prompt is not None else _interactive_prompt
+    placeholder_prompt = (
+        placeholder_prompt if placeholder_prompt is not None else _placeholder_prompt
+    )
+    fillable_prompt = (
+        fillable_prompt if fillable_prompt is not None else _tos_fillable_prompt
+    )
     # One resolved description of what this run may do, instead of fifteen
     # scattered getattr(args, ...) reads. See cfg/reconcile_policy.py for why
     # dry_run is required rather than defaulted.
@@ -1206,20 +1301,15 @@ def _reconcile_one(
                         if not silent:
                             print(f"     ❌ {d.cfg_key}: removal failed: {exc}")
         elif not silent and not policy.dry_run:
-            # Interactive: prompt for each placeholder
+            # Interactive: ask about each placeholder. The question lives in
+            # placeholder_prompt so a web form can answer it; only the write
+            # stays here.
             print(f"\n   {len(cfg_placeholders)} placeholder value(s) in cfg:")
             for d in cfg_placeholders:
-                print(
-                    f"\n     ~ {d.cfg_key} = {d.cfg_raw!r}  (placeholder — no real value)"
-                )
-                print("       [d]elete · [k]eep · [q]uit")
-                try:
-                    choice = input("       > ").strip().lower()
-                except EOFError:
-                    choice = "q"
-                if choice in ("q", "quit"):
+                choice, _ = placeholder_prompt(d)
+                if choice == "quit":
                     break
-                if choice in ("d", "delete", ""):
+                if choice == "remove":
                     try:
                         changed = targets.remove(d)
                         if changed:
@@ -1227,6 +1317,10 @@ def _reconcile_one(
                             print(f"       ✅ removed {d.cfg_key}")
                         else:
                             print("       ⏭  already absent")
+                    # NOTE: broader than the --canonicalize path above, which
+                    # has its own SourceUnavailableError branch. A real
+                    # inconsistency, left alone — narrowing it changes what an
+                    # operator sees and wants its own commit.
                     except Exception as exc:  # noqa: BLE001
                         print(f"       ❌ removal failed: {exc}")
                 else:
@@ -1243,53 +1337,30 @@ def _reconcile_one(
         for d in tos_fillable_list:
             print(f"\n     ↑ {d.label} ({d.cfg_key})")
             print(f"       cfg: {d.cfg_value!r}")
-            if d.tos_placeholder:
-                # TOS holds a synthetic placeholder (e.g. antenna-ODDF-20230706):
-                # the device EXISTS and its serial is recorded-as-UNKNOWN. Very
-                # different from "no value" — the cfg value may belong to a
-                # PREVIOUS device, so pushing it blindly would mislabel the
-                # current one. Offer the cfg-side unknown-marker instead.
-                print(f"       TOS: recorded as UNKNOWN (placeholder {d.tos_raw!r})")
-                print(
-                    "       ⚠ push C only if the cfg value truly belongs to the "
-                    "CURRENT device"
-                )
-                print(
-                    "       [z]set cfg = '0000000000' (unknown) · "
-                    "[C]push-cfg-to-TOS · [k]eep · [q]uit"
-                )
-            else:
-                print("       TOS: [no value — use C to populate]")
-                print("       [C]push-cfg-to-TOS · [k]eep · [q]uit")
-            try:
-                raw = input("       > ").strip()
-            except EOFError:
+            action, value = fillable_prompt(d)
+            if action == "quit":
                 break
-            if raw in ("q", "quit"):
-                break
-            if raw == "z" and d.tos_placeholder:
-                # Translate TOS's "unknown" into the cfg convention (all-zeros,
-                # the fleet-wide unknown-serial marker) — deliberately bypassing
-                # cfg_format: writing a value normalize() strips is the point.
+            if action == "set_unknown":
+                # Writes the cfg-side unknown marker, deliberately bypassing
+                # cfg_format — a value normalize() strips is exactly the point,
+                # so this does NOT route through apply_decision.
                 try:
-                    changed = targets.apply(d, "0000000000")
+                    changed = targets.apply(d, value)
                     if changed:
                         n_written += 1
-                        print(f"       ✅ wrote {d.cfg_key} = '0000000000' to cfg")
+                        print(f"       ✅ wrote {d.cfg_key} = {value!r} to cfg")
                     else:
                         print("       ⏭  cfg unchanged")
                 except Exception as exc:  # noqa: BLE001
                     print(f"       ❌ cfg write failed: {exc}")
                 continue
-            if raw == "C":
-                cfg_val = d.cfg_value
-                assert cfg_val is not None  # guaranteed by _is_tos_fillable
-                if not silent:
-                    print(f"       → push cfg value to TOS: {d.cfg_key} = {cfg_val!r}")
+            if action == "push_cfg_to_tos":
+                assert value is not None  # guaranteed by _is_tos_fillable
+                print(f"       → push cfg value to TOS: {d.cfg_key} = {value!r}")
                 reconcile_apply.push_field_value(
                     station_id=station_id,
                     diff=d,
-                    value=cfg_val,
+                    value=value,
                     tos_data=tos_data,
                     dry_run=policy.dry_run,
                     no_transition=no_transition,
