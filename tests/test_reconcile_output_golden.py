@@ -220,9 +220,14 @@ def recorded_writes(monkeypatch):
     # occurred". That let `d.receiver_value or new_value` (the `or` matters: an
     # unchanged-but-successful cfg write still pushes the RECEIVER value)
     # change to anything at all without a test noticing.
+    # Patched on `reconcile_apply`, not on the CLI: the push moved there, and
+    # `cli.cfg` deliberately calls it module-qualified so this one patch covers
+    # BOTH the applier's calls and the two the CLI still makes directly.
+    from receivers.cfg import reconcile_apply
+
     monkeypatch.setattr(
-        mod,
-        "_do_push_tos",
+        reconcile_apply,
+        "push_field_value",
         lambda **kw: writes.append(
             ("tos_push", kw["station_id"], kw["diff"].cfg_key, kw["value"])
         ),

@@ -35,15 +35,16 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
-    cast,
 )
 
+from ..cfg import reconcile_apply
 from ..cfg.field_manifest import (
     FIELDS,
     all_keys,
     fields_by_key,
     with_position_tolerance,
 )
+from ..cfg.reconcile_apply import CfgTargets, resolve_effective_date, silent_emit
 from ..cfg.reconcile_plan import decide_field
 from ..cfg.reconcile_policy import ReconcilePolicy
 from ..cfg.reconciler import (
@@ -681,18 +682,14 @@ def _interactive_prompt(
 
 
 def _effective_date_for(args: argparse.Namespace) -> str:
-    """Return an ISO-8601 date_from for TOS attribute writes.
+    """Return an ISO-8601 date_from for TOS attribute writes, from a namespace.
 
-    Uses ``args.effective_date`` when set, otherwise falls back to current UTC
-    with a warning — correct for serial/firmware corrections where the operator
-    knows the actual change date only approximately.
+    A thin argparse adapter over
+    :func:`receivers.cfg.reconcile_apply.resolve_effective_date` — the fallback
+    rule itself lives there so the non-terminal callers get the same one, and
+    so there is exactly one place that decides what "now" means for a TOS write.
     """
-    ed = getattr(args, "effective_date", None)
-    if ed:
-        return ed
-    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S+00:00")
-    logger.debug("--effective-date not set; defaulting to now (%s)", now)
-    return now
+    return resolve_effective_date(getattr(args, "effective_date", None))
 
 
 def _sync_devices_to_tos(
@@ -838,94 +835,6 @@ def _sync_devices_to_tos(
     return created
 
 
-def _do_push_tos(
-    station_id: str,
-    diff: FieldDiff,
-    value: str,
-    tos_data: Optional[Dict[str, Any]],
-    args: argparse.Namespace,
-    silent: bool,
-) -> None:
-    """Push *value* for *diff.spec* to TOS; handles errors and dry-run.
-
-    Routes to Pattern 2 (transition_attribute_value) when:
-    - The TOS value differs from the new value (it's a change, not a new add)
-    - ``--no-transition`` is not set
-    - The field has a TOS value to compare against (diff.tos_value)
-
-    Otherwise uses Pattern 1 (upsert_attribute_value).
-    """
-    if tos_data is None:
-        if not silent:
-            print(f"     ❌ cannot push to TOS: no TOS data for {station_id}")
-        return
-
-    try:
-        from tostools.api.tos_writer import TOSWriter
-
-        from ..cfg.tos_push import push_field_to_tos, push_field_transition_to_tos
-    except ImportError as exc:
-        if not silent:
-            print(f"     ❌ tostools not available: {exc}")
-        return
-
-    dry_run: bool = getattr(args, "dry_run", True)
-    no_transition: bool = getattr(args, "no_transition", False)
-    writer = TOSWriter(dry_run=dry_run)
-    date_from = _effective_date_for(args)
-
-    # Decide Pattern 1 vs Pattern 2
-    use_transition = (
-        not no_transition and diff.tos_value is not None and diff.tos_value != value
-    )
-
-    if not silent:
-        mode = "[DRY-RUN] " if dry_run else ""
-        pattern = "Pattern 2 (transition)" if use_transition else "Pattern 1 (upsert)"
-        print(
-            f"     {mode}→ push to TOS [{pattern}]: {diff.cfg_key} = {value!r} "
-            f"(attr={diff.spec.tos_attribute_code!r}, "
-            f"entity={diff.spec.tos_target_entity}, date_from={date_from})"
-        )
-
-    try:
-        if use_transition:
-            result = push_field_transition_to_tos(
-                writer=writer,
-                spec=diff.spec,
-                new_value=value,
-                old_value=str(diff.tos_value),
-                tos_data=tos_data,
-                transition_date=date_from,
-            )
-            if not silent:
-                if hasattr(result, "method"):  # DryRunResult
-                    print(f"     ✅ [dry-run] would transition {diff.cfg_key}")
-                elif isinstance(result, dict):
-                    closed = "closed" if result.get("closed") else "no prior period"
-                    print(
-                        f"     ✅ TOS transition: {diff.cfg_key} "
-                        f"({diff.tos_value!r} → {value!r}, {closed})"
-                    )
-        else:
-            result = push_field_to_tos(
-                writer=writer,
-                spec=diff.spec,
-                value=value,
-                tos_data=tos_data,
-                date_from=date_from,
-            )
-            if not silent:
-                if hasattr(result, "method"):  # DryRunResult
-                    print(f"     ✅ [dry-run] would {result.method} {result.endpoint}")
-                else:
-                    print(f"     ✅ TOS updated: {diff.cfg_key} = {value!r}")
-    except Exception as exc:  # noqa: BLE001
-        if not silent:
-            print(f"     ❌ TOS push failed: {exc}")
-        logger.warning("[%s] TOS push failed for %s: %s", station_id, diff.cfg_key, exc)
-
-
 # ---------------------------------------------------------------------------
 # Position sanity gate
 # ---------------------------------------------------------------------------
@@ -1052,19 +961,23 @@ def _reconcile_one(
     if global_target is not None:
         _write_targets.append(global_target)
 
-    def _apply_to_targets(_d, _value, **_kw) -> bool:
-        _changed = False
-        for _tgt in _write_targets:
-            if apply_diff(station_id, _d, _value, cfg_path=_tgt, **_kw):
-                _changed = True
-        return _changed
-
-    def _remove_from_targets(_d, **_kw) -> bool:
-        _changed = False
-        for _tgt in _write_targets:
-            if remove_diff(station_id, _d, cfg_path=_tgt, **_kw):
-                _changed = True
-        return _changed
+    # The writers are passed IN rather than imported by CfgTargets: this module
+    # has a second apply_diff call site (the --global sync verb) and tests stub
+    # the writer by patching this module's attribute, so importing it there
+    # would silently detach that patch. See cfg/reconcile_apply.py.
+    targets = CfgTargets(
+        station_id,
+        _write_targets,
+        apply_diff=apply_diff,
+        remove_diff=remove_diff,
+    )
+    # One decision about where operator text goes, instead of ~40 hand-kept
+    # `if not silent: print(...)` guards.
+    emit = silent_emit if silent else print
+    no_transition: bool = getattr(args, "no_transition", False)
+    # Kept as the raw operator value; resolved to "now" only at push time, so a
+    # value object never becomes time-dependent.
+    effective_date: Optional[str] = getattr(args, "effective_date", None)
 
     actionable = [d for d in diffs if d.needs_attention]
     canonicalize_on = policy.canonicalize
@@ -1141,13 +1054,15 @@ def _reconcile_one(
             for d in actionable:
                 if not d.spec.tos_writable or d.receiver_value is None:
                     continue
-                _do_push_tos(
+                reconcile_apply.push_field_value(
                     station_id=station_id,
                     diff=d,
                     value=d.receiver_value,
                     tos_data=tos_data,
-                    args=args,
-                    silent=silent,
+                    dry_run=policy.dry_run,
+                    no_transition=no_transition,
+                    effective_date=effective_date,
+                    emit=emit,
                 )
     elif push_to_tos_on and "tos" not in sources:
         if not silent:
@@ -1215,168 +1130,28 @@ def _reconcile_one(
                 d, receiver_primary_active=receiver_primary_active, tos_data=tos_data
             )
 
-        if action == "quit":
+        # Perform it. The write mechanics live in cfg/reconcile_apply.py — the
+        # apply half of the plan/apply pair, callable without a terminal. Only
+        # the "quit" message stays here, because it needs the loop position.
+        outcome = reconcile_apply.apply_decision(
+            action,
+            new_value,
+            d,
+            targets=targets,
+            policy=policy,
+            tos_data=tos_data,
+            field_specs_by_key=field_specs_by_key,
+            emit=emit,
+            station_id=station_id,
+            no_transition=no_transition,
+            effective_date=effective_date,
+        )
+        n_written += outcome.written
+        n_skipped += outcome.skipped
+        if outcome.stop:
             if not silent:
                 print(f"\n     stopped at field {idx}/{len(actionable)}")
             break
-        if action == "skip":
-            n_skipped += 1
-            continue
-        if action == "push_tos" and new_value is not None:
-            _do_push_tos(
-                station_id=station_id,
-                diff=d,
-                value=new_value,
-                tos_data=tos_data,
-                args=args,
-                silent=silent,
-            )
-            continue
-        if action == "push_cfg_to_tos" and new_value is not None:
-            if not silent:
-                print(f"     → push cfg value to TOS: {d.cfg_key} = {new_value!r}")
-            _do_push_tos(
-                station_id=station_id,
-                diff=d,
-                value=new_value,
-                tos_data=tos_data,
-                args=args,
-                silent=silent,
-            )
-            continue
-        if action == "push_component" and isinstance(new_value, dict):
-            component_info = cast(Dict[str, str], new_value)
-            entity = component_info["entity"]
-            attribute_code = component_info["attribute_code"]
-            value = component_info["value"]
-            if not silent:
-                mode = "[DRY-RUN] " if policy.dry_run else ""
-                print(
-                    f"     {mode}→ push component to TOS: {entity}.{attribute_code} = {value!r}"
-                )
-            if tos_data is None:
-                if not silent:
-                    print("     ❌ no TOS data — cannot push component")
-                continue
-            try:
-                from tostools.api.tos_writer import TOSWriter
-
-                from ..cfg.tos_push import push_component_to_tos
-
-                writer = TOSWriter(dry_run=policy.dry_run)
-                result = push_component_to_tos(
-                    writer=writer,
-                    entity=entity,
-                    attribute_code=attribute_code,
-                    value=value,
-                    tos_data=tos_data,
-                    date_from=_effective_date_for(args),
-                )
-                if not silent:
-                    if hasattr(result, "method"):
-                        print(
-                            f"     ✅ [dry-run] would {result.method} {result.endpoint}"
-                        )
-                    else:
-                        print(
-                            f"     ✅ TOS updated: {entity}.{attribute_code} = {value!r}"
-                        )
-            except Exception as exc:  # noqa: BLE001
-                if not silent:
-                    print(f"     ❌ component push failed: {exc}")
-                logger.warning(
-                    "[%s] component push failed for %s.%s: %s",
-                    station_id,
-                    entity,
-                    attribute_code,
-                    exc,
-                )
-            continue
-        if action == "set_and_push_tos" and new_value is not None:
-            # Apply cfg vocabulary mapping first (same as "set")
-            spec = field_specs_by_key.get(d.cfg_key)
-            if spec is not None:
-                try:
-                    mapped = spec.cfg_format(new_value)
-                except Exception as exc:  # noqa: BLE001
-                    if not silent:
-                        print(f"     ❌ cfg_format failed for {d.cfg_key}: {exc}")
-                    continue
-                if mapped is None:
-                    if not silent:
-                        print(
-                            f"     ❌ cfg_format normalised {new_value!r} to None — skipping"
-                        )
-                    continue
-                if mapped != new_value and not silent:
-                    print(
-                        f"     ↺ normalised {new_value!r} → {mapped!r} for cfg vocabulary"
-                    )
-                new_value = mapped
-            try:
-                changed = _apply_to_targets(d, new_value)
-                if changed:
-                    n_written += 1
-                    if not silent:
-                        print(f"     ✅ wrote {d.cfg_key} = {new_value!r} to cfg")
-                elif not silent:
-                    print(
-                        f"     ⏭  cfg unchanged ({d.cfg_key} already = {new_value!r})"
-                    )
-            except SourceUnavailableError as exc:
-                if not silent:
-                    print(f"     ❌ could not write cfg: {exc}")
-                continue
-            except Exception as exc:  # noqa: BLE001
-                if not silent:
-                    print(f"     ❌ cfg write failed: {exc}")
-                continue
-            # Now push to TOS — best-effort, cfg write already succeeded
-            _do_push_tos(
-                station_id=station_id,
-                diff=d,
-                value=d.receiver_value or new_value,
-                tos_data=tos_data,
-                args=args,
-                silent=silent,
-            )
-            continue
-        if action == "set" and new_value is not None:
-            # Apply per-field cfg vocabulary mapping (e.g. TOS "SEPT POLARX5"
-            # → cfg "PolaRX5"). Identity for fields without an explicit map.
-            spec = field_specs_by_key.get(d.cfg_key)
-            if spec is not None:
-                try:
-                    mapped = spec.cfg_format(new_value)
-                except Exception as exc:  # noqa: BLE001
-                    if not silent:
-                        print(f"     ❌ cfg_format failed for {d.cfg_key}: {exc}")
-                    continue
-                if mapped is None:
-                    if not silent:
-                        print(
-                            f"     ❌ cfg_format normalised {new_value!r} to None — skipping"
-                        )
-                    continue
-                if mapped != new_value and not silent:
-                    print(
-                        f"     ↺ normalised {new_value!r} → {mapped!r} for cfg vocabulary"
-                    )
-                new_value = mapped
-            try:
-                changed = _apply_to_targets(d, new_value)
-                if changed:
-                    n_written += 1
-                    if not silent:
-                        print(f"     ✅ wrote {d.cfg_key} = {new_value!r}")
-                elif not silent:
-                    print(f"     ⏭  unchanged ({d.cfg_key} already = {new_value!r})")
-            except SourceUnavailableError as exc:
-                if not silent:
-                    print(f"     ❌ could not write: {exc}")
-            except Exception as exc:  # noqa: BLE001
-                if not silent:
-                    print(f"     ❌ write failed: {exc}")
 
     # --canonicalize: rewrite format-mismatch fields to receiver notation
     if canonicalize_on and fmt_mismatches:
@@ -1390,7 +1165,7 @@ def _reconcile_one(
                     print(f"     ≈ {d.cfg_key}: {d.cfg_raw!r} → {rx_val!r} (dry-run)")
             else:
                 try:
-                    changed = _apply_to_targets(d, rx_val, resolved_by="canonicalize")
+                    changed = targets.apply(d, rx_val, resolved_by="canonicalize")
                     if changed:
                         n_written += 1
                         if not silent:
@@ -1417,7 +1192,7 @@ def _reconcile_one(
                         print(f"     ~ {d.cfg_key}: remove {d.cfg_raw!r} (dry-run)")
                 else:
                     try:
-                        changed = _remove_from_targets(d, resolved_by="canonicalize")
+                        changed = targets.remove(d, resolved_by="canonicalize")
                         if changed:
                             n_written += 1
                             if not silent:
@@ -1446,7 +1221,7 @@ def _reconcile_one(
                     break
                 if choice in ("d", "delete", ""):
                     try:
-                        changed = _remove_from_targets(d)
+                        changed = targets.remove(d)
                         if changed:
                             n_written += 1
                             print(f"       ✅ removed {d.cfg_key}")
@@ -1497,7 +1272,7 @@ def _reconcile_one(
                 # the fleet-wide unknown-serial marker) — deliberately bypassing
                 # cfg_format: writing a value normalize() strips is the point.
                 try:
-                    changed = _apply_to_targets(d, "0000000000")
+                    changed = targets.apply(d, "0000000000")
                     if changed:
                         n_written += 1
                         print(f"       ✅ wrote {d.cfg_key} = '0000000000' to cfg")
@@ -1511,13 +1286,15 @@ def _reconcile_one(
                 assert cfg_val is not None  # guaranteed by _is_tos_fillable
                 if not silent:
                     print(f"       → push cfg value to TOS: {d.cfg_key} = {cfg_val!r}")
-                _do_push_tos(
+                reconcile_apply.push_field_value(
                     station_id=station_id,
                     diff=d,
                     value=cfg_val,
                     tos_data=tos_data,
-                    args=args,
-                    silent=silent,
+                    dry_run=policy.dry_run,
+                    no_transition=no_transition,
+                    effective_date=effective_date,
+                    emit=emit,
                 )
             else:
                 n_skipped += 1
