@@ -114,7 +114,7 @@ python3 scripts/dev/mutate_reconcile.py     # every mutation must be DETECTED
 PYTHONPATH=scripts/dev pytest tests/ -p no_network_plugin   # blocks outbound sockets
 ```
 
-It covers two policy surfaces that both write to production:
+It covers three surfaces that all write to production:
 
 * **reconcile** — `_reconcile_one` performs **live TOS writes** behind consent gates.
   The decision and write halves are split across `cfg/reconcile_policy.py` (intent),
@@ -123,6 +123,12 @@ It covers two policy surfaces that both write to production:
   a TTY.
 * **intake** — `cfg/intake_request.py` resolves `CLI > --from-file > default` for
   `cfg add-receiver`. Note the gates test FALSINESS: `--owner ""` takes the default.
+  `cfg/device_update_policy.py` carries the `--change`/`--correct` write intent, which
+  has **no safe default** — confusing them corrupts TOS history in opposite directions.
+* **the discrepancy log** — `compare_station` batches its audit writes into ONE
+  connection per station (§4.7). `log_discrepancies=False` gives a genuinely pure diff.
+  Per-field advisory locks are acquired in **sorted key order**; that ordering is what
+  makes holding several in one transaction deadlock-free, so do not "simplify" it.
 
 The harness breaks each guard in turn and asserts the test claiming to cover it goes
 red. It has already caught **five** tests that passed while proving nothing, and the
