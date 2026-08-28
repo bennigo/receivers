@@ -2284,6 +2284,27 @@ class TestSitelogDatedSeries:
         def get_contacts(self, entity_id):
             return []
 
+    #: Pre-fetched metadata handed to the renderer so these tests run OFFLINE.
+    #: Injecting `client` alone was never enough: the renderer under
+    #: build_site_log took the station id only and did its own TOS fetch, so
+    #: these two tests used to pass purely because they reached production TOS
+    #: at 10.254.0.12 — the network guard is what exposed it.
+    #:
+    #: `device_sessions=[]` is a station with no equipment history. That is
+    #: fine here: these tests assert the FILENAME series and the §0 Previous
+    #: Site Log chain, not §3 content.
+    STATION_META = {
+        "id_entity": 1,
+        "marker": "rhof",
+        "name": "Raufarhöfn",
+        "iers_domes_number": "10216M001",
+        "date_start": "2001-07-19T00:00:00",
+        "lat": 66.46,
+        "lon": -15.95,
+        "altitude": 78.8,
+        "device_history": [],
+    }
+
     def test_find_previous_site_log_orders_and_excludes_current(self, tmp_path):
         from receivers.dissemination.sitelogs import find_previous_site_log
 
@@ -2313,6 +2334,8 @@ class TestSitelogDatedSeries:
             client=self._Client(),
             custom_date="20240827",
             agency_resolver=resolver,
+            station_metadata=self.STATION_META,
+            device_sessions=[],
         )
         assert p1 is not None and p1.name == "rhof00isl_20240827.log"
         # IGS site logs are written latin-1 (site_log.py:63), deliberately —
@@ -2329,11 +2352,50 @@ class TestSitelogDatedSeries:
             client=self._Client(),
             custom_date="20241011",
             agency_resolver=resolver,
+            station_metadata=self.STATION_META,
+            device_sessions=[],
         )
         assert p2 is not None and p2.name == "rhof00isl_20241011.log"
         assert "Previous Site Log       : rhof00isl_20240827.log" in p2.read_text(
             encoding="latin-1"
         )
+
+    def test_site_log_rendering_touches_no_network(self, monkeypatch):
+        """The seam is honoured all the way down, not just at the top layer.
+
+        `client` was injectable while the renderer beneath it still fetched on
+        its own, so these tests passed by reaching production TOS. Asserting
+        the FILENAME is not enough to catch that coming back — a regression
+        would still produce the right name, just after a live round-trip. So
+        this makes any socket raise.
+        """
+        import socket
+
+        from receivers.dissemination.agencies import AgencyResolver
+        from receivers.dissemination.sitelogs import generate_site_log
+
+        def _boom(*a, **k):
+            raise AssertionError(
+                "site-log rendering opened a socket; the metadata seam was bypassed"
+            )
+
+        monkeypatch.setattr(socket.socket, "connect", _boom)
+        monkeypatch.setattr(socket.socket, "connect_ex", _boom)
+        monkeypatch.setattr(socket, "create_connection", _boom)
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            p = generate_site_log(
+                "RHOF",
+                Path(td),
+                client=self._Client(),
+                include_date=False,
+                agency_resolver=AgencyResolver.from_dict(TestAgencyResolver.RAW),
+                station_metadata=self.STATION_META,
+                device_sessions=[],
+            )
+        assert p is not None, "rendering failed offline"
 
     def test_plain_name_still_available(self, tmp_path):
         from receivers.dissemination.agencies import AgencyResolver
@@ -2345,6 +2407,8 @@ class TestSitelogDatedSeries:
             client=self._Client(),
             include_date=False,
             agency_resolver=AgencyResolver.from_dict(TestAgencyResolver.RAW),
+            station_metadata=self.STATION_META,
+            device_sessions=[],
         )
         assert p is not None and p.name == "RHOF00ISL.log"
 
