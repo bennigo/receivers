@@ -587,3 +587,96 @@ def test_firmware_and_software_in_one_call(parser):
     assert rc == 0
     codes = {c.args[1] for c in writer.transition_attribute_value.call_args_list}
     assert codes == {"firmware_version", "software_version"}
+
+
+# ── the vitjun gate: --correct is NOT a field event ─────────────────────────
+
+
+def test_correct_does_not_file_a_vitjun(parser):
+    """Fixing a wrong RECORD must not log a site visit that never happened.
+
+    `--change` is a real-world maintenance event and files a Fjarvitjun.
+    `--correct` says the world did not change — only the recorded value was
+    wrong — so a vitjun would fabricate a visit in TOS, the same class of
+    damage as picking the wrong write pattern.
+
+    Verified by mutation: dropping `not in_place` from the `want_vitjun`
+    conjunction left all 23 existing tests green.
+    """
+    args = parser.parse_args(
+        [
+            "cfg",
+            "update-device",
+            "--probe",
+            "192.168.3.1",
+            "--field",
+            "firmware_version",
+            "--correct",
+            "--date",
+            "2026-05-30",
+            "--no-dry-run",
+        ]
+    )
+    writer = _make_writer_mock()
+    with (
+        patch("receivers.cfg.device_probe.probe_receiver", return_value=_identity()),
+        patch("tostools.api.tos_writer.TOSWriter", return_value=writer),
+        patch("receivers.cli.cfg._create_update_vitjun") as vitjun,
+    ):
+        rc = cmd_cfg_update_device(args)
+    assert rc == 0
+    vitjun.assert_not_called()
+
+
+def test_change_does_file_a_vitjun(parser):
+    """The other half of the same rule — otherwise the guard above is vacuous."""
+    args = parser.parse_args(
+        [
+            "cfg",
+            "update-device",
+            "--probe",
+            "192.168.3.1",
+            "--field",
+            "firmware_version",
+            "--change",
+            "--date",
+            "2026-05-30",
+            "--no-dry-run",
+        ]
+    )
+    writer = _make_writer_mock()
+    with (
+        patch("receivers.cfg.device_probe.probe_receiver", return_value=_identity()),
+        patch("tostools.api.tos_writer.TOSWriter", return_value=writer),
+        patch("receivers.cli.cfg._create_update_vitjun") as vitjun,
+    ):
+        rc = cmd_cfg_update_device(args)
+    assert rc == 0
+    vitjun.assert_called_once()
+
+
+def test_no_vitjun_flag_suppresses_it_even_for_a_change(parser):
+    args = parser.parse_args(
+        [
+            "cfg",
+            "update-device",
+            "--probe",
+            "192.168.3.1",
+            "--field",
+            "firmware_version",
+            "--change",
+            "--date",
+            "2026-05-30",
+            "--no-dry-run",
+            "--no-vitjun",
+        ]
+    )
+    writer = _make_writer_mock()
+    with (
+        patch("receivers.cfg.device_probe.probe_receiver", return_value=_identity()),
+        patch("tostools.api.tos_writer.TOSWriter", return_value=writer),
+        patch("receivers.cli.cfg._create_update_vitjun") as vitjun,
+    ):
+        rc = cmd_cfg_update_device(args)
+    assert rc == 0
+    vitjun.assert_not_called()
