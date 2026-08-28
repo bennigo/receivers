@@ -38,11 +38,14 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 CLI = REPO / "src/receivers/cli/cfg.py"
 APPLY = REPO / "src/receivers/cfg/reconcile_apply.py"
 INTAKE = REPO / "src/receivers/cfg/intake_request.py"
+UPDPOL = REPO / "src/receivers/cfg/device_update_policy.py"
 TESTS = [
     "tests/test_reconcile_output_golden.py",
     "tests/test_reconcile_apply.py",
     "tests/test_intake_request.py",
     "tests/test_cli_add_receiver.py",
+    "tests/test_device_update_policy.py",
+    "tests/test_cli_update_device.py",
 ]
 #: `no_network_plugin` lives beside this file — the suite is known to reach live
 #: receivers and the live TOS API when a mock detaches.
@@ -277,6 +280,49 @@ MUTATIONS = [
         "            if file_val is not None:",
         "test_an_empty_string_in_the_file_is_ignored_too",
     ),
+    # --- cfg update-device: --change vs --correct, opposite-damage patterns ---
+    (
+        "U1  always Pattern 2 — a --correct typo fix invents an upgrade",
+        UPDPOL,
+        "        return self.intent is WriteIntent.CORRECT",
+        "        return False",
+        "test_correct_is_pattern_1 or test_correct_uses_in_place_upsert",
+    ),
+    (
+        "U2  always Pattern 1 — a real --change erases the upgrade history",
+        UPDPOL,
+        "        return self.intent is WriteIntent.CORRECT",
+        "        return True",
+        "test_change_is_pattern_2 or test_change_commit_uses_transition",
+    ),
+    (
+        "U3  argparse no longer REQUIRES an intent flag",
+        CLI,
+        "    intent = upd.add_mutually_exclusive_group(required=True)",
+        "    intent = upd.add_mutually_exclusive_group(required=False)",
+        "test_no_intent_flag_is_rejected",
+    ),
+    (
+        "U4  --correct also files a vitjun (a record fix logged as a site visit)",
+        UPDPOL,
+        "        return (not self.in_place) and (not self.no_vitjun) and bool(anything_changed)",
+        "        return (not self.no_vitjun) and bool(anything_changed)",
+        "test_correct_never_files_a_vitjun or test_correct_does_not_file_a_vitjun",
+    ),
+    (
+        "U6  an undeclared intent silently becomes --change instead of raising",
+        UPDPOL,
+        "        if change == correct:",
+        "        if False:",
+        "test_an_undeclared_intent_is_an_error_not_a_default",
+    ),
+    (
+        "U7  dry-run polarity inverted — a preview becomes a live TOS write",
+        UPDPOL,
+        '            dry_run=not bool(getattr(args, "no_dry_run", False)),',
+        '            dry_run=bool(getattr(args, "no_dry_run", False)),',
+        "test_dry_run_is_the_default_when_the_flag_is_absent",
+    ),
 ]
 
 
@@ -330,7 +376,12 @@ def _refuse_if_pytest_is_running():
 
 _refuse_if_pytest_is_running()
 
-ORIGINALS = {CLI: CLI.read_text(), APPLY: APPLY.read_text(), INTAKE: INTAKE.read_text()}
+ORIGINALS = {
+    CLI: CLI.read_text(),
+    APPLY: APPLY.read_text(),
+    INTAKE: INTAKE.read_text(),
+    UPDPOL: UPDPOL.read_text(),
+}
 
 
 def restore():

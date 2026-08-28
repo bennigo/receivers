@@ -3623,12 +3623,26 @@ def cmd_cfg_update_device(args) -> int:
         probe_receiver,
         resolve_station_probe,
     )
+    from ..cfg.device_update_policy import (
+        DeviceUpdatePolicy,
+        IntentNotDeclaredError,
+    )
 
     if not args.field:
         print(
             "❌ --field is required (e.g. --field firmware_version)",
             file=sys.stderr,
         )
+        return 2
+
+    # One resolved description of WHY this write is happening. argparse already
+    # requires exactly one of --change/--correct from a terminal; this makes the
+    # same true for every other caller, instead of silently defaulting to a
+    # history-recording transition.
+    try:
+        policy = DeviceUpdatePolicy.from_args(args)
+    except IntentNotDeclaredError as e:
+        print(f"❌ {e}", file=sys.stderr)
         return 2
 
     # ---- Resolve probe target (--probe HOST or --station SID) ------------
@@ -3652,7 +3666,7 @@ def cmd_cfg_update_device(args) -> int:
         print(f"❌ {e}", file=sys.stderr)
         return 2
 
-    when_iso = args.date or _date.today().isoformat()
+    when_iso = policy.date or _date.today().isoformat()
 
     # ---- Probe the receiver ---------------------------------------------
     print(f"Probing {args.probe} …")
@@ -3714,7 +3728,7 @@ def cmd_cfg_update_device(args) -> int:
         field_values[f] = val
 
     # ---- Find the device in TOS -----------------------------------------
-    dry_run = not args.no_dry_run
+    dry_run = policy.dry_run
     writer = TOSWriter(dry_run=dry_run)
 
     device = writer.find_device_by_serial(args.subtype, identity.serial)
@@ -3738,13 +3752,10 @@ def cmd_cfg_update_device(args) -> int:
         )
         return 1
 
-    # Exactly one of --change / --correct is set (argparse required mutex group).
-    in_place = bool(args.correct)
-    mode = (
-        "--correct → Pattern 1 (in-place upsert, no history)"
-        if in_place
-        else "--change → Pattern 2 (transition, records history)"
-    )
+    # Which of the two opposite-damage patterns this write is. Required,
+    # with no default — see cfg/device_update_policy.py.
+    in_place = policy.in_place
+    mode = policy.mode_label
     print(f"  TOS device: id_entity={id_entity}")
     print(f"  Mode: {mode}")
     print(f"  Date: {when_iso}")
@@ -3799,8 +3810,8 @@ def cmd_cfg_update_device(args) -> int:
     # remotely. Skipped for --correct (fixing a record is not a field event)
     # and for --no-vitjun. Mirrors the vitjun replace-modem/replace-receiver
     # write for a hardware swap, just remote-by-default.
-    want_vitjun = (not in_place) and (not args.no_vitjun) and bool(changed)
-    label = "Fjarvitjun" if args.visit_type == "remote" else "Staðarvitjun"
+    want_vitjun = policy.wants_vitjun(anything_changed=bool(changed))
+    label = policy.visit_label
     if want_vitjun and not dry_run:
         _create_update_vitjun(
             writer, id_entity, changed, field_values, when_iso, label, args
