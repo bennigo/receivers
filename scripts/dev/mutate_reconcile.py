@@ -39,6 +39,8 @@ CLI = REPO / "src/receivers/cli/cfg.py"
 APPLY = REPO / "src/receivers/cfg/reconcile_apply.py"
 INTAKE = REPO / "src/receivers/cfg/intake_request.py"
 UPDPOL = REPO / "src/receivers/cfg/device_update_policy.py"
+RECONC = REPO / "src/receivers/cfg/reconciler.py"
+DLOG = REPO / "src/receivers/cfg/discrepancy_log.py"
 TESTS = [
     "tests/test_reconcile_output_golden.py",
     "tests/test_reconcile_apply.py",
@@ -46,6 +48,8 @@ TESTS = [
     "tests/test_cli_add_receiver.py",
     "tests/test_device_update_policy.py",
     "tests/test_cli_update_device.py",
+    "tests/test_reconciler_log_sync.py",
+    "tests/test_cfg_reconciler.py",
 ]
 #: `no_network_plugin` lives beside this file — the suite is known to reach live
 #: receivers and the live TOS API when a mock detaches.
@@ -323,6 +327,84 @@ MUTATIONS = [
         '            dry_run=bool(getattr(args, "no_dry_run", False)),',
         "test_dry_run_is_the_default_when_the_flag_is_absent",
     ),
+    # --- §4.7 discrepancy-log sync: semantics AND connection cost ---
+    (
+        "L1  OK always auto-closes — an un-probed drift is silently discarded",
+        RECONC,
+        '            fully_observed = (\n                spec.receiver_extract is None or "receiver" in sources_frozen\n            ) and (spec.tos_extract is None or "tos" in sources_frozen)',
+        "            fully_observed = True",
+        "test_ok_does_NOT_auto_close",
+    ),
+    (
+        "L2  receiver half of fully_observed dropped",
+        RECONC,
+        '            fully_observed = (\n                spec.receiver_extract is None or "receiver" in sources_frozen\n            ) and (spec.tos_extract is None or "tos" in sources_frozen)',
+        '            fully_observed = spec.tos_extract is None or "tos" in sources_frozen',
+        "test_ok_does_NOT_auto_close_when_a_source_went_unprobed",
+    ),
+    (
+        "L3  tos half of fully_observed dropped",
+        RECONC,
+        '            fully_observed = (\n                spec.receiver_extract is None or "receiver" in sources_frozen\n            ) and (spec.tos_extract is None or "tos" in sources_frozen)',
+        '            fully_observed = spec.receiver_extract is None or "receiver" in sources_frozen',
+        "test_ok_does_NOT_auto_close_when_TOS_went_unqueried",
+    ),
+    (
+        "L5  NO_DATA also records a detection",
+        RECONC,
+        "        if verdict in (Verdict.MISSING, Verdict.CONFLICT, Verdict.SOURCES_DISAGREE):",
+        "        if verdict is not None:",
+        "test_no_data_writes_nothing",
+    ),
+    (
+        "L6  detected_by mislabelled — the audit trail loses who found it",
+        RECONC,
+        "            detected_by=_dlog.DETECTED_BY_RECONCILE,",
+        "            detected_by=_dlog.DETECTED_BY_HEALTH,",
+        "test_a_conflict_records_a_detection",
+    ),
+    (
+        "L8  the batch is skipped entirely",
+        RECONC,
+        "    if log_discrepancies and log_outcomes:",
+        "    if False and log_discrepancies and log_outcomes:",
+        "test_a_conflict_records_a_detection",
+    ),
+    (
+        "L7  per-field error isolation removed from the batch",
+        DLOG,
+        "                    except Exception as exc:  # noqa: BLE001",
+        "                    except ZeroDivisionError as exc:  # noqa: BLE001",
+        "test_a_field_whose_log_write_fails",
+    ),
+    (
+        "L9  lock order no longer deterministic — two batches can deadlock",
+        DLOG,
+        "                for entry in sorted(entries, key=lambda e: e.cfg_key):",
+        "                for entry in entries:",
+        "test_sync_station_takes_field_locks_in_sorted_order",
+    ),
+    (
+        "L10 the per-field advisory lock is dropped",
+        DLOG,
+        '                            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",',
+        '                            "SELECT 1 -- %s %s",',
+        "test_sync_station_takes_field_locks_in_sorted_order",
+    ),
+    (
+        "L11 a failed field is still counted as written",
+        DLOG,
+        "                            done += 1\n                    except Exception as exc:  # noqa: BLE001",
+        "                    except Exception as exc:  # noqa: BLE001",
+        "test_a_field_whose_log_write_fails",
+    ),
+    (
+        "L12 the log sync goes back inside the per-field loop",
+        RECONC,
+        "    if log_discrepancies and log_outcomes:\n        _sync_discrepancy_log(station_id, log_outcomes)",
+        "    if log_discrepancies:\n        for _o in log_outcomes:\n            _sync_discrepancy_log(station_id, [_o])",
+        "test_the_log_sync_opens_ONE_connection_per_station",
+    ),
 ]
 
 
@@ -381,6 +463,8 @@ ORIGINALS = {
     APPLY: APPLY.read_text(),
     INTAKE: INTAKE.read_text(),
     UPDPOL: UPDPOL.read_text(),
+    RECONC: RECONC.read_text(),
+    DLOG: DLOG.read_text(),
 }
 
 
