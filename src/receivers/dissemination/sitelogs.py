@@ -118,6 +118,8 @@ def _render_sitelog(
     custom_date: Optional[str],
     agency_resolver: Any,
     loglevel: int,
+    station_metadata: Any = None,
+    device_sessions: Any = None,
 ) -> Optional[tuple[str, Path]]:
     """Fetch TOS + render the site-log content and resolve its dated filename,
     WITHOUT writing. Returns ``(content, out_path)`` or None on any TOS/render
@@ -163,6 +165,8 @@ def _render_sitelog(
             monument_number=mon,
             country_code=country_code,
             loglevel=loglevel,
+            station_metadata=station_metadata,
+            device_sessions=device_sessions,
         )
     except Exception as exc:  # noqa: BLE001 - renderer/TOS failure ⇒ skip (logged)
         logger.warning("site log: renderer failed for %s: %s", sid, exc)
@@ -206,6 +210,8 @@ def generate_site_log(
     custom_date: Optional[str] = None,
     agency_resolver: Any = None,
     loglevel: int = logging.WARNING,
+    station_metadata: Any = None,
+    device_sessions: Any = None,
 ) -> Optional[Path]:
     """Render the IGS site log for ``station`` from TOS into ``out_dir``.
 
@@ -216,6 +222,21 @@ def generate_site_log(
     in ``out_dir``; pass ``include_date=False`` for the plain ``RHOF00ISL.log``.
     ``agency_resolver`` (default: load agencies.yaml) drives §11/§12/§13 via
     :func:`resolve_sitelog_agencies`.
+
+    ``station_metadata`` / ``device_sessions`` are pre-fetched TOS metadata,
+    threaded to the renderer. Both default to None, which keeps the live fetch.
+    Injecting ``client`` alone was NOT enough to run offline: the renderer
+    under ``build_site_log`` was called with the station id only and did its
+    own fetch, so these tests passed solely because they reached production TOS.
+
+    **Do not pass the ``meta`` this function already fetches.** It comes from
+    ``TOSClient.get_complete_station_metadata``, whose device sessions are
+    composed with the *narrow* attribute list; the renderer composes its own
+    with ``SITELOG_GPS_ATTRIBUTE_CODES`` (the wide one — GAL/BDS/QZSS/SBAS/IRN
+    plus azimuth). Substituting one for the other would silently drop
+    constellation sub-periods from §3 of a log that gets PUBLISHED to M3G.
+    Establishing that the two are interchangeable needs the site-log oracle,
+    not an assumption.
 
     Always writes (no change-gate) — use :func:`generate_site_log_if_changed` to
     write only when the station content actually changed.
@@ -230,6 +251,8 @@ def generate_site_log(
         custom_date=custom_date,
         agency_resolver=agency_resolver,
         loglevel=loglevel,
+        station_metadata=station_metadata,
+        device_sessions=device_sessions,
     )
     if rendered is None:
         return None
@@ -268,6 +291,8 @@ def generate_site_log_if_changed(
     custom_date: Optional[str] = None,
     agency_resolver: Any = None,
     loglevel: int = logging.WARNING,
+    station_metadata: Any = None,
+    device_sessions: Any = None,
 ) -> Optional[SitelogGateResult]:
     """Render the site log and write a new dated file ONLY when the station
     content changed vs the latest committed log.
@@ -290,6 +315,8 @@ def generate_site_log_if_changed(
         custom_date=custom_date,
         agency_resolver=agency_resolver,
         loglevel=loglevel,
+        station_metadata=station_metadata,
+        device_sessions=device_sessions,
     )
     if rendered is None:
         return None

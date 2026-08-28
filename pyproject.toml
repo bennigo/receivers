@@ -113,7 +113,13 @@ dependencies = [
     #   * deterministic marker-typo verdict for MARKER NAME mismatches
     #     (918e871) + the current device session merged into the rinex verdict
     #     (504e2ab), so the marker check uses the receiver serial.
-    "tostools @ git+https://github.com/bgo-gnss/tostools@bdf093c",
+    #
+    # @0e57e3e — build_site_log threads pre-fetched metadata (station_metadata /
+    # device_sessions) down to the renderer. Without it `client` was injectable
+    # at one layer while the layer below still did its own live TOS fetch, so
+    # receivers' site-log tests passed ONLY by reaching production TOS. Also
+    # carries a1fe59c (marker lookup via /entity/search/, not basic_search).
+    "tostools @ git+https://github.com/bgo-gnss/tostools@0e57e3e",
     # gps_parser main @257a2ee: passive-station schema (2c5b428) + canonical
     # module-level parse_station_role (257a2ee) — the API config_utils imports.
     "gps-parser @ git+https://github.com/bgo-gnss/gps_parser@257a2ee",
