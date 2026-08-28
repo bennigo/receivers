@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 from .field_manifest import FIELDS, FieldSpec
 
@@ -215,6 +215,39 @@ def _compute_verdict(
     return Verdict.CONFLICT
 
 
+def _sync_discrepancy_log(
+    station_id: str,
+    outcomes: List[
+        Tuple[str, Optional[str], Optional[str], Optional[str], Optional[str]]
+    ],
+) -> None:
+    """Write a station's collected log outcomes in one batch.
+
+    Import is function-local and the whole thing is best-effort: the audit log
+    is a side record, and a database being unreachable must never fail a
+    comparison the caller asked for.
+    """
+    try:
+        from . import discrepancy_log as _dlog  # type: ignore[attr-defined]
+
+        _dlog.sync_station(
+            station_id,
+            [
+                _dlog.LogSyncEntry(
+                    cfg_key=key,
+                    verdict=verdict,
+                    cfg_value=cfg_v,
+                    receiver_value=rx_v,
+                    tos_value=tos_v,
+                )
+                for key, verdict, cfg_v, rx_v, tos_v in outcomes
+            ],
+            detected_by=_dlog.DETECTED_BY_RECONCILE,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[%s] discrepancy_log sync failed: %s", station_id, exc)
+
+
 def compare_station(
     station_id: str,
     station_config: Dict[str, Any],
@@ -223,6 +256,7 @@ def compare_station(
     fields: Optional[Iterable[str]] = None,
     queried_sources: Optional[Iterable[str]] = None,
     field_specs: Optional[List[FieldSpec]] = None,
+    log_discrepancies: bool = True,
 ) -> List[FieldDiff]:
     """Build :class:`FieldDiff` records for one station.
 
@@ -262,6 +296,11 @@ def compare_station(
         wanted = source_specs
 
     diffs: List[FieldDiff] = []
+    # (cfg_key, verdict_or_None, cfg, receiver, tos) — verdict None = "close the
+    # open row". Accumulated here and written once after the loop; see §4.7.
+    log_outcomes: List[
+        Tuple[str, Optional[str], Optional[str], Optional[str], Optional[str]]
+    ] = []
     for spec in wanted:
         cfg_raw = _read_cfg_value(station_config, spec)
         cfg_val = spec.normalize(cfg_raw)
@@ -326,43 +365,23 @@ def compare_station(
                     exc,
                 )
 
-        # Sync the discrepancy log with what we just observed:
-        #   * actionable verdicts (MISSING/CONFLICT/SOURCES_DISAGREE) → record/refresh open row
-        #   * OK → only auto-close when *every* source that could supply this
-        #     field was actually queried this run, otherwise we'd close a row
-        #     we have no business closing (e.g. cfg=AAA, TOS=AAA, but a stale
-        #     receiver=BBB drift is still real and we just didn't probe).
+        # Collect this field's log outcome; the whole station is written in ONE
+        # pass after the loop. See architecture review §4.7 for why this is no
+        # longer done here — it used to open a connection per field.
+        #   * actionable verdicts (MISSING/CONFLICT/SOURCES_DISAGREE) → open row
+        #   * OK → auto-close ONLY when *every* source that could supply this
+        #     field was actually queried, otherwise we'd close a row we have no
+        #     business closing (e.g. cfg=AAA, TOS=AAA, but a stale receiver=BBB
+        #     drift is still real and we just didn't probe).
         #   * NO_DATA / NOT_QUERYABLE → leave existing rows untouched.
-        try:
-            from . import discrepancy_log as _dlog  # type: ignore[attr-defined]
-
-            if verdict in (
-                Verdict.MISSING,
-                Verdict.CONFLICT,
-                Verdict.SOURCES_DISAGREE,
-            ):
-                _dlog.record_detection(
-                    station_id,
-                    spec.cfg_key,
-                    cfg_value=cfg_val,
-                    receiver_value=rx_val,
-                    tos_value=tos_val,
-                    verdict=verdict.value,
-                    detected_by=_dlog.DETECTED_BY_RECONCILE,
-                )
-            elif verdict == Verdict.OK:
-                fully_observed = (
-                    spec.receiver_extract is None or "receiver" in sources_frozen
-                ) and (spec.tos_extract is None or "tos" in sources_frozen)
-                if fully_observed:
-                    _dlog.auto_resolve_if_open(station_id, spec.cfg_key)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug(
-                "[%s] discrepancy_log sync failed for %s: %s",
-                station_id,
-                spec.cfg_key,
-                exc,
-            )
+        if verdict in (Verdict.MISSING, Verdict.CONFLICT, Verdict.SOURCES_DISAGREE):
+            log_outcomes.append((spec.cfg_key, verdict.value, cfg_val, rx_val, tos_val))
+        elif verdict == Verdict.OK:
+            fully_observed = (
+                spec.receiver_extract is None or "receiver" in sources_frozen
+            ) and (spec.tos_extract is None or "tos" in sources_frozen)
+            if fully_observed:
+                log_outcomes.append((spec.cfg_key, None, None, None, None))
 
         diffs.append(
             FieldDiff(
@@ -379,6 +398,9 @@ def compare_station(
                 tos_raw=tos_raw,
             )
         )
+    if log_discrepancies and log_outcomes:
+        _sync_discrepancy_log(station_id, log_outcomes)
+
     return diffs
 
 

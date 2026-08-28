@@ -138,6 +138,115 @@ _ALL_COLS = (
 # ---------------------------------------------------------------------------
 
 
+def _detect_on_cursor(
+    cur: Any,
+    station_id: str,
+    cfg_key: str,
+    *,
+    cfg_value: Optional[str],
+    receiver_value: Optional[str],
+    tos_value: Optional[str],
+    verdict: str,
+    detected_by: str,
+) -> Optional[int]:
+    """The record-a-detection SQL, on a caller-supplied cursor.
+
+    Split out so a single-field caller and a whole-station batch run the exact
+    same statements in the same order — the alternative is two copies of a
+    supersede-then-insert sequence, which is how audit logic drifts.
+
+    The caller owns the transaction AND the advisory lock.
+    """
+    cur.execute(
+        """
+        SELECT id, cfg_value, receiver_value, tos_value, verdict
+        FROM cfg_discrepancy
+        WHERE station_id = %s AND cfg_key = %s AND resolved_at IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (station_id, cfg_key),
+    )
+    existing = cur.fetchone()
+
+    if existing is not None:
+        existing_id, e_cfg, e_rx, e_tos, e_verdict = existing
+        if (e_cfg, e_rx, e_tos, e_verdict) == (
+            cfg_value,
+            receiver_value,
+            tos_value,
+            verdict,
+        ):
+            return int(existing_id)
+
+        # Keyed on the natural key (station_id, cfg_key, still-open), NOT
+        # ``existing_id``: this connection may fan out to the pgdev mirror,
+        # whose serial ids are assigned independently — an id-keyed UPDATE
+        # would resolve an unrelated discrepancy there. Same predicate as
+        # ``record_resolution``.
+        cur.execute(
+            """
+            UPDATE cfg_discrepancy
+            SET resolved_at = NOW(),
+                resolved_by = %s,
+                resolved_action = %s,
+                resolution_note = 'Detection values changed'
+            WHERE station_id = %s
+              AND cfg_key = %s
+              AND resolved_at IS NULL
+            """,
+            (detected_by, ACTION_SUPERSEDED, station_id, cfg_key),
+        )
+
+    cur.execute(
+        """
+        INSERT INTO cfg_discrepancy
+          (station_id, cfg_key, cfg_value, receiver_value,
+           tos_value, verdict, detected_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            station_id,
+            cfg_key,
+            cfg_value,
+            receiver_value,
+            tos_value,
+            verdict,
+            detected_by,
+        ),
+    )
+    return int(cur.fetchone()[0])
+
+
+def _resolve_on_cursor(
+    cur: Any,
+    station_id: str,
+    cfg_key: str,
+    *,
+    action: str,
+    resolved_value: Optional[str],
+    resolved_by: str,
+    note: Optional[str],
+) -> bool:
+    """The mark-resolved SQL, on a caller-supplied cursor."""
+    cur.execute(
+        """
+        UPDATE cfg_discrepancy
+        SET resolved_at = NOW(),
+            resolved_by = %s,
+            resolved_action = %s,
+            resolved_value = %s,
+            resolution_note = COALESCE(%s, resolution_note)
+        WHERE station_id = %s
+          AND cfg_key = %s
+          AND resolved_at IS NULL
+        """,
+        (resolved_by, action, resolved_value, note, station_id, cfg_key),
+    )
+    return cur.rowcount > 0
+
+
 def record_detection(
     station_id: str,
     cfg_key: str,
@@ -180,67 +289,16 @@ def record_detection(
                     "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
                     (station_id, cfg_key),
                 )
-                cur.execute(
-                    """
-                    SELECT id, cfg_value, receiver_value, tos_value, verdict
-                    FROM cfg_discrepancy
-                    WHERE station_id = %s AND cfg_key = %s AND resolved_at IS NULL
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """,
-                    (station_id, cfg_key),
+                return _detect_on_cursor(
+                    cur,
+                    station_id,
+                    cfg_key,
+                    cfg_value=cfg_value,
+                    receiver_value=receiver_value,
+                    tos_value=tos_value,
+                    verdict=verdict,
+                    detected_by=detected_by,
                 )
-                existing = cur.fetchone()
-
-                if existing is not None:
-                    existing_id, e_cfg, e_rx, e_tos, e_verdict = existing
-                    if (e_cfg, e_rx, e_tos, e_verdict) == (
-                        cfg_value,
-                        receiver_value,
-                        tos_value,
-                        verdict,
-                    ):
-                        return int(existing_id)
-
-                    # Keyed on the natural key (station_id, cfg_key, still-open),
-                    # NOT ``existing_id``: this connection may fan out to the
-                    # pgdev mirror, whose serial ids are assigned independently —
-                    # an id-keyed UPDATE would resolve an unrelated discrepancy
-                    # there. Same predicate as ``record_resolution``.
-                    cur.execute(
-                        """
-                        UPDATE cfg_discrepancy
-                        SET resolved_at = NOW(),
-                            resolved_by = %s,
-                            resolved_action = %s,
-                            resolution_note = 'Detection values changed'
-                        WHERE station_id = %s
-                          AND cfg_key = %s
-                          AND resolved_at IS NULL
-                        """,
-                        (detected_by, ACTION_SUPERSEDED, station_id, cfg_key),
-                    )
-
-                cur.execute(
-                    """
-                    INSERT INTO cfg_discrepancy
-                      (station_id, cfg_key, cfg_value, receiver_value,
-                       tos_value, verdict, detected_by)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                    """,
-                    (
-                        station_id,
-                        cfg_key,
-                        cfg_value,
-                        receiver_value,
-                        tos_value,
-                        verdict,
-                        detected_by,
-                    ),
-                )
-                new_id = cur.fetchone()[0]
-                return int(new_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "[%s] failed to record cfg discrepancy for %s: %s",
@@ -275,21 +333,15 @@ def record_resolution(
     try:
         with DatabaseConnectionFactory.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE cfg_discrepancy
-                    SET resolved_at = NOW(),
-                        resolved_by = %s,
-                        resolved_action = %s,
-                        resolved_value = %s,
-                        resolution_note = COALESCE(%s, resolution_note)
-                    WHERE station_id = %s
-                      AND cfg_key = %s
-                      AND resolved_at IS NULL
-                    """,
-                    (by, action, resolved_value, note, station_id, cfg_key),
+                return _resolve_on_cursor(
+                    cur,
+                    station_id,
+                    cfg_key,
+                    action=action,
+                    resolved_value=resolved_value,
+                    resolved_by=by,
+                    note=note,
                 )
-                return cur.rowcount > 0
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "[%s] failed to record cfg resolution for %s: %s",
@@ -322,6 +374,107 @@ def auto_resolve_if_open(
         resolved_by="auto",
         note=note,
     )
+
+
+@dataclass(frozen=True)
+class LogSyncEntry:
+    """One field's outcome, ready to be written to the log.
+
+    ``verdict is None`` means "close any open row" (the field came back OK and
+    every source that could speak was asked); otherwise it is a detection.
+    """
+
+    cfg_key: str
+    verdict: Optional[str] = None
+    cfg_value: Optional[str] = None
+    receiver_value: Optional[str] = None
+    tos_value: Optional[str] = None
+
+
+def sync_station(
+    station_id: str,
+    entries: Sequence[LogSyncEntry],
+    *,
+    detected_by: str,
+    auto_resolve_note: str = "Values converged without operator action",
+) -> int:
+    """Write a whole station's log outcomes over ONE connection.
+
+    Architecture review §4.7: this used to run inside ``compare_station``'s
+    per-field loop, so every field opened its own connection and took its own
+    advisory lock. ``reconcile --all`` is ~173 stations x ~15 fields — roughly
+    2,600 sequential checkouts against a host with documented
+    ``max_connections=100`` exhaustion.
+
+    **Locking.** Field locks are still taken per ``(station, cfg_key)`` — NOT
+    replaced by one station-wide lock — because a station lock uses a different
+    key and would therefore no longer serialise against a concurrent per-field
+    :func:`record_detection` from the health probe, which is the exact race the
+    single-field docstring promises to handle. They are acquired in **sorted
+    key order** so two batches can never deadlock; a single-field caller holds
+    only one lock at a time and so can never be half of a cycle either.
+
+    **Error isolation is per field**, matching the loop this replaces: one bad
+    field loses its own row and nothing else. A failure to connect at all loses
+    the station, which is what the old code did too (every field failed
+    identically).
+
+    Returns the number of entries written or closed.
+    """
+    if not entries:
+        return 0
+
+    try:
+        from ..health.database_factory import DatabaseConnectionFactory
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("database_factory unavailable: %s", exc)
+        return 0
+
+    # NB: resolved_by is the literal "auto", matching auto_resolve_if_open —
+    # the point of that value is that no operator did this.
+    done = 0
+    try:
+        with DatabaseConnectionFactory.connection() as conn:
+            with conn.cursor() as cur:
+                for entry in sorted(entries, key=lambda e: e.cfg_key):
+                    try:
+                        cur.execute(
+                            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                            (station_id, entry.cfg_key),
+                        )
+                        if entry.verdict is None:
+                            if _resolve_on_cursor(
+                                cur,
+                                station_id,
+                                entry.cfg_key,
+                                action=ACTION_AUTO_RESOLVED,
+                                resolved_value=None,
+                                resolved_by="auto",
+                                note=auto_resolve_note,
+                            ):
+                                done += 1
+                        else:
+                            _detect_on_cursor(
+                                cur,
+                                station_id,
+                                entry.cfg_key,
+                                cfg_value=entry.cfg_value,
+                                receiver_value=entry.receiver_value,
+                                tos_value=entry.tos_value,
+                                verdict=entry.verdict,
+                                detected_by=detected_by,
+                            )
+                            done += 1
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug(
+                            "[%s] discrepancy_log sync failed for %s: %s",
+                            station_id,
+                            entry.cfg_key,
+                            exc,
+                        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[%s] discrepancy_log batch sync failed: %s", station_id, exc)
+    return done
 
 
 # ---------------------------------------------------------------------------
