@@ -119,7 +119,32 @@ dependencies = [
     # at one layer while the layer below still did its own live TOS fetch, so
     # receivers' site-log tests passed ONLY by reaching production TOS. Also
     # carries a1fe59c (marker lookup via /entity/search/, not basic_search).
-    "tostools @ git+https://github.com/bgo-gnss/tostools@0e57e3e",
+    #
+    # @6e0e259 (2026-08-29) — F2 COMPLETE: the legacy/top-level fork is closed,
+    # so `gps_metadata_functions` no longer has two implementations of anything.
+    # Low risk FOR THIS PACKAGE and worth bumping anyway:
+    #   * THE PUBLISHED SITE LOG IS BYTE-IDENTICAL, and that is proven rather
+    #     than asserted — `tests/test_sitelog_oracle.py` byte-locks
+    #     `build_site_log` (the entry point this package's
+    #     `dissemination/sitelogs.py` calls) for RHOF/AUST/ISAK/VMEY plus the
+    #     M3G publish argument shape, and it passes unchanged across F2. It
+    #     also covers the 0e57e3e threading seam above, which nothing tested.
+    #   * top-level `site_log` / `print_station_info` are now delegators onto
+    #     the live legacy copies (−814 L). Neither had any caller here.
+    #   * `print_station_history` unified the OTHER way — its live copy was the
+    #     broken one: `tos PrintTOS <sid> --format table` exited 1 for 8/8
+    #     stations. Not a path this package takes, but it is a real tosGPS fix
+    #     for anyone on rek-d01. Contact-table language is now `--lang {is,en}`,
+    #     defaulting to the pre-existing Icelandic.
+    #   * `device_attribute_history` no longer iterates an unordered set, which
+    #     made its output PYTHONHASHSEED-dependent. This one DOES touch shared
+    #     ground — that function feeds `cfg reconcile` and the era-resolution
+    #     chain — but published site logs were provably unaffected (that
+    #     renderer sorts sessions itself), which the oracle above confirms.
+    #   * `scripts/export_station_equipment.py` un-broken (F1 collateral).
+    # Verified cross-package before bumping: receivers 3383 passed / 0 failed
+    # against this SHA via the editable mamba env.
+    "tostools @ git+https://github.com/bgo-gnss/tostools@6e0e259",
     # gps_parser main @257a2ee: passive-station schema (2c5b428) + canonical
     # module-level parse_station_role (257a2ee) — the API config_utils imports.
     "gps-parser @ git+https://github.com/bgo-gnss/gps_parser@257a2ee",
