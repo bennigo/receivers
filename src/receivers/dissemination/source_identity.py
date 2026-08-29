@@ -98,6 +98,14 @@ def check_source_identity(
     if distance <= max_distance_m:
         return SourceIdentityVerdict(True, "", distance)
 
+    # (0,0,0) is the converter's "no position metadata" placeholder — a MISSING
+    # position, not "recorded elsewhere". Pass it so the header-fill path can
+    # supply the TOS position, instead of refusing the file as another site's.
+    if math.dist(file_xyz, (0.0, 0.0, 0.0)) < 1.0:
+        return SourceIdentityVerdict(
+            True, "source position is the (0,0,0) placeholder — header-fill will set it", 0.0
+        )
+
     marker = str(session.get("marker") or "").upper() or "<station>"
     message = (
         f"source was recorded {distance / 1000:.1f} km from {marker}'s surveyed "
