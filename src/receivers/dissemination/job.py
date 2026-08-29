@@ -242,6 +242,43 @@ def _index_pushed(epos_conn: Any, target: Any, result: Any) -> Optional[int]:
     return None
 
 
+def _failure_reason(exc: BaseException) -> str:
+    """Short, stable reason string for a run failure (first line, truncated)."""
+    text = str(exc).strip()
+    msg = text.splitlines()[0] if text else type(exc).__name__
+    return msg[:120]
+
+
+def _emit_failure_digest(summary: dict) -> None:
+    """Print a post-run digest: failed/skipped dates grouped by reason.
+
+    One-glance answer to "is this run trustworthy, and if not, which periods
+    must I re-disseminate?" — instead of discovering gaps ad hoc after the fact.
+    """
+    from collections import defaultdict
+
+    failures = summary.get("failures") or []
+    skips = summary.get("skips") or []
+    if not failures and not skips:
+        print("   🟢 digest: no failures, no skips — clean")
+        return
+
+    def _group(rows: list) -> None:
+        groups = defaultdict(list)
+        for station, dstr, reason in rows:
+            groups[reason or "unknown"].append((station, dstr))
+        for reason, items in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+            dts = sorted(d for _, d in items)
+            span = f"{dts[0]}..{dts[-1]}" if len(dts) > 1 else dts[0]
+            stations = ",".join(sorted({s for s, _ in items}))
+            print(f"      · {reason} — {len(items)}× [{span}] ({stations})")
+
+    print(f"\n   ❌ FAILED {len(failures)} file(s) — re-disseminate these periods:")
+    _group(failures)
+    print(f"   ⏭️  SKIPPED {len(skips)} file(s) (informational):")
+    _group(skips)
+
+
 def run_epos_disseminate_job(
     config_path: Optional[str] = None,
     days_back: int = 3,
@@ -256,7 +293,7 @@ def run_epos_disseminate_job(
     force: bool = False,
     engine_factory: Any = None,
     epos_conn_factory: Any = None,
-) -> dict[str, int]:
+) -> dict:
     """Disseminate a date window for every EPOS station. Never raises.
 
     Dates: explicit ``dates`` list when given (the range/--dates driver — a
@@ -288,6 +325,8 @@ def run_epos_disseminate_job(
         "skipped": 0,
         "failed": 0,
         "superseded": 0,
+        "failures": [],
+        "skips": [],
     }
     try:
         targets = load_dissemination_config(Path(config_path) if config_path else None)
@@ -396,7 +435,7 @@ def run_epos_disseminate_job(
         """
         from ..utils.net_push import BatchPush
 
-        local = {"pushed": 0, "cached": 0, "skipped": 0, "failed": 0, "superseded": 0}
+        local = {"pushed": 0, "cached": 0, "skipped": 0, "failed": 0, "superseded": 0, "failures": [], "skips": []}
         engine = engine_factory(target)
         try:
             conn = epos_conn_factory()
@@ -476,14 +515,24 @@ def run_epos_disseminate_job(
                             result = engine.run_one(station, d, product=run_args[0])
                         else:
                             result = engine.run_one(station, d)
-                    except Exception:
+                    except Exception as exc:  # noqa: BLE001 — logged + counted
                         logger.exception(
                             "epos-disseminate %s %s: run failed", station, d
                         )
                         local["failed"] += 1
+                        local["failures"].append(
+                            (station, d.isoformat(), _failure_reason(exc))
+                        )
                         continue
                     if not result.ok:
                         local["skipped"] += 1
+                        local["skips"].append(
+                            (
+                                station,
+                                d.isoformat(),
+                                str(getattr(result, "message", ""))[:120],
+                            )
+                        )
                         logger.info(
                             "epos-disseminate %s %s skipped: %s",
                             station,
@@ -580,6 +629,7 @@ def run_epos_disseminate_job(
         summary["failed"],
         summary["superseded"],
     )
+    _emit_failure_digest(summary)
     return summary
 
 

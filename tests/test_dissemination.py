@@ -1064,6 +1064,8 @@ targets:
             "skipped": 2,
             "failed": 0,
             "superseded": 0,
+            "failures": [],
+            "skips": [("AKUR", "2026-06-27", ""), ("AKUR", "2026-06-28", "")],
         }
         assert len(eng.calls) == 6  # 3 stations x 2 days
 
