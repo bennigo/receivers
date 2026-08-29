@@ -103,7 +103,9 @@ def check_source_identity(
     # supply the TOS position, instead of refusing the file as another site's.
     if math.dist(file_xyz, (0.0, 0.0, 0.0)) < 1.0:
         return SourceIdentityVerdict(
-            True, "source position is the (0,0,0) placeholder — header-fill will set it", 0.0
+            True,
+            "source position is the (0,0,0) placeholder — header-fill will set it",
+            0.0,
         )
 
     marker = str(session.get("marker") or "").upper() or "<station>"

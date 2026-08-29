@@ -435,7 +435,15 @@ def run_epos_disseminate_job(
         """
         from ..utils.net_push import BatchPush
 
-        local = {"pushed": 0, "cached": 0, "skipped": 0, "failed": 0, "superseded": 0, "failures": [], "skips": []}
+        local = {
+            "pushed": 0,
+            "cached": 0,
+            "skipped": 0,
+            "failed": 0,
+            "superseded": 0,
+            "failures": [],
+            "skips": [],
+        }
         engine = engine_factory(target)
         try:
             conn = epos_conn_factory()
