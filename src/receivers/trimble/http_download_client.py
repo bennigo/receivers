@@ -131,6 +131,11 @@ class NetR9HTTPDownloader:
 
         self.logger = logging.getLogger(f"{__name__}.{self.station_id}")
 
+        # Retained so the mid-download reconnect can rebuild the client. Without
+        # it that path had to guess at host/port/credential attributes that were
+        # never stored, and died in its own error handler.
+        self.station_config = station_config
+
         # Initialize HTTP client
         self.http_client = TrimbleHTTPClient(station_id, station_config)
 
@@ -663,16 +668,14 @@ class NetR9HTTPDownloader:
                 if any(pattern in error_msg for pattern in timeout_patterns):
                     self.logger.info("🔄 Reconnecting HTTP client...")
                     try:
-                        # Reinitialize the HTTP client to get fresh session
-                        from .http_client import TrimbleHTTPClient
-
+                        # Reinitialize the HTTP client to get fresh session.
+                        # Must match TrimbleHTTPClient's real 2-arg signature —
+                        # this called a 6-arg form that has not existed for a
+                        # long time, so every reconnect raised AttributeError on
+                        # the first bogus attribute and none ever succeeded.
                         self.http_client = TrimbleHTTPClient(
                             self.station_id,
-                            self.ip,
-                            self.http_port,
-                            self.username,
-                            self.password,
-                            self.logger,
+                            self.station_config,
                         )
                         self.logger.info("✅ HTTP client reconnected")
                     except Exception as reconnect_error:
