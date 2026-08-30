@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 #: RINEX-2 header label column (0-indexed): data in [0:60], label in [60:80].
 _LABEL_COL = 60
 
+#: Sentinel returned by :func:`_refill` meaning "drop this line entirely".
+#: Mirrors the ``STRIP_LINE`` sentinel the archive converter uses for the same
+#: MARKER NUMBER policy — the line is removed, not blanked.
+_STRIP_LINE = object()
+
 # WGS84 / ITRF ellipsoid constants for geodetic→ECEF.
 _WGS84_A = 6378137.0
 _WGS84_E2 = 6.69437999014e-3
@@ -92,6 +97,18 @@ def _fmt_marker(value: str) -> str:
     return f"{value:<60}"
 
 
+def _domes(value: Optional[str]) -> Optional[str]:
+    """Return *value* if it is an IERS DOMES, else ``None`` (= skip the line).
+
+    Applied at the point of use rather than only where the metadata is built, so
+    no caller can smuggle a non-DOMES into MARKER NUMBER. Delegates to tostools'
+    single copy of the rule — deliberately not a local regex.
+    """
+    from tostools.rinex.domes import domes_or_skip
+
+    return domes_or_skip(value) or None
+
+
 def _fmt_observer_agency(observer: str, agency: str) -> str:
     return f"{observer:<20}{agency:<40}"
 
@@ -130,12 +147,20 @@ def fill_skeleton(template: str, meta: SkeletonMetadata) -> str:
     Lines whose TOS value is ``None`` keep the template's existing data. Static
     lines (COMMENT, APPROX POSITION XYZ, WAVELENGTH FACT, END OF HEADER, …) are
     always preserved. Label columns (61-80) are never altered.
+
+    **MARKER NUMBER is the one exception to "None keeps the existing data".** It
+    carries the IERS DOMES and nothing else, so a stored non-DOMES value must be
+    actively *removed* rather than preserved — otherwise a skeleton written with
+    the 4-char station id keeps re-emitting it forever, which is exactly how
+    GONH/HRIC/SEY9 published ``MARKER NUMBER = <station id>`` every hour.
     """
     out: List[str] = []
     for raw in template.splitlines():
         data = raw[:_LABEL_COL]
         label = raw[_LABEL_COL:].rstrip()
         new_data = _refill(label.strip(), data, meta)
+        if new_data is _STRIP_LINE:
+            continue
         out.append(f"{new_data:<{_LABEL_COL}}{label}".rstrip())
     text = "\n".join(out)
     return text + "\n" if template.endswith("\n") else text
@@ -145,8 +170,11 @@ def _refill(label: str, data: str, meta: SkeletonMetadata) -> str:
     """Rebuild the data portion for an equipment line, else keep ``data``."""
     if label == "MARKER NAME" and meta.marker_name:
         return _fmt_marker(meta.marker_name)
-    if label == "MARKER NUMBER" and meta.marker_number:
-        return _fmt_marker(meta.marker_number)
+    if label == "MARKER NUMBER":
+        # No truthiness fallthrough here: a non-DOMES means STRIP, never "keep
+        # whatever the template had". See fill_skeleton's docstring.
+        domes = _domes(meta.marker_number)
+        return _fmt_marker(domes) if domes else _STRIP_LINE
     if label == "OBSERVER / AGENCY" and (meta.observer or meta.agency):
         return _fmt_observer_agency(meta.observer or "", meta.agency or "")
     if label == "REC # / TYPE / VERS" and (
@@ -212,7 +240,14 @@ def build_skeleton(
         (_fmt_version(version), "RINEX VERSION / TYPE"),
         (comment, "COMMENT"),
         (_fmt_marker(meta.marker_name or ""), "MARKER NAME"),
-        (_fmt_marker(meta.marker_number or ""), "MARKER NUMBER"),
+    ]
+    # MARKER NUMBER is emitted only for a real IERS DOMES; absent one the line is
+    # omitted entirely (matching our sbf2rin product), never filled with the
+    # 4-char id — MARKER NAME already carries that.
+    _mn = _domes(meta.marker_number)
+    if _mn:
+        rows.append((_fmt_marker(_mn), "MARKER NUMBER"))
+    rows += [
         ("", "MARKER TYPE"),
         (
             _fmt_observer_agency(meta.observer or "", meta.agency or ""),
@@ -304,6 +339,7 @@ def metadata_from_tos(
     a ``station_config`` is supplied these fill the otherwise-blank line; without
     it the line is left for the template to preserve.
     """
+    from tostools.rinex.domes import domes_or_skip
     from tostools.standards.igs_equipment import (
         to_igs_antenna,
         to_igs_radome,
@@ -318,12 +354,20 @@ def metadata_from_tos(
         except (TypeError, ValueError):
             return None
 
-    observer = agency = None
+    observer = agency = marker_number = None
     if station_config:
         from .config import _lookup
 
         observer = _lookup(station_config, "rinex_observer")
         agency = _lookup(station_config, "rinex_agency")
+        # MARKER NUMBER = IERS DOMES only. cfg is the TOS-canonical carrier
+        # (`cfg sync-from-tos --only rinex_marker_number`); anything that is not
+        # a DOMES — including the 4-char station id — collapses to "" and the
+        # line is skipped. Enforcement stays in tostools' single copy of the
+        # rule rather than a local regex.
+        marker_number = (
+            domes_or_skip(_lookup(station_config, "rinex_marker_number")) or None
+        )
 
     # Fall back to the raw TOS value when the IGS table has no mapping — better a
     # valid raw name than a blank header. (The tostools IGS table currently misses
@@ -333,7 +377,7 @@ def metadata_from_tos(
     ant_model = ta.current_antenna_model(station)
     return SkeletonMetadata(
         marker_name=station_id,
-        marker_number=station_id,
+        marker_number=marker_number,
         observer=observer,
         agency=agency,
         rec_serial=_real_or_unknown(ta.current_receiver_serial(station)),
