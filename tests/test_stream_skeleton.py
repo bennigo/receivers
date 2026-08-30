@@ -17,12 +17,18 @@ def _line(data: str, label: str) -> str:
 
 
 # Reconstructed GONH.SKL (label at col 61), the real stored skeleton on rek.
+#
+# NB: the real file also carried `GONH  MARKER NUMBER` — the 4-char station id in
+# a field that may only hold an IERS DOMES. That is the defect fixed 2026-08-30
+# (see tests/test_stream_skeleton_marker_number.py); GONH has no DOMES, so the
+# compliant skeleton omits the line entirely. Do NOT re-add it here: these tests
+# assert round-trip identity, so a poisoned fixture would silently re-assert the
+# bug as the contract, which is exactly what it did before.
 GONH_SKL = (
     "\n".join(
         [
             _line("File configured from IMO rt streams", "COMMENT"),
             _line("GONH", "MARKER NAME"),
-            _line("GONH", "MARKER NUMBER"),
             _line("HMF/BGO/HG          JH/IMO", "OBSERVER / AGENCY"),
             _line(
                 "3605273             SEPT MOSAIC-X5      4.8.0", "REC # / TYPE / VERS"
@@ -150,8 +156,11 @@ class TestUpgradeSkeleton:
         assert labels[0] == "RINEX VERSION / TYPE"
         assert "MARKER TYPE" in labels
         assert "WAVELENGTH FACT L1/2" not in labels
-        # MARKER TYPE inserted right after MARKER NUMBER
-        assert labels[labels.index("MARKER NUMBER") + 1] == "MARKER TYPE"
+        # MARKER TYPE is inserted after MARKER NUMBER, falling back to MARKER NAME
+        # when there is no DOMES to emit (GONH has none) — that fallback is the
+        # code's documented anchor, so assert against whichever marker line exists.
+        anchor = "MARKER NUMBER" if "MARKER NUMBER" in labels else "MARKER NAME"
+        assert labels[labels.index(anchor) + 1] == "MARKER TYPE"
 
     def test_position_preserved_verbatim(self):
         # The surveyed ECEF must survive the structural upgrade untouched.
