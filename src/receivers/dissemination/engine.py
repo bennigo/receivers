@@ -157,6 +157,10 @@ class DisseminateResult:
     errors: list[str] = field(default_factory=list)
 
 
+#: Cache roots already reaped in this process (see EposDisseminate.__init__).
+_REAPED_CACHE_ROOTS: set = set()
+
+
 class EposDisseminate:
     """Run the dissemination pipeline for explicit (station, date) inputs."""
 
@@ -173,6 +177,13 @@ class EposDisseminate:
     ) -> None:
         self.target = target
         self.dry_run = dry_run
+        # Reap orphaned convert-cache entries once per cache root per process.
+        # Deliberately runs on a DRY RUN too: a dry run converts for real and
+        # records no cache_entries, so it is one of the three things that orphan
+        # them (see convert.reap_stale_cache). Doing it in __init__ rather than
+        # per-file keeps it O(1) per run, and the guard keeps --parallel's
+        # per-chunk engines from each re-walking the same directory.
+        self._reap_stale_cache_once()
         self.dest_override = dest_override
         # When set, the header-QC gate runs before every push (T3 injects it).
         self.session_provider = session_provider
@@ -380,6 +391,23 @@ class EposDisseminate:
             except ValueError:  # pragma: no cover - malformed token
                 pass
         return "15s_24hr"
+
+    def _reap_stale_cache_once(self) -> None:
+        """Drop convert-cache entries no run will claim again. Best-effort."""
+        try:
+            max_age = int(getattr(self.target, "cache_max_age_days", 7) or 0)
+            if max_age <= 0:
+                return
+            root = self.target.cache_path
+            key = str(root)
+            if key in _REAPED_CACHE_ROOTS:
+                return
+            _REAPED_CACHE_ROOTS.add(key)
+            from .convert import reap_stale_cache
+
+            reap_stale_cache(root, max_age_days=max_age, logger=logger)
+        except Exception:  # noqa: BLE001 — housekeeping must never fail a run
+            logger.debug("convert-cache reap skipped", exc_info=True)
 
     def run_one(
         self, station: str, d: date, product: Optional[Any] = None
