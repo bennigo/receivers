@@ -336,12 +336,35 @@ def _run_stream_config_refresh_job() -> None:
         return
     settings = load_stream_settings()
     tos_provider = _make_tos_metadata_provider()
+    supervisor = StreamSupervisor(
+        settings.bnc_path, settings.bnc_config_dir, rt_base=settings.rt_base
+    )
     for sid in stations:
         try:
             generate_bnc_config_file(sid, configs[sid], settings)
-            refresh_station_skeleton(
+            outcome = refresh_station_skeleton(
                 sid, settings, tos_provider, station_config=configs[sid]
             )
+            # BNC caches the .SKL at process start, so a rewritten skeleton does
+            # NOT reach published headers until the daemon restarts. Without this
+            # bounce every equipment refresh (antenna/receiver swap, firmware
+            # update) is silently inert — measured 2026-08-31, where a corrected
+            # skeleton was still missing from a file created 3 h later (#166).
+            # Only changed stations are bounced, so a no-op refresh costs nothing.
+            if outcome in ("created", "updated"):
+                if supervisor.bounce_station(sid):
+                    logger.info(
+                        "Bounced BNC for %s so it picks up the %s skeleton",
+                        sid,
+                        outcome,
+                    )
+                else:
+                    logger.error(
+                        "Skeleton %s for %s but BNC failed to restart — headers will "
+                        "keep the OLD metadata until the next supervise pass",
+                        outcome,
+                        sid,
+                    )
         except Exception as e:  # noqa: BLE001 - isolate per station
             logger.error("Stream config refresh failed for %s: %s", sid, e)
 
