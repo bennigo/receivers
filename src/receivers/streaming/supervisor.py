@@ -26,12 +26,14 @@ should look", not "retry".
 from __future__ import annotations
 
 import logging
+import os
 import re
+import signal
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from .bnc_config import bnc_config_filename
 
@@ -48,6 +50,35 @@ _STATION_RE = re.compile(r"rtcm2rinex-([0-9A-Za-z]+)\.bnc")
 
 ProcessLister = Callable[[], Sequence[str]]
 Spawner = Callable[[Sequence[str]], None]
+#: (pid, cmdline) pairs — needed to stop a daemon by explicit pid.
+PidLister = Callable[[], Sequence[Tuple[int, str]]]
+Killer = Callable[[int], None]
+
+
+def _default_pid_lister() -> List[Tuple[int, str]]:
+    """Return ``(pid, cmdline)`` for running processes (best-effort)."""
+    pairs: List[Tuple[int, str]] = []
+    try:
+        out = subprocess.run(
+            ["ps", "-eo", "pid=,args="],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as e:  # pragma: no cover - env
+        logger.warning("Could not list processes: %s", e)
+        return []
+    for line in out.stdout.splitlines():
+        line = line.strip()
+        pid_str, _, rest = line.partition(" ")
+        if pid_str.isdigit():
+            pairs.append((int(pid_str), rest))
+    return pairs
+
+
+def _default_killer(pid: int) -> None:
+    """Ask a process to terminate (SIGTERM); BNC flushes and exits cleanly."""
+    os.kill(pid, signal.SIGTERM)
 
 
 def _default_process_lister() -> List[str]:
@@ -111,11 +142,15 @@ class StreamSupervisor:
         rt_base: Optional[str | Path] = None,
         stale_after: timedelta = DEFAULT_STALE_AFTER,
         now: Optional[Callable[[], datetime]] = None,
+        pid_lister: Optional[PidLister] = None,
+        killer: Optional[Killer] = None,
     ):
         self.bnc_path = Path(bnc_path)
         self.config_dir = Path(config_dir)
         self._list_cmdlines: ProcessLister = process_lister or _default_process_lister
         self._spawn: Spawner = spawner or _default_spawner
+        self._list_pids: PidLister = pid_lister or _default_pid_lister
+        self._kill: Killer = killer or _default_killer
         #: Where BNC writes per-station RINEX. Without it, freshness is skipped
         #: (liveness-only) rather than reported as false-healthy.
         self.rt_base = Path(rt_base).expanduser() if rt_base else None
@@ -195,6 +230,55 @@ class StreamSupervisor:
             return False
         logger.info("Started BNC stream capture for %s", station_id)
         return True
+
+    def pids_for(self, station_id: str) -> List[int]:
+        """PIDs of BNC daemons serving exactly *station_id*.
+
+        Matching is **exact on the station id and requires the BNC config flag**,
+        never a bare substring. A pattern match here is genuinely dangerous: a
+        `pkill -f`-style match on this session's own inspection commands killed
+        unrelated processes twice, and a substring id would let a station whose
+        id is a prefix of another's take its neighbour down. Our own pid is
+        excluded so a caller can never terminate itself.
+        """
+        me = os.getpid()
+        pids = []
+        for pid, cmdline in self._list_pids():
+            if pid == me or "--conf" not in cmdline:
+                continue
+            m = _STATION_RE.search(cmdline)
+            if m and m.group(1) == station_id:
+                pids.append(pid)
+        return sorted(pids)
+
+    def stop_station(self, station_id: str) -> int:
+        """SIGTERM the BNC daemon(s) for one station. Returns how many were signalled."""
+        stopped = 0
+        for pid in self.pids_for(station_id):
+            try:
+                self._kill(pid)
+            except (OSError, ProcessLookupError) as e:
+                logger.warning("Could not stop BNC pid %s (%s): %s", pid, station_id, e)
+                continue
+            stopped += 1
+        if stopped:
+            logger.info("Stopped %d BNC process(es) for %s", stopped, station_id)
+        return stopped
+
+    def bounce_station(self, station_id: str) -> bool:
+        """Restart a station's BNC so it re-reads its ``.SKL``.
+
+        BNC caches the skeleton at process start, so rewriting the ``.SKL`` has
+        no effect on published headers until the daemon restarts — measured on
+        rek-d01 2026-08-31, where a corrected skeleton was still absent from a
+        file created three hours later (todo #166).
+
+        Stopping alone would be enough (the supervise sweep respawns within its
+        interval), but that leaves the station mute for up to that long; the
+        refresh knows exactly which stations changed, so restart immediately.
+        """
+        self.stop_station(station_id)
+        return self.start_station(station_id)
 
     def supervise(self) -> SuperviseResult:
         """Start any configured station whose BNC daemon is not running."""
