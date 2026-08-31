@@ -140,7 +140,17 @@ def _is_hatanaka(name: str) -> bool:
 #   v1: original EPOS header finalization
 #   v2: MARKER NUMBER no-DOMES fallback → version-aware (9-char R3 / 4-char R2)
 #   v3: MARKER NUMBER = IERS DOMES only; no DOMES → strip the line (no id fallback)
-HEADER_SCHEMA_VERSION = 3
+#   v4: ANTENNA: DELTA H/E/N east/north are a monument+antenna composite. The
+#       TOS path (which is the ONLY path dissemination uses — set_header_from_tos
+#       passes station_config=None) read the eccentricity off the antenna entity
+#       alone, so a station whose offset lives on the MONUMENT record published a
+#       zeroed E/N against a site log carrying the real value. Fleet-wide this is
+#       ISAK (0.0001/0.0002) and AUST (-0.0001/0.0001) and nobody else — but the
+#       bump must be fleet-wide anyway: the fix is a code change, so neither the
+#       source bytes nor the TOS fingerprint move, and without a new schema
+#       version a re-push of those two would silently re-serve the cached stale
+#       header. Re-heads for the other 342 produce identical bytes.
+HEADER_SCHEMA_VERSION = 4
 
 
 def cache_key(
