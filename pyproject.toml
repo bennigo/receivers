@@ -53,7 +53,14 @@ dependencies = [
     "psutil>=5.9.0",
     "psycopg2-binary>=2.9.0",
     "gtimes @ git+https://github.com/bgo-gnss/gtimes@v0.5.1",
-    # tostools master @a5f1b7d: MUST NOT stay at @668964b. That commit carries
+    # tostools master @3b3daeb: ANTENNA: DELTA H/E/N is a monument+antenna
+    # composite on ALL THREE axes, and is compared at the F14.4 precision the
+    # field actually stores instead of a 1 mm tolerance. Without this pin move
+    # rek-d01 keeps writing a zeroed east/north eccentricity for any station
+    # whose offset lives on the TOS monument record (fleet-wide: ISAK and AUST),
+    # and --fix-headers keeps calling those files clean. Pairs with this repo's
+    # HEADER_SCHEMA_VERSION 3->4 bump, which is inert without it.
+    # Earlier: @a5f1b7d MUST NOT stay at @668964b. That commit carries
     # tostools d467807 (F1 step 2 widened the default attribute list) WITHOUT
     # its fix 8fa822c, so deploying it puts a regression into `--fix-headers`:
     # the era-resolution chain (gps_metadata -> get_device_sessions) splits on
@@ -144,7 +151,7 @@ dependencies = [
     #   * `scripts/export_station_equipment.py` un-broken (F1 collateral).
     # Verified cross-package before bumping: receivers 3383 passed / 0 failed
     # against this SHA via the editable mamba env.
-    "tostools @ git+https://github.com/bgo-gnss/tostools@1b8f05d",
+    "tostools @ git+https://github.com/bgo-gnss/tostools@3b3daeb",
     # gps_parser main @257a2ee: passive-station schema (2c5b428) + canonical
     # module-level parse_station_role (257a2ee) — the API config_utils imports.
     "gps-parser @ git+https://github.com/bgo-gnss/gps_parser@257a2ee",
