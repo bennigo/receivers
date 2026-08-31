@@ -174,7 +174,9 @@ def build_stream_pipeline(
     settings: StreamSettings, *, tracker_recorder, downloader
 ) -> StreamPipeline:
     """Construct a StreamPipeline from settings + real seams."""
-    supervisor = StreamSupervisor(settings.bnc_path, settings.bnc_config_dir)
+    supervisor = StreamSupervisor(
+        settings.bnc_path, settings.bnc_config_dir, rt_base=settings.rt_base
+    )
     ingestor = StreamIngestor(
         archive_base=settings.archive_base,
         rnx2crx=settings.rnx2crx,
@@ -363,11 +365,21 @@ def _make_tos_metadata_provider():
 def _run_stream_supervise_job() -> None:
     """Ensure BNC daemons are alive for all configured stream stations."""
     settings = load_stream_settings()
-    supervisor = StreamSupervisor(settings.bnc_path, settings.bnc_config_dir)
+    supervisor = StreamSupervisor(
+        settings.bnc_path,
+        settings.bnc_config_dir,
+        # Lets the supervisor also catch alive-but-mute streams (#168); without
+        # it the check is skipped rather than reporting false health.
+        rt_base=settings.rt_base,
+    )
     result = supervisor.supervise()
     if result.started or result.failed:
         logger.info(
             "Stream supervise: started %s, failed %s", result.started, result.failed
+        )
+    if result.stale:
+        logger.warning(
+            "Stream supervise: running but producing no data %s", result.stale
         )
 
 

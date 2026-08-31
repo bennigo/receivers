@@ -8,6 +8,19 @@ scheduler.
 
 Process listing and spawning are injectable so the supervision logic is fully
 unit-testable without a live BNC binary.
+
+Liveness is necessary but **not sufficient**: a BNC daemon can sit running and
+connected-but-refused for days, producing nothing. HRIC did exactly that from
+2026-08-30 07:02 — process alive the whole time, 175-260 "Wrong caster response"
+per day in its own log, zero RINEX written, and every liveness check green
+(todo #167 — the underlying cause was a flat battery at the station). So this
+supervisor also reports **output freshness**: a running station whose newest
+``.rnx`` is older than ``stale_after`` is flagged.
+
+Flagged, deliberately **not** auto-restarted. HRIC's stream was dead because the
+station had no power; bouncing BNC would have changed nothing and would have
+thrown away the one signal that something was wrong. Staleness means "a human
+should look", not "retry".
 """
 
 from __future__ import annotations
@@ -16,12 +29,19 @@ import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
 from .bnc_config import bnc_config_filename
 
 logger = logging.getLogger(__name__)
+
+#: A stream station writes one RINEX per hour, so two hours without output means
+#: at least one whole file was missed — long enough not to trip on the boundary
+#: of the current hour's still-open file, short enough to catch an outage the
+#: same morning rather than a day later.
+DEFAULT_STALE_AFTER = timedelta(hours=2)
 
 #: Station id embedded in a BNC config path/cmdline, e.g. ``rtcm2rinex-GONH.bnc``.
 _STATION_RE = re.compile(r"rtcm2rinex-([0-9A-Za-z]+)\.bnc")
@@ -64,10 +84,18 @@ class SuperviseResult:
     running: List[str] = field(default_factory=list)
     started: List[str] = field(default_factory=list)
     failed: List[str] = field(default_factory=list)
+    #: Running stations producing no fresh output — alive but mute. Never
+    #: auto-restarted; see the module docstring.
+    stale: List[str] = field(default_factory=list)
 
     @property
     def all_running(self) -> bool:
         return not self.started and not self.failed
+
+    @property
+    def all_healthy(self) -> bool:
+        """Every station running *and* producing fresh output."""
+        return self.all_running and not self.stale
 
 
 class StreamSupervisor:
@@ -80,11 +108,52 @@ class StreamSupervisor:
         *,
         process_lister: Optional[ProcessLister] = None,
         spawner: Optional[Spawner] = None,
+        rt_base: Optional[str | Path] = None,
+        stale_after: timedelta = DEFAULT_STALE_AFTER,
+        now: Optional[Callable[[], datetime]] = None,
     ):
         self.bnc_path = Path(bnc_path)
         self.config_dir = Path(config_dir)
         self._list_cmdlines: ProcessLister = process_lister or _default_process_lister
         self._spawn: Spawner = spawner or _default_spawner
+        #: Where BNC writes per-station RINEX. Without it, freshness is skipped
+        #: (liveness-only) rather than reported as false-healthy.
+        self.rt_base = Path(rt_base).expanduser() if rt_base else None
+        self.stale_after = stale_after
+        self._now: Callable[[], datetime] = now or (lambda: datetime.now(UTC))
+
+    def last_output_at(self, station_id: str) -> Optional[datetime]:
+        """Mtime of the newest RINEX BNC wrote for *station_id*, or ``None``.
+
+        ``None`` means "cannot tell" — no ``rt_base`` configured, no station
+        directory, or no files yet — and is never treated as stale, so a
+        misconfigured path degrades to today's liveness-only behaviour instead
+        of alarming on every station.
+        """
+        if not self.rt_base:
+            return None
+        station_dir = self.rt_base / station_id
+        if not station_dir.is_dir():
+            return None
+        newest: Optional[float] = None
+        for path in station_dir.glob("*.rnx"):
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:  # vanished mid-scan
+                continue
+            if newest is None or mtime > newest:
+                newest = mtime
+        return datetime.fromtimestamp(newest, UTC) if newest is not None else None
+
+    def stale_stations(self, running: Sequence[str]) -> List[str]:
+        """Running stations whose newest output is older than ``stale_after``."""
+        cutoff = self._now() - self.stale_after
+        stale = []
+        for station_id in running:
+            last = self.last_output_at(station_id)
+            if last is not None and last < cutoff:
+                stale.append(station_id)
+        return sorted(stale)
 
     def config_path(self, station_id: str) -> Path:
         """Path to the BNC config file for a station."""
@@ -139,6 +208,20 @@ class StreamSupervisor:
                 result.started.append(station_id)
             else:
                 result.failed.append(station_id)
+        # Freshness is checked on stations that were already running: one just
+        # started has no output yet and would be a guaranteed false positive.
+        result.stale = self.stale_stations(sorted(running))
+        for station_id in result.stale:
+            last = self.last_output_at(station_id)
+            logger.warning(
+                "Stream %s is RUNNING BUT MUTE — newest RINEX is %s (older than %s). "
+                "BNC is alive, so this is not a supervisor failure: check the "
+                "station is powered and reaching the caster (%s/RinexObs.log_*)",
+                station_id,
+                last.isoformat() if last else "unknown",
+                self.stale_after,
+                (self.rt_base / station_id) if self.rt_base else "?",
+            )
         if result.started or result.failed:
             logger.info(
                 "Stream supervise: %d configured, %d running, started %s%s",
