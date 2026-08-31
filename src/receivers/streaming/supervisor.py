@@ -45,6 +45,19 @@ logger = logging.getLogger(__name__)
 #: same morning rather than a day later.
 DEFAULT_STALE_AFTER = timedelta(hours=2)
 
+#: How often to repeat the "running but mute" warning for the SAME station.
+#: The condition persists until someone physically fixes the site — HRIC has
+#: been mute since 2026-08-30 pending a field visit — so warning every pass
+#: means 144/day at a 10-minute interval and 720/day at 2 minutes. A line that
+#: frequent for a known problem trains people to filter out the very signal
+#: this check exists to raise. Hourly still surfaces a NEW outage promptly.
+DEFAULT_STALE_WARN_EVERY = timedelta(hours=1)
+
+#: station -> when we last warned about it. Module-level on purpose: the
+#: scheduler builds a fresh StreamSupervisor for every supervise pass, so
+#: per-instance state would reset each run and rate-limit nothing.
+_LAST_STALE_WARNING: dict[str, datetime] = {}
+
 #: Station id embedded in a BNC config path/cmdline, e.g. ``rtcm2rinex-GONH.bnc``.
 _STATION_RE = re.compile(r"rtcm2rinex-([0-9A-Za-z]+)\.bnc")
 
@@ -144,7 +157,13 @@ class StreamSupervisor:
         now: Optional[Callable[[], datetime]] = None,
         pid_lister: Optional[PidLister] = None,
         killer: Optional[Killer] = None,
+        warn_every: timedelta = DEFAULT_STALE_WARN_EVERY,
+        warn_state: Optional[dict] = None,
     ):
+        self.warn_every = warn_every
+        #: Shared by default so the rate-limit survives per-pass supervisors;
+        #: injectable so tests never leak state into each other.
+        self._warn_state = _LAST_STALE_WARNING if warn_state is None else warn_state
         self.bnc_path = Path(bnc_path)
         self.config_dir = Path(config_dir)
         self._list_cmdlines: ProcessLister = process_lister or _default_process_lister
@@ -295,7 +314,19 @@ class StreamSupervisor:
         # Freshness is checked on stations that were already running: one just
         # started has no output yet and would be a guaranteed false positive.
         result.stale = self.stale_stations(sorted(running))
+        # `stale` is always fully populated — only the LOG LINE is rate-limited,
+        # so callers and `all_healthy` never see a suppressed condition.
+        now = self._now()
         for station_id in result.stale:
+            last_warned = self._warn_state.get(station_id)
+            if last_warned is not None and now - last_warned < self.warn_every:
+                logger.debug(
+                    "Stream %s still mute (warning suppressed until %s)",
+                    station_id,
+                    (last_warned + self.warn_every).isoformat(),
+                )
+                continue
+            self._warn_state[station_id] = now
             last = self.last_output_at(station_id)
             logger.warning(
                 "Stream %s is RUNNING BUT MUTE — newest RINEX is %s (older than %s). "
@@ -306,6 +337,10 @@ class StreamSupervisor:
                 self.stale_after,
                 (self.rt_base / station_id) if self.rt_base else "?",
             )
+        # Forget stations that recovered, so a future outage warns immediately
+        # instead of being silenced by a stamp left over from the last one.
+        for station_id in set(self._warn_state) - set(result.stale):
+            self._warn_state.pop(station_id, None)
         if result.started or result.failed:
             logger.info(
                 "Stream supervise: %d configured, %d running, started %s%s",

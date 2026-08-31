@@ -148,3 +148,96 @@ def test_last_output_at_picks_the_newest(tmp_path):
     ts = (NOW - timedelta(minutes=1)).timestamp()
     os.utime(newer, (ts, ts))
     assert sup.supervise().stale == []
+
+
+# ── warning rate-limit ───────────────────────────────────────────────────────
+#
+# The mute condition persists until someone visits the site, so warning every
+# pass is 144 lines/day at a 10-minute interval and 720 at 2 minutes. Only the
+# LOG is throttled: `stale` stays fully populated so nothing downstream sees a
+# suppressed condition.
+
+
+def _mute(tmp_path, state, *, now=NOW, warn_every=timedelta(hours=1)):
+    sup = _mk(tmp_path, ["HRIC"], running=["HRIC"], ages={"HRIC": timedelta(hours=29)})
+    sup._warn_state = state
+    sup.warn_every = warn_every
+    sup._now = lambda: now
+    return sup
+
+
+def _warn_lines(caplog):
+    return [r for r in caplog.records if "RUNNING BUT MUTE" in r.getMessage()]
+
+
+def test_first_occurrence_warns(tmp_path, caplog):
+    state = {}
+    with caplog.at_level(logging.DEBUG):
+        _mute(tmp_path, state).supervise()
+    assert len(_warn_lines(caplog)) == 1
+    assert "HRIC" in state
+
+
+def test_repeat_within_the_window_is_suppressed(tmp_path, caplog):
+    state = {"HRIC": NOW - timedelta(minutes=10)}
+    with caplog.at_level(logging.DEBUG):
+        _mute(tmp_path, state).supervise()
+    assert _warn_lines(caplog) == []
+
+
+def test_repeat_after_the_window_warns_again(tmp_path, caplog):
+    state = {"HRIC": NOW - timedelta(hours=2)}
+    with caplog.at_level(logging.DEBUG):
+        _mute(tmp_path, state).supervise()
+    assert len(_warn_lines(caplog)) == 1
+    assert state["HRIC"] == NOW
+
+
+def test_suppression_does_not_hide_the_condition(tmp_path, caplog):
+    """`stale` must stay populated even when the log line is throttled."""
+    state = {"HRIC": NOW - timedelta(minutes=10)}
+    with caplog.at_level(logging.DEBUG):
+        result = _mute(tmp_path, state).supervise()
+    assert result.stale == ["HRIC"]
+    assert result.all_healthy is False
+
+
+def test_recovery_clears_the_stamp_so_a_new_outage_warns_at_once(tmp_path, caplog):
+    """A station that recovers must not be silenced by a stale stamp later."""
+    state = {"GONH": NOW - timedelta(minutes=1)}
+    sup = _mk(tmp_path, ["GONH"], running=["GONH"], ages={"GONH": timedelta(minutes=5)})
+    sup._warn_state = state
+    sup._now = lambda: NOW
+    sup.supervise()
+    assert "GONH" not in state  # forgotten on recovery
+
+    sup2 = _mute(tmp_path, state)  # HRIC dir, but reuse the shared state
+    with caplog.at_level(logging.DEBUG):
+        sup2.supervise()
+    assert len(_warn_lines(caplog)) == 1
+
+
+def test_rate_limit_is_per_station(tmp_path, caplog):
+    """One station being throttled must not silence another."""
+    sup = _mk(
+        tmp_path,
+        ["GONH", "HRIC"],
+        running=["GONH", "HRIC"],
+        ages={"GONH": timedelta(hours=29), "HRIC": timedelta(hours=29)},
+    )
+    sup._warn_state = {"GONH": NOW - timedelta(minutes=5)}
+    sup._now = lambda: NOW
+    with caplog.at_level(logging.DEBUG):
+        result = sup.supervise()
+    warned = {r.getMessage().split()[1] for r in _warn_lines(caplog)}
+    assert warned == {"HRIC"}
+    assert result.stale == ["GONH", "HRIC"]
+
+
+def test_state_is_shared_across_supervisor_instances_by_default():
+    """The scheduler builds a new supervisor per pass — the limit must survive."""
+    from receivers.streaming import supervisor as mod
+
+    a = StreamSupervisor("bnc", "/nonexistent")
+    b = StreamSupervisor("bnc", "/nonexistent")
+    assert a._warn_state is b._warn_state is mod._LAST_STALE_WARNING
