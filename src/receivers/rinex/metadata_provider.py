@@ -69,6 +69,10 @@ class EquipmentMetadata:
 
     # Monument information
     monument_height: float = 0.0
+    #: East/north eccentricity, summed across the TOS monument and antenna
+    #: entities the same way the height is. See to_rinex_corrections.
+    antenna_offset_east: float = 0.0
+    antenna_offset_north: float = 0.0
 
     # Station information
     marker_name: str = ""
@@ -161,8 +165,16 @@ class EquipmentMetadata:
         # live API 2026-08-20 — M3G's own stored log with the serial emptied
         # returns 422; the same log with "0000" returns 200). site_log.py and
         # corrector.py moved to PUBLISHED_UNKNOWN_ANTENNA_SERIAL then; this path
-        # was missed, and it is the one that writes the converter's headers — so
+        # was missed — and at the time it did write the converter's headers, so
         # 463 archived 2026 daily files still carry a blank serial field.
+        #
+        # THAT IS NO LONGER TRUE, and the stale claim cost a later session real
+        # time: the converter now goes through tostools.correct_rinex_from_tos
+        # (converter_base.py), and `to_rinex_corrections` has NO production
+        # caller — only tests/test_no_synthetic_serial_in_header.py. Verified
+        # 2026-08-31 by grepping both src trees. It stays correct and tested
+        # rather than being left to rot into a trap for whoever adopts it, but
+        # do not reason about live header output from this function.
         #
         # Must stay equal to tostools.rinex.validator's suppressed value, or a
         # freshly converted file reads back as discrepant and --fix-headers
@@ -182,9 +194,18 @@ class EquipmentMetadata:
                 ant_type = ""
             base["ANT # / TYPE"] = (published_serial, ant_type)
 
-        # Antenna height (always include)
+        # ANTENNA: DELTA H/E/N — a composite on all three axes. The east/north
+        # terms were hardcoded to 0.0 here, the same defect the tostools
+        # corrector's config branch carried: TOS splits the mark->ARP vector
+        # across a monument and an antenna entity, and reading only the height
+        # publishes a zeroed eccentricity against a site log that carries the
+        # real one.
         total_height = self.antenna_height + self.monument_height
-        base["ANTENNA: DELTA H/E/N"] = (total_height, 0.0, 0.0)
+        base["ANTENNA: DELTA H/E/N"] = (
+            total_height,
+            self.antenna_offset_east,
+            self.antenna_offset_north,
+        )
 
         # Apply overrides
         if overrides:
@@ -259,6 +280,12 @@ class EquipmentMetadata:
             metadata.antenna_model = antenna.get("model", "")
             metadata.antenna_serial = antenna.get("serial_number", "")
             metadata.antenna_height = float(antenna.get("antenna_height", 0) or 0)
+            metadata.antenna_offset_east = float(
+                antenna.get("antenna_offset_east", 0) or 0
+            )
+            metadata.antenna_offset_north = float(
+                antenna.get("antenna_offset_north", 0) or 0
+            )
 
         # Parse radome
         radome = session.get("radome", {})
@@ -269,6 +296,12 @@ class EquipmentMetadata:
         monument = session.get("monument", {})
         if monument:
             metadata.monument_height = float(monument.get("monument_height", 0) or 0)
+            metadata.antenna_offset_east += float(
+                monument.get("monument_offset_east", 0) or 0
+            )
+            metadata.antenna_offset_north += float(
+                monument.get("monument_offset_north", 0) or 0
+            )
 
         return metadata
 
