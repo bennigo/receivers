@@ -2,9 +2,22 @@
 
 BNC fills every hourly RINEX header from a per-station skeleton file
 (``<rnxPath>/<SID>.SKL``, referenced by ``rnxSkel=SKL``). The skeleton is the
-**stored active header**: BNC reads it for every file write, so the write path never
-touches TOS. A separate periodic refresh updates the stored skeleton from TOS only
-when the station's equipment metadata changed (antenna/receiver swap, firmware update).
+**stored active header**, so the write path never touches TOS. A separate periodic
+refresh updates the stored skeleton from TOS only when the station's equipment
+metadata changed (antenna/receiver swap, firmware update).
+
+.. warning::
+   **BNC caches the skeleton at process start — it does NOT re-read it per file
+   write.** Rewriting the ``.SKL`` therefore has no effect on published headers
+   until that station's BNC daemon is restarted. Measured on rek-d01 2026-08-31:
+   the 06:00 refresh stripped a bad ``MARKER NUMBER`` row from all three SKLs, yet
+   the 09:00 hourly file — created three hours later — still carried the old value;
+   bouncing BNC produced a correct header on the very next file.
+
+   This docstring previously claimed the opposite ("BNC reads it for every file
+   write"), which is what made that refresh look sufficient. Nothing currently
+   restarts BNC when the skeleton changes, so *every* equipment refresh is
+   silently inert until an unrelated restart — tracked as todo #166.
 
 Design: the skeleton is a *template* — its static lines (COMMENT, APPROX POSITION XYZ,
 WAVELENGTH FACT, END OF HEADER) are preserved; only the equipment-dependent lines
