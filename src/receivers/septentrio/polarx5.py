@@ -3002,13 +3002,9 @@ class PolaRX5(BaseReceiver):
         if receiver_identity:
             health_status["receiver_identity"] = receiver_identity
 
-        # Add extraction source info
+        # Add extraction source info (and re-stamp SBF-sourced samples)
         if extraction_source:
-            health_status["extraction_metadata"] = {
-                "extraction_time": health_status.get("timestamp"),
-                "data_source": extraction_source,
-                "tool_version": "0.2.0",
-            }
+            self._apply_extraction_metadata(health_status, metrics, extraction_source)
 
         # Step 4: Override overall status if all service ports are closed
         # This indicates the receiver is offline/unreachable even if host pings
@@ -3030,6 +3026,58 @@ class PolaRX5(BaseReceiver):
                     )
 
         return health_status
+
+    @classmethod
+    def _apply_extraction_metadata(
+        cls,
+        health_status: Dict[str, Any],
+        metrics: Optional[Dict[str, Any]],
+        extraction_source: str,
+    ) -> Dict[str, Any]:
+        """Record how the sample was obtained, and when it is actually *from*.
+
+        An SBF-sourced sample is only as recent as the file it came from.
+        Stamping it "now" makes a dead station look live: HRIC lost power at
+        2026-08-30 05:00 and every hour afterwards re-decoded the SAME last SBF
+        and wrote it as a fresh reading, so ``block_power_status`` showed a flat
+        11.38 V "now" for a station that was off (todo #169).
+
+        The epoch is applied to the WHOLE record, not just the power block that
+        carries it: the pre-built health views join the ``block_*`` tables
+        ``USING (sid, ts)``, so a split epoch would make those joins silently
+        return nothing for SBF-sourced samples.
+
+        ``extraction_time`` deliberately keeps the real read time, so "when we
+        looked" and "when the sample is from" both survive. The live TCP path is
+        untouched — there "now" *is* the sample epoch.
+        """
+        health_status["extraction_metadata"] = {
+            "extraction_time": health_status.get("timestamp"),
+            "data_source": extraction_source,
+            "tool_version": "0.2.0",
+        }
+        if extraction_source == "sbf_file":
+            sample_epoch = cls._sbf_sample_epoch(metrics)
+            if sample_epoch:
+                health_status["timestamp"] = sample_epoch
+        return health_status
+
+    @staticmethod
+    def _sbf_sample_epoch(metrics: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Epoch of an SBF-decoded health sample, or ``None`` if unknown.
+
+        Only the power block carries a per-sample ``timestamp`` (the PowerStatus
+        block's own ``datetime``); cpu_load and temperature come from the same
+        decode of the same file, so that one epoch describes the whole sample.
+
+        Returns ``None`` rather than guessing when the block is missing — the
+        caller then leaves the existing "now" stamp alone, which is the current
+        behaviour and no worse than before.
+        """
+        if not metrics:
+            return None
+        ts = (metrics.get("power") or {}).get("timestamp")
+        return ts if isinstance(ts, str) and ts else None
 
     def _get_health_from_sbf_files(self) -> Optional[Dict[str, Any]]:
         """Extract health data from local SBF files.
