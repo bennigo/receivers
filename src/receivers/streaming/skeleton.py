@@ -400,4 +400,15 @@ def metadata_from_tos(
         ant_type=to_igs_antenna(ant_model) or ant_model,
         ant_radome=to_igs_radome(ta.current_radome_model(station)) or "NONE",
         antenna_h=_f(ta.current_antenna_height(station)),
+        # The east/north eccentricity, which TOS splits across the monument and
+        # antenna entities exactly as it splits the height. SkeletonMetadata has
+        # carried these two fields since it was written and nothing ever filled
+        # them, so _fmt_delta fell back to `or 0.0` and every stream skeleton
+        # published a zeroed eccentricity. The composite helpers below already
+        # existed and already summed both entities correctly -- only the call
+        # was missing. Live effect today is nil (GONH/HRIC/SEY9 are all zero on
+        # both entities, so no skeleton changes and no BNC bounce), but a stream
+        # station with a real offset would have silently published 0.0000.
+        antenna_e=_f(ta.current_antenna_east(station)),
+        antenna_n=_f(ta.current_antenna_north(station)),
     )

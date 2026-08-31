@@ -24,6 +24,7 @@ than hardcoded so the two cannot drift apart again. tostools pins the same rule
 across its own writers in `test_unknown_antenna_serial_agrees.py`.
 """
 
+import pytest
 from tostools.device import PUBLISHED_UNKNOWN_ANTENNA_SERIAL
 
 from receivers.rinex.metadata_provider import EquipmentMetadata
@@ -84,3 +85,74 @@ class TestMissingSerial:
     def test_no_model_and_no_serial_emits_nothing(self):
         md = EquipmentMetadata(antenna_serial="", antenna_model="", radome_model="")
         assert md.to_rinex_corrections().get("ANT # / TYPE") is None
+
+
+class TestTheDeltaIsACompositeOnAllThreeAxes:
+    """EquipmentMetadata must not hardcode a zeroed eccentricity either.
+
+    TOS splits the mark->ARP vector across a monument entity (mark -> monument
+    top) and an antenna entity (monument top -> ARP), on all three axes. This
+    builder summed the height and wrote ``0.0, 0.0`` for east/north -- the same
+    defect the tostools corrector's config branch carried, which published a
+    zeroed eccentricity for ISAK against a site log holding 0.0002.
+
+    This builder currently has no production caller (see the note in
+    metadata_provider.py); the point of the test is that whoever adopts it does
+    not inherit the bug.
+    """
+
+    _DELTA = "ANTENNA: DELTA H/E/N"
+
+    def _session(
+        self, ant_e=0.0, ant_n=0.0, ant_h=0.0, mon_e=0.0, mon_n=0.0, mon_h=1.0
+    ):
+        return {
+            "antenna": {
+                "model": "SEPVC6150L",
+                "serial_number": "2505010005",
+                "antenna_height": ant_h,
+                "antenna_offset_east": ant_e,
+                "antenna_offset_north": ant_n,
+            },
+            "monument": {
+                "monument_height": mon_h,
+                "monument_offset_east": mon_e,
+                "monument_offset_north": mon_n,
+            },
+            "radome": {"model": "SCIS"},
+        }
+
+    def _delta(self, session):
+        """(h, e, n) parsed back out of the rendered 3F14.4 field.
+
+        to_rinex_corrections returns the FORMATTED header value, so the parse
+        also pins that the composite survives rendering at the field's 0.1 mm
+        precision -- a 0.0002 that formatted to 0.0000 would be just as wrong.
+        """
+        from receivers.rinex.metadata_provider import EquipmentMetadata
+
+        md = EquipmentMetadata.from_tos_session(session)
+        body = md.to_rinex_corrections()[self._DELTA]
+        return tuple(float(body[i : i + 14]) for i in (0, 14, 28))
+
+    def test_a_monument_stored_eccentricity_reaches_the_header(self):
+        """ISAK's shape: the whole offset lives on the monument record."""
+        h, e, n = self._delta(self._session(mon_e=0.0001, mon_n=0.0002, mon_h=1.0047))
+        assert (h, e, n) == pytest.approx((1.0047, 0.0001, 0.0002))
+
+    def test_offsets_on_both_entities_are_summed(self):
+        h, e, n = self._delta(
+            self._session(
+                ant_e=0.02,
+                ant_n=-0.01,
+                ant_h=0.15,
+                mon_e=0.0001,
+                mon_n=0.0002,
+                mon_h=1.0,
+            )
+        )
+        assert (h, e, n) == pytest.approx((1.15, 0.0201, -0.0098))
+
+    def test_a_centered_antenna_still_publishes_zeros(self):
+        h, e, n = self._delta(self._session(mon_h=0.107))
+        assert (h, e, n) == pytest.approx((0.107, 0.0, 0.0))
