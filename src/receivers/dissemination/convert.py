@@ -27,8 +27,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -177,6 +179,90 @@ def cache_key(
         f"{src_hash}:{tos_fingerprint}:h{HEADER_SCHEMA_VERSION}".encode()
     ).hexdigest()
     return f"{key}-s{sample}" if sample is not None else key
+
+
+#: Convert-cache entry names we are willing to delete: a 64-hex cache key with an
+#: optional ``-s<rate>`` suffix, the ``decode`` sub-cache, or one of the
+#: ``.epos_<phase>_<suffix>`` TemporaryDirectory leftovers. Anything else in the
+#: cache root is not ours and is never touched -- the reaper runs unattended
+#: against a configurable path, so it refuses to be pointed at a real directory.
+_CACHE_ENTRY_RE = re.compile(
+    r"^(?:[0-9a-f]{64}(?:-s\d+)?|decode|\.epos_[a-z]+_[A-Za-z0-9_]+)$"
+)
+
+
+def reap_stale_cache(
+    cache_root: Path, max_age_days: int = 7, logger: Any = None
+) -> tuple[int, int]:
+    """Delete convert-cache entries no run will ever claim again.
+
+    ``prune_cache`` reaps an entry when its push goes DURABLE, which covers the
+    success path and only the success path. Three things bypass it entirely:
+
+    * a **dry run** -- it converts for real (that is the point) but
+      :class:`EposDisseminate` skips recording ``cache_entries`` when
+      ``dry_run``, and nothing ever pushes, so every intermediate it writes is
+      orphaned on exit;
+    * a run **killed** mid-range -- ^C, SIGTERM, a systemd stop, an OOM;
+    * a run whose **push failed** -- the entry is deliberately kept so a retry
+      is cheap, and then nobody retries.
+
+    Measured 2026-08-31 on rek-d01: 209 GB across 18,097 entries dating back
+    three weeks, against a 2 TB volume that an unreaped cache has filled before
+    and taken Postgres down with it. Nothing was reaping them because nothing
+    was responsible for them.
+
+    Age is the right discriminator precisely BECAUSE ``prune_cache`` works: an
+    entry from a healthy run is deleted seconds after its push, so anything
+    still present after ``max_age_days`` is by construction an orphan. Entries
+    are matched against :data:`_CACHE_ENTRY_RE` before deletion, so a
+    mis-pointed ``convert_cache_dir`` reaps nothing rather than eating a real
+    directory. Best-effort throughout: a delete that loses a race with a
+    concurrent run is skipped, never raised -- reaping must not fail a push.
+
+    Returns ``(entries_removed, bytes_reclaimed)``.
+    """
+    cache_root = Path(cache_root).expanduser()
+    # 0 (and anything negative) means OFF, matching the config knob's
+    # documented semantics. Treating 0 as "older than zero days" would
+    # make the disable value reap the entire cache instead.
+    if not cache_root.is_dir() or max_age_days <= 0:
+        return (0, 0)
+    cutoff = time.time() - (max_age_days * 86400)
+    removed = freed = 0
+    try:
+        entries = list(cache_root.iterdir())
+    except OSError:
+        return (0, 0)
+    for entry in entries:
+        if not _CACHE_ENTRY_RE.match(entry.name):
+            continue
+        try:
+            if entry.stat().st_mtime >= cutoff:
+                continue
+            size = (
+                sum(f.stat().st_size for f in entry.rglob("*") if f.is_file())
+                if entry.is_dir()
+                else entry.stat().st_size
+            )
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+            else:
+                entry.unlink(missing_ok=True)
+        except OSError:
+            continue  # lost a race with a live run, or vanished — fine
+        removed += 1
+        freed += size
+    if removed and logger is not None:
+        logger.info(
+            "reaped %d orphaned convert-cache entries (%.1f GB) older than %d "
+            "days from %s",
+            removed,
+            freed / 1073741824,
+            max_age_days,
+            cache_root,
+        )
+    return (removed, freed)
 
 
 def decode_cache_key(source_path: Path, sample: Optional[int] = None) -> str:

@@ -209,6 +209,13 @@ class DisseminationTarget:
     #: Set false to keep the cache when a cheap `--force` header re-push is
     #: planned — that is the only thing it buys.
     prune_cache: bool = True
+    #: Age after which a convert-cache entry is treated as an ORPHAN and reaped
+    #: at the start of the next run. ``prune_cache`` only fires on a durable
+    #: push, so a dry run, a killed run or a failed push leaves its
+    #: intermediates behind forever — 209 GB of them by 2026-08-31. Because a
+    #: healthy entry is deleted seconds after its push, anything this old is by
+    #: construction unreachable. 0 disables the reaper.
+    cache_max_age_days: int = 7
     """Where converted outputs are cached, keyed on
     ``hash(source content_sha256 + TOS-metadata fingerprint)``."""
 
@@ -307,6 +314,7 @@ def _build_target(raw: dict) -> DisseminationTarget:
         format=DisseminationFormat.from_dict(raw.get("format", {})),
         convert_cache_dir=raw.get("convert_cache_dir", DEFAULT_CACHE_DIR),
         prune_cache=bool(raw.get("prune_cache", True)),
+        cache_max_age_days=int(raw.get("cache_max_age_days", 7)),
         cutover=cutover,
     )
 
