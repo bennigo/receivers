@@ -344,9 +344,10 @@ def generate_site_log_if_changed(
 def commit_site_log(repo_dir: Path, site_log: Path, message: str) -> bool:
     """Stage + commit ``site_log`` in the ``gps-sitelogs`` repo working tree.
 
-    Returns True on a real commit, False when there was nothing to commit. Does
-    NOT push (the sync/submission policy is decided per decision #3). Raises on a
-    genuine git error so callers see a misconfigured repo rather than silent loss.
+    Returns True on a real commit, False when there was nothing to commit. Raises
+    on a genuine git error so callers see a misconfigured repo rather than silent
+    loss. Pushing is :func:`push_site_logs`, which the ``--sitelog`` path calls
+    right after a successful commit — see that function for why.
     """
     import subprocess
 
@@ -367,6 +368,40 @@ def commit_site_log(repo_dir: Path, site_log: Path, message: str) -> bool:
         check=True,
     )
     return True
+
+
+def push_site_logs(repo_dir: Path) -> tuple[bool, str]:
+    """Push the ``gps-sitelogs`` repo to origin. Best-effort; never raises.
+
+    Committing without pushing leaves the clone ahead of origin, and nothing
+    downstream ever notices: the M3G publish reads the LOCAL file, so a site log
+    can be live on gnss-metadata.eu while the repo that is supposed to record it
+    sits behind. That is not hypothetical — 67 unpushed commits had accumulated
+    by 2026-09-01, some weeks old, from exactly this gap.
+
+    Returns ``(ok, detail)``. A failure is REPORTED, never raised and never
+    retried: the commit is already safe locally, and the common causes (no
+    network, or origin moved ahead so the push is non-fast-forward) need an
+    operator, not a retry. In particular this does not pull/rebase on rejection
+    — that would reorder other people's commits to make our own push succeed.
+    """
+    import subprocess
+
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(Path(repo_dir)), "push", "origin", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:  # noqa: BLE001
+        return (False, f"{type(exc).__name__}: {exc}")
+    # git reports push progress on stderr, so prefer it; fall back to stdout.
+    lines = (res.stderr or res.stdout).strip().splitlines()
+    detail = lines[-1].strip() if lines else ""
+    if res.returncode == 0:
+        return (True, detail or "pushed")
+    return (False, detail or f"git push exited {res.returncode}")
 
 
 # M3G submission — see :func:`submit_to_m3g` (and :class:`M3GClient`). The
