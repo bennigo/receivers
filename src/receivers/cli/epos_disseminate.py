@@ -237,6 +237,21 @@ def cmd_epos_disseminate(args: argparse.Namespace) -> int:
                     if committed
                     else "   commit: nothing to commit"
                 )
+                # Push immediately. A commit that is never pushed leaves the
+                # repo behind while the log itself goes live on M3G (which
+                # reads the LOCAL file), and nothing downstream notices — 67
+                # such commits had piled up by 2026-09-01. Best-effort: a push
+                # failure is reported, never fatal, because the commit is
+                # already safe locally and the fix needs an operator.
+                if committed and not getattr(args, "no_sitelog_push", False):
+                    from ..dissemination.sitelogs import push_site_logs
+
+                    ok, detail = push_site_logs(out_dir)
+                    print(
+                        f"   pushed to origin ({detail})"
+                        if ok
+                        else f"   ⚠ push FAILED — commit is local only: {detail}"
+                    )
         else:
             print(f"✅ site log unchanged for {args.station} ({path.name})")
 
@@ -643,6 +658,14 @@ def create_epos_disseminate_parser(subparsers) -> argparse.ArgumentParser:
         action="store_true",
         help="Write the plain <9CHAR>.log instead of the default dated M3G form "
         "(<9char>_<YYYYMMDD>.log with §0 Previous Site Log chaining)",
+    )
+    parser.add_argument(
+        "--no-sitelog-push",
+        action="store_true",
+        help="Commit a regenerated site log but do NOT push it to origin. Default "
+        "is to push: an unpushed commit leaves gps-sitelogs behind while the log "
+        "is already live on M3G (which reads the local file), and nothing "
+        "downstream notices.",
     )
     parser.add_argument(
         "--publish-m3g",
