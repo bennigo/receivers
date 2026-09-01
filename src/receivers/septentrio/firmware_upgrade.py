@@ -27,7 +27,7 @@ import ssl
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,19 @@ RECEIVER_TLS_PORT = 28783
 #: the receiver waits this long for the download to *start* after exeResetReceiver.
 SUF_DOWNLOAD_START_WINDOW_S = 200
 #: how long to wait for the receiver to come back after streaming the .suf.
-DEFAULT_REBOOT_WAIT_S = 240
+DEFAULT_REBOOT_WAIT_S = 600
+
+#: How long to let the receiver settle AFTER its control port starts listening,
+#: before spending our one allowed login attempt. The port comes back long
+#: before the auth subsystem does, so a login fired the moment TCP connects is
+#: rejected for "not ready" — indistinguishable from bad credentials, and it
+#: counts toward the 5.7.0 brute-force lockout. Measured 2026-09-01: ELEY and
+#: GFUM were both locked out ~24 h this way, while FIM2 — same firmware, same
+#: credentials, same SSH key — logged in first try when the identical
+#: rec-provision ran ~4 minutes after its flash. Hence a settle floor, not a
+#: retry loop: we still get exactly ONE attempt, we just spend it late enough
+#: to be meaningful.
+DEFAULT_POST_FLASH_SETTLE_S = 180
 _PROMPT_RE = re.compile(r"IP\d+>")
 _READY_RE = re.compile(r"Ready for SUF download", re.IGNORECASE)
 
@@ -317,6 +329,9 @@ def wait_for_reboot_and_verify(
     reboot_wait_s: int = DEFAULT_REBOOT_WAIT_S,
     poll_every_s: int = 10,
     tls_port: Optional[int] = None,
+    settle_s: int = DEFAULT_POST_FLASH_SETTLE_S,
+    sleep: Any = time.sleep,
+    now: Any = time.time,
 ) -> str:
     """Poll for the receiver after the reboot, then confirm the version.
 
@@ -328,10 +343,11 @@ def wait_for_reboot_and_verify(
     services config).
     """
     tls_port = tls_port or (port - 1)
-    deadline = time.time() + reboot_wait_s
+    deadline = now() + reboot_wait_s
     last_exc: Optional[Exception] = None
-    while time.time() < deadline:
-        time.sleep(poll_every_s)
+    port_first_seen: Optional[float] = None
+    while now() < deadline:
+        sleep(poll_every_s)
         sock = None
         for endpoint, force_tls in ((port, False), (tls_port, True)):
             try:
@@ -341,6 +357,24 @@ def wait_for_reboot_and_verify(
                 last_exc = exc
         if sock is None:
             continue
+        # The port is listening — but that is NOT the same as ready. Spend the
+        # settle window here rather than firing our one login attempt into a
+        # receiver that is still coming up. We hold the socket open across the
+        # wait deliberately: reconnecting would prove nothing extra, and the
+        # login below is the only thing that can tell us it is genuinely up.
+        if port_first_seen is None:
+            port_first_seen = now()
+            remaining = settle_s
+            if remaining > 0:
+                logger.info(
+                    "%s:%s is listening again — settling %ds before the single "
+                    "login attempt (an early login reads as a rejection and "
+                    "feeds the lockout counter)",
+                    ip,
+                    port,
+                    remaining,
+                )
+                sleep(remaining)
         try:
             if not login(sock, username, password):
                 # Definitive rejection (wrong creds or the post-flash lockout).

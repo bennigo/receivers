@@ -1106,6 +1106,21 @@ Examples:
         metavar="SECONDS",
         help="Max wait for the receiver to return after flashing (default 240).",
     )
+
+    parser.add_argument(
+        "--post-flash-settle",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Seconds to let the receiver settle AFTER its control port starts "
+            "listening, before the single post-flash login attempt (default "
+            "180). The port returns well before the auth subsystem does, and a "
+            "login fired at that moment is rejected for 'not ready' — which is "
+            "indistinguishable from bad credentials and counts toward the "
+            "5.7.0 brute-force lockout. 0 restores the old immediate attempt."
+        ),
+    )
     add_verbose_flag(parser)
     return parser
 

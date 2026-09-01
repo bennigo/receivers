@@ -5298,6 +5298,11 @@ def cmd_rec_upgrade_firmware(args) -> int:
                     password=tcp_pwd,
                     expect_version=target_version,
                     reboot_wait_s=args.reboot_wait,
+                    settle_s=(
+                        fw.DEFAULT_POST_FLASH_SETTLE_S
+                        if getattr(args, "post_flash_settle", None) is None
+                        else args.post_flash_settle
+                    ),
                     tls_port=tls_port,
                 )
                 print(f"  ✓ {sid} now on firmware {newver}")
@@ -5337,6 +5342,11 @@ def cmd_rec_upgrade_firmware(args) -> int:
                     password=tcp_pwd,
                     expect_version=target_version,
                     reboot_wait_s=args.reboot_wait,
+                    settle_s=(
+                        fw.DEFAULT_POST_FLASH_SETTLE_S
+                        if getattr(args, "post_flash_settle", None) is None
+                        else args.post_flash_settle
+                    ),
                     tls_port=tls_port,
                 )
                 print(f"  ✓ {sid} now on firmware {newver}")
