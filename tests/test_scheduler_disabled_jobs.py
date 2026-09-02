@@ -193,3 +193,97 @@ class TestPushTargetGating:
         # enabled defaults to False → push off
         assert result is None
         m_sync.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.scheduler
+class TestHealthPassiveStationRemovesPersistedJob:
+    """A station flipped to health_check=passive must have its PERSISTED
+    health_<STA> job queued for removal.
+
+    Regression: the registration skipped passive stations but never queued the
+    old jobstore entry, so APScheduler reloaded health_<STA> on every restart
+    and it kept firing (a TCP login every 5 min — which on a pre-5.7 receiver
+    with accounts feeds the brute-force lockout). This is the per-station
+    variant of the 2026-08 archive_sync bypass covered above.
+    """
+
+    def _stub(self, stations_cfg):
+        sched = bs.BulkDownloadScheduler.__new__(bs.BulkDownloadScheduler)
+        sched.logger = logging.getLogger("receivers.test")
+        sched._disabled_jobs = []
+        sched.scheduler = MagicMock()
+        sched.scheduler_types = {"health": True}
+        sched.yaml_config = {
+            "status_monitoring": {
+                "enabled": True,
+                "schedule": "5m",
+                "distribution_window": 3,
+            }
+        }
+        sched.stations = stations_cfg
+        sched.station_filter = None
+        sched.max_stations_per_session = None
+        return sched
+
+    def test_passive_and_discontinued_stations_queued_for_removal(self):
+        sched = self._stub(
+            {
+                "AKUR": {"enabled": True, "receiver_type": "polarx5"},
+                "SKRO": {
+                    "enabled": True,
+                    "receiver_type": "polarx5",
+                    "health_check": "passive",
+                },
+                "DEAD": {
+                    "enabled": True,
+                    "receiver_type": "netr9",
+                    "station_status": "discontinued",
+                },
+            }
+        )
+
+        sched._schedule_health_monitoring()
+
+        assert "health_SKRO" in sched._disabled_jobs
+        assert "health_DEAD" in sched._disabled_jobs
+        assert "health_AKUR" not in sched._disabled_jobs
+
+    def test_active_station_still_scheduled(self):
+        sched = self._stub(
+            {"AKUR": {"enabled": True, "receiver_type": "polarx5"}}
+        )
+
+        sched._schedule_health_monitoring()
+
+        added = {c.kwargs.get("id") for c in sched.scheduler.add_job.call_args_list}
+        assert "health_AKUR" in added
+
+    def test_removal_actually_happens_post_start(self):
+        """End-to-end: queued health_SKRO is dropped from the jobstore.
+
+        Mixed fleet (one active + one passive) so the 'no eligible stations'
+        fallback (health_*) does not fire and mask the per-station removal.
+        """
+        sched = self._stub(
+            {
+                "AKUR": {"enabled": True, "receiver_type": "polarx5"},
+                "SKRO": {
+                    "enabled": True,
+                    "receiver_type": "polarx5",
+                    "health_check": "passive",
+                },
+            }
+        )
+        sched._schedule_health_monitoring()
+        # simulate the persisted jobstore still holding the stale job
+        sched.scheduler.get_jobs.return_value = [
+            _fake_job("health_AKUR"),
+            _fake_job("health_SKRO"),
+        ]
+
+        sched._remove_disabled_jobs()
+
+        removed = {c.args[0] for c in sched.scheduler.remove_job.call_args_list}
+        assert "health_SKRO" in removed
+        assert "health_AKUR" not in removed

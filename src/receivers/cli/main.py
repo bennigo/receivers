@@ -5375,6 +5375,8 @@ def cmd_rec_upgrade_firmware(args) -> int:
                     sid,
                     "--field",
                     "firmware_version",
+                    "--field",
+                    "software_version",
                     "--change",
                     "--no-dry-run",
                 ],
@@ -5401,6 +5403,31 @@ def cmd_rec_upgrade_firmware(args) -> int:
                         "firmware_version",
                         "--value",
                         target_version,
+                        "--change",
+                        "--no-dry-run",
+                    ],
+                )
+                # software_version is derived from firmware (X.Y.Z -> X.YZ,
+                # same convention as update-device). The firmware_version fix
+                # alone left TOS with firmware 5.7.0 but stale software (e.g.
+                # 5.50) for 17 stations across two sessions; write the derived
+                # value here too. See firmware_to_software() in cli/cfg.py.
+                from .cfg import firmware_to_software
+
+                sw_value, _ = firmware_to_software(target_version)
+                _run(
+                    "set-attr fallback software_version (TOS)",
+                    [
+                        "cfg",
+                        "set-attr",
+                        "--station",
+                        sid,
+                        "--subtype",
+                        "gnss_receiver",
+                        "--field",
+                        "software_version",
+                        "--value",
+                        sw_value,
                         "--change",
                         "--no-dry-run",
                     ],

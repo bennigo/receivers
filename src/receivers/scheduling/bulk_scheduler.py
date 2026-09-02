@@ -3705,6 +3705,16 @@ class BulkDownloadScheduler:
                 f"Skipping {len(skipped_stations)} discontinued/passive stations: "
                 f"{', '.join(sorted(skipped_stations))}"
             )
+            # Queue removal of their PERSISTED health jobs. Without this, the
+            # SQLite jobstore re-loads the old health_<STA> job on every start
+            # and it keeps firing (TCP login -> on a pre-5.7 receiver with
+            # accounts that feeds the brute-force lockout) even though the
+            # registration here skipped the station. Same class as the
+            # archive_sync flag bypass. health_* here covers the status
+            # monitoring job; see _remove_disabled_jobs for the mechanism.
+            self._disabled_jobs.extend(
+                f"health_{sid}" for sid in skipped_stations
+            )
 
         if not health_stations:
             self._mark_disabled("Health monitoring (no eligible stations)", "health_*")
